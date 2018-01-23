@@ -339,7 +339,6 @@ class TarFileWriter(object):
       intar = tarfile.open(name=tar, mode='r:' + compression)
     for tarinfo in intar:
       if name_filter is None or name_filter(tarinfo.name):
-        tarinfo.mtime = 0
         if rootuid is not None and tarinfo.uid == rootuid:
           tarinfo.uid = 0
           tarinfo.uname = 'root'

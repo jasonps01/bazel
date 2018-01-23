@@ -89,7 +89,7 @@ class TarFile(object):
   def __exit__(self, t, v, traceback):
     self.tarfile.close()
 
-  def add_file(self, f, destfile, mode=None, ids=None, names=None):
+  def add_file(self, f, destfile, mode=None, ids=None, names=None, mtime=None):
     """Add a file to the tar file.
 
     Args:
@@ -111,6 +111,8 @@ class TarFile(object):
       ids = (0, 0)
     if names is None:
       names = ('', '')
+    if mtime is None:
+      mtime = os.path.getmtime(f)
     dest = os.path.normpath(dest)
     self.tarfile.add_file(
         dest,
@@ -119,7 +121,8 @@ class TarFile(object):
         uid=ids[0],
         gid=ids[1],
         uname=names[0],
-        gname=names[1])
+        gname=names[1],
+        mtime=mtime)
 
   def add_tar(self, tar):
     """Merge a tar file into the destination tar file.

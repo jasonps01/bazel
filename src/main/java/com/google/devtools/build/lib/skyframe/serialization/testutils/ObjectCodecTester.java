@@ -18,15 +18,19 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
 import com.google.common.base.Preconditions;
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.protobuf.CodedInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /** Utility for testing {@link ObjectCodec} instances. */
 public class ObjectCodecTester<T> {
+  private static final Logger logger = Logger.getLogger(SerializerTester.class.getName());
 
   /** Interface for testing successful deserialization of an object. */
   @FunctionalInterface
@@ -75,11 +79,21 @@ public class ObjectCodecTester<T> {
 
   /** Runs serialization/deserialization tests. */
   void testSerializeDeserialize() throws Exception {
+    Stopwatch timer = Stopwatch.createStarted();
+    int totalBytes = 0;
     for (T subject : subjects) {
       byte[] serialized = toBytes(subject);
+      totalBytes += serialized.length;
       T deserialized = fromBytes(serialized);
       verificationFunction.verifyDeserialized(subject, deserialized);
     }
+    logger.log(
+        Level.INFO,
+        underTest.getEncodedClass().getSimpleName()
+            + " total serialized bytes = "
+            + totalBytes
+            + ", "
+            + timer);
   }
 
   /** Runs serialized bytes stability tests. */

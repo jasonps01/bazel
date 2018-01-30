@@ -327,8 +327,8 @@ blaze_exit_code::ExitCode OptionProcessor::ParseOptions(
   }
 
   bool use_master_blazerc = true;
-  if (SearchNullaryOption(cmd_line_->startup_args, "--nomaster_blazerc") ||
-      SearchNullaryOption(cmd_line_->startup_args, "--nomaster_bazelrc")) {
+  if (!SearchNullaryOption(cmd_line_->startup_args, "master_blazerc", true) ||
+      !SearchNullaryOption(cmd_line_->startup_args, "master_bazelrc", true)) {
     use_master_blazerc = false;
   }
 
@@ -480,7 +480,7 @@ static void PreprocessEnvString(string* env_str) {
   if (pos == string::npos) return;
   string name = env_str->substr(0, pos);
   if (name == "PATH") {
-    env_str->assign("PATH=" + ConvertPathList(env_str->substr(pos + 1)));
+    env_str->assign("PATH=" + env_str->substr(pos + 1));
   } else if (name == "TMP") {
     // A valid Windows path "c:/foo" is also a valid Unix path list of
     // ["c", "/foo"] so must use ConvertPath here. See GitHub issue #1684.

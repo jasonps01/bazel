@@ -14,28 +14,27 @@
 
 package com.google.devtools.build.lib.actions;
 
+import com.google.devtools.build.lib.analysis.actions.CommandLineItem;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetFingerprintCache;
 import com.google.devtools.build.lib.util.Fingerprint;
 
 /** Contains state that aids in action key computation via {@link AbstractAction#computeKey}. */
 public class ActionKeyContext {
-  private static final class ArtifactNestedSetFingerprintCache
-      extends NestedSetFingerprintCache<Artifact> {
-    @Override
-    protected void addItemFingerprint(Fingerprint fingerprint, Artifact item) {
-      fingerprint.addPath(item.getExecPath());
-    }
+
+  private final NestedSetFingerprintCache nestedSetFingerprintCache =
+      new NestedSetFingerprintCache();
+
+  public <T> void addNestedSetToFingerprint(Fingerprint fingerprint, NestedSet<T> nestedSet) {
+    nestedSetFingerprintCache.addNestedSetToFingerprint(fingerprint, nestedSet);
   }
 
-  private final ArtifactNestedSetFingerprintCache artifactNestedSetFingerprintCache =
-      new ArtifactNestedSetFingerprintCache();
-
-  public void addArtifactsToFingerprint(Fingerprint fingerprint, NestedSet<Artifact> artifacts) {
-    artifactNestedSetFingerprintCache.addNestedSetToFingerprint(fingerprint, artifacts);
+  public <T> void addNestedSetToFingerprint(
+      CommandLineItem.MapFn<? super T> mapFn, Fingerprint fingerprint, NestedSet<T> nestedSet) {
+    nestedSetFingerprintCache.addNestedSetToFingerprint(mapFn, fingerprint, nestedSet);
   }
 
   public void clear() {
-    artifactNestedSetFingerprintCache.clear();
+    nestedSetFingerprintCache.clear();
   }
 }

@@ -40,6 +40,7 @@ import com.google.devtools.build.lib.packages.AspectParameters;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.NativeAspectClass;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
+import com.google.devtools.build.lib.rules.cpp.AspectLegalCppSemantics;
 import com.google.devtools.build.lib.rules.cpp.CcCommon;
 import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper;
 import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper.Info;
@@ -50,6 +51,7 @@ import com.google.devtools.build.lib.rules.cpp.CppConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppHelper;
 import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.cpp.CppSemantics;
+import com.google.devtools.build.lib.rules.cpp.TransitiveLipoInfoProvider;
 import com.google.devtools.build.lib.rules.cpp.transitions.LipoContextCollectorTransition;
 import com.google.devtools.build.lib.rules.proto.ProtoCommon;
 import com.google.devtools.build.lib.rules.proto.ProtoCompileActionBuilder;
@@ -78,8 +80,8 @@ public class CcProtoAspect extends NativeAspectClass implements ConfiguredAspect
   private final CppSemantics cppSemantics;
   private final Attribute.LateBoundDefault<?, Label> ccToolchainAttrValue;
 
-  public CcProtoAspect(
-      CppSemantics cppSemantics, Attribute.LateBoundDefault<?, Label> ccToolchainAttrValue) {
+  public CcProtoAspect(AspectLegalCppSemantics cppSemantics,
+      Attribute.LateBoundDefault<?, Label> ccToolchainAttrValue) {
     this.cppSemantics = cppSemantics;
     this.ccToolchainAttrValue = ccToolchainAttrValue;
   }
@@ -119,7 +121,7 @@ public class CcProtoAspect extends NativeAspectClass implements ConfiguredAspect
                 attr(CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME, LABEL)
                     .value(ccToolchainAttrValue))
             .add(
-                attr(":lipo_context_collector", LABEL)
+                attr(TransitiveLipoInfoProvider.LIPO_CONTEXT_COLLECTOR, LABEL)
                     .cfg(LipoContextCollectorTransition.INSTANCE)
                     .value(CppRuleClasses.LIPO_CONTEXT_COLLECTOR)
                     .skipPrereqValidatorCheck());

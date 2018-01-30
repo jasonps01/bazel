@@ -26,7 +26,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
-import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Interner;
 import com.google.common.collect.Interners;
 import com.google.common.collect.Iterables;
@@ -605,9 +604,21 @@ public class BuildConfiguration implements BuildEvent {
       category = "semantics", // Should this be "flags"?
       documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
       effectTags = { OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.ACTION_COMMAND_LINES },
-      help = "Specify the mode the binary will be built in. " + "Values: 'fastbuild', 'dbg', 'opt'."
+      help = "Specify the mode the binary will be built in. Values: 'fastbuild', 'dbg', 'opt'."
     )
     public CompilationMode compilationMode;
+
+    @Option(
+        name = "host_compilation_mode",
+        converter = CompilationMode.Converter.class,
+        defaultValue = "opt",
+        category = "semantics", // Should this be "flags"?
+        documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+        effectTags = { OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.ACTION_COMMAND_LINES },
+        help = "Specify the mode the tools used during the build will be built in. Values: "
+            + "'fastbuild', 'dbg', 'opt'."
+    )
+    public CompilationMode hostCompilationMode;
 
     /**
      * This option is used internally to set output directory name of the <i>host</i> configuration
@@ -1067,7 +1078,7 @@ public class BuildConfiguration implements BuildEvent {
       Options host = (Options) getDefault();
 
       host.outputDirectoryName = "host";
-      host.compilationMode = CompilationMode.OPT;
+      host.compilationMode = hostCompilationMode;
       host.isHost = true;
       host.configsMode = configsMode;
       host.enableRunfiles = enableRunfiles;
@@ -1112,6 +1123,7 @@ public class BuildConfiguration implements BuildEvent {
   private final String checksum;
 
   private final ImmutableSortedMap<Class<? extends Fragment>, Fragment> fragments;
+  private final FragmentClassSet fragmentClassSet;
 
   private final ImmutableMap<String, Class<? extends Fragment>> skylarkVisibleFragments;
   private final String repositoryName;
@@ -1390,6 +1402,7 @@ public class BuildConfiguration implements BuildEvent {
       String repositoryName) {
     this.directories = directories;
     this.fragments = makeFragmentsMap(fragmentsMap);
+    this.fragmentClassSet = FragmentClassSet.of(this.fragments.keySet());
 
     this.skylarkVisibleFragments = buildIndexOfSkylarkVisibleFragments();
     this.repositoryName = repositoryName;
@@ -1475,12 +1488,11 @@ public class BuildConfiguration implements BuildEvent {
    * configuration is assumed to have).
    */
   public BuildConfiguration clone(
-      Set<Class<? extends BuildConfiguration.Fragment>> fragmentClasses,
-      RuleClassProvider ruleClassProvider) {
+      FragmentClassSet fragmentClasses, RuleClassProvider ruleClassProvider) {
 
     ClassToInstanceMap<Fragment> fragmentsMap = MutableClassToInstanceMap.create();
     for (Fragment fragment : fragments.values()) {
-      if (fragmentClasses.contains(fragment.getClass())) {
+      if (fragmentClasses.fragmentClasses().contains(fragment.getClass())) {
         fragmentsMap.put(fragment.getClass(), fragment);
       }
     }
@@ -1847,8 +1859,8 @@ public class BuildConfiguration implements BuildEvent {
   }
 
   /** Which fragments does this configuration contain? */
-  public ImmutableSortedSet<Class<? extends Fragment>> fragmentClasses() {
-    return fragments.keySet();
+  public FragmentClassSet fragmentClasses() {
+    return fragmentClassSet;
   }
 
   /**

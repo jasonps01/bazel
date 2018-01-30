@@ -616,9 +616,8 @@ public class CppHelper {
 
   private static Artifact getIncludesOutput(RuleContext ruleContext, Artifact src) {
     Preconditions.checkArgument(!src.isSourceArtifact(), src);
-    return ruleContext.getShareableArtifact(
-        src.getRootRelativePath().replaceName(src.getFilename() + GREPPED_INCLUDES_SUFFIX),
-        src.getRoot());
+    return ruleContext.getGenfilesArtifact(
+        src.getRootRelativePath().replaceName(src.getFilename() + GREPPED_INCLUDES_SUFFIX));
   }
 
   /**
@@ -746,12 +745,16 @@ public class CppHelper {
    * or null if such a provider doesn't exist.
    */
   public static LipoContextProvider getLipoContextProvider(RuleContext ruleContext) {
-    if (ruleContext.getRule().getAttributeDefinition(":lipo_context_collector") == null) {
+    if (ruleContext
+            .getRule()
+            .getAttributeDefinition(TransitiveLipoInfoProvider.LIPO_CONTEXT_COLLECTOR)
+        == null) {
       return null;
     }
 
     TransitiveInfoCollection dep =
-        ruleContext.getPrerequisite(":lipo_context_collector", Mode.DONT_CHECK);
+        ruleContext.getPrerequisite(
+            TransitiveLipoInfoProvider.LIPO_CONTEXT_COLLECTOR, Mode.DONT_CHECK);
     return (dep != null) ? dep.getProvider(LipoContextProvider.class) : null;
   }
 

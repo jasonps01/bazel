@@ -39,17 +39,14 @@ is to make your files easy to process, both by humans and tools.
 
 ## General advice
 
- -->
-
-* Use [skylint](skylint.html)
-
+* Use [skylint](skylint.md)
 
 ## Style
 
 * When in doubt, follow the
   [Python style guide](https://www.python.org/dev/peps/pep-0008/).
 
-* Document files and functions using [docstrings](skylint.html#docstrings). Use
+* Document files and functions using [docstrings](skylint.md#docstrings). Use
   a docstring at the top of each `.bzl` file, and a docstring for each public
   function.
 
@@ -141,11 +138,11 @@ As a rule of thumb, the more macros resemble the rules, the better.
   * `runtime_deps`: `label_list`: runtime dependencies that are not needed for
     compilation.
 * Pass information between your rules using a well-defined
-  [provider](rules.html#providers) interface. Declare and document
-  provider fields.
+  [provider](rules.md#providers) interface. Declare and document provider
+  fields.
 * Design your rule with extensibility in mind. Consider that other rules
   might want to interact with your rule, access your providers, and reuse
   the actions you create.
-* Follow [performance guidelines](performance.html) in your rules.
+* Follow [performance guidelines](performance.md) in your rules.
 
 

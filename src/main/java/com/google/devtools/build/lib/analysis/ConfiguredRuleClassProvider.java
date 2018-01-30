@@ -25,7 +25,7 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 import com.google.devtools.build.lib.analysis.buildinfo.BuildInfoFactory;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Fragment;
@@ -34,6 +34,7 @@ import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactor
 import com.google.devtools.build.lib.analysis.config.DefaultsPackage;
 import com.google.devtools.build.lib.analysis.config.DynamicTransitionMapper;
 import com.google.devtools.build.lib.analysis.config.FragmentOptions;
+import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.Transition;
 import com.google.devtools.build.lib.analysis.skylark.SkylarkModules;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -70,7 +71,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
 
@@ -230,6 +230,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
         new Digraph<>();
     private ImmutableMap.Builder<Transition, Transition> dynamicTransitionMaps
         = ImmutableMap.builder();
+    private PatchTransition lipoDataTransition;
     private Class<? extends BuildConfiguration.Fragment> universalFragment;
     private PrerequisiteValidator prerequisiteValidator;
     private ImmutableMap.Builder<String, Object> skylarkAccessibleTopLevels =
@@ -392,6 +393,27 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
       return this;
     }
 
+    /**
+     * Sets the C++ LIPO data transition, as defined in {@link
+     * com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition}.
+     *
+     * <p>This is language-specific, so doesn't really belong here. But since non-C++ rules declare
+     * this transition, we need universal access to it. The need for this interface should go away
+     * on the deprecation of LIPO for
+     * <a href="https://clang.llvm.org/docs/ThinLTO.html">ThinLTO</a>.
+     */
+    public Builder setLipoDataTransition(PatchTransition transition) {
+      Preconditions.checkState(lipoDataTransition == null, "LIPO data transition already set");
+      lipoDataTransition = Preconditions.checkNotNull(transition);
+      return this;
+    }
+
+    @Override
+    public PatchTransition getLipoDataTransition() {
+      Preconditions.checkState(lipoDataTransition != null);
+      return lipoDataTransition;
+    }
+
     private RuleConfiguredTargetFactory createFactory(
         Class<? extends RuleConfiguredTargetFactory> factoryClass) {
       try {
@@ -466,6 +488,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
           ImmutableList.copyOf(configurationOptions),
           ImmutableList.copyOf(configurationFragmentFactories),
           new DynamicTransitionMapper(dynamicTransitionMaps.build()),
+          lipoDataTransition,
           universalFragment,
           prerequisiteValidator,
           skylarkAccessibleTopLevels.build(),
@@ -572,6 +595,8 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
    */
   private final DynamicTransitionMapper dynamicTransitionMapper;
 
+  private final PatchTransition lipoDataTransition;
+
   /**
    * A configuration fragment that should be available to all rules even when they don't
    * explicitly require it.
@@ -601,6 +626,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
       ImmutableList<Class<? extends FragmentOptions>> configurationOptions,
       ImmutableList<ConfigurationFragmentFactory> configurationFragments,
       DynamicTransitionMapper dynamicTransitionMapper,
+      PatchTransition lipoDataTransition,
       Class<? extends BuildConfiguration.Fragment> universalFragment,
       PrerequisiteValidator prerequisiteValidator,
       ImmutableMap<String, Object> skylarkAccessibleJavaClasses,
@@ -618,6 +644,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
     this.configurationOptions = configurationOptions;
     this.configurationFragmentFactories = configurationFragments;
     this.dynamicTransitionMapper = dynamicTransitionMapper;
+    this.lipoDataTransition = lipoDataTransition;
     this.universalFragment = universalFragment;
     this.prerequisiteValidator = prerequisiteValidator;
     this.globals = createGlobals(skylarkAccessibleJavaClasses, skylarkModules);
@@ -671,6 +698,18 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
    */
   public ImmutableList<ConfigurationFragmentFactory> getConfigurationFragments() {
     return configurationFragmentFactories;
+  }
+
+  /**
+   * Returns the C++ LIPO data transition, as defined in {@link
+   * com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition}.
+   *
+   * <p>This is language-specific, so doesn't really belong here. But since non-C++ rules declare
+   * this transition, we need universal access to it. The need for this interface should go away on
+   * the deprecation of LIPO for <a href="https://clang.llvm.org/docs/ThinLTO.html">ThinLTO</a>.
+   */
+  public PatchTransition getLipoDataTransition() {
+    return lipoDataTransition;
   }
 
   /**
@@ -773,6 +812,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
             .build();
     SkylarkUtils.setToolsRepository(env, toolsRepository);
     SkylarkUtils.setFragmentMap(env, configurationFragmentMap);
+    SkylarkUtils.setLipoDataTransition(env, getLipoDataTransition());
     return env;
   }
 
@@ -808,12 +848,10 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
     return configurationFragmentMap;
   }
 
-  /**
-   * Returns all registered {@link BuildConfiguration.Fragment} classes.
-   */
-  public Set<Class<? extends BuildConfiguration.Fragment>> getAllFragments() {
-    ImmutableSet.Builder<Class<? extends BuildConfiguration.Fragment>> fragmentsBuilder =
-        ImmutableSet.builder();
+  /** Returns all registered {@link BuildConfiguration.Fragment} classes. */
+  public ImmutableSortedSet<Class<? extends BuildConfiguration.Fragment>> getAllFragments() {
+    ImmutableSortedSet.Builder<Class<? extends BuildConfiguration.Fragment>> fragmentsBuilder =
+        ImmutableSortedSet.orderedBy(BuildConfiguration.lexicalFragmentSorter);
     for (ConfigurationFragmentFactory factory : getConfigurationFragments()) {
       fragmentsBuilder.add(factory.creates());
     }

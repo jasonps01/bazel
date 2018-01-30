@@ -405,26 +405,24 @@ public final class JavaCompileAction extends SpawnAction {
     }
 
     private String getArtifactOwnerGeneralizedLabel(Artifact artifact) {
+      // The simple case can simply return the label,
+      // avoiding any concatenation or StringBuilder garbage
       ArtifactOwner owner = checkNotNull(artifact.getArtifactOwner(), artifact);
-      StringBuilder result = new StringBuilder();
       Label label = owner.getLabel();
-      result.append(
+      boolean isDefaultOrMain =
           label.getPackageIdentifier().getRepository().isDefault()
-                  || label.getPackageIdentifier().getRepository().isMain()
-              ? label.toString()
-              // Escape '@' prefix for .params file.
-              : "@" + label);
-
+              || label.getPackageIdentifier().getRepository().isMain();
+      String result =
+          isDefaultOrMain ? label.toString() : "@" + label; // Escape '@' prefix for .params file.
       if (owner instanceof AspectValue.AspectKey) {
         AspectValue.AspectKey aspectOwner = (AspectValue.AspectKey) owner;
         ImmutableCollection<String> injectingRuleKind =
             aspectOwner.getParameters().getAttribute(INJECTING_RULE_KIND_PARAMETER_KEY);
         if (injectingRuleKind.size() == 1) {
-          result.append(' ').append(getOnlyElement(injectingRuleKind));
+          result += ' ' + getOnlyElement(injectingRuleKind);
         }
       }
-
-      return result.toString();
+      return result;
     }
   }
 
@@ -496,7 +494,6 @@ public final class JavaCompileAction extends SpawnAction {
     private final List<String> processorNames = new ArrayList<>();
     private String ruleKind;
     private Label targetLabel;
-    private boolean testOnly = false;
 
     /**
      * Creates a Builder from an owner and a build configuration.
@@ -730,9 +727,6 @@ public final class JavaCompileAction extends SpawnAction {
           // {@link JavaLibraryBuildRequest}, so add an extra &at; to escape it.
           result.addPrefixedLabel("@", targetLabel);
         }
-      }
-      if (testOnly) {
-        result.add("--testonly");
       }
 
       if (!classpathEntries.isEmpty()) {
@@ -1013,11 +1007,6 @@ public final class JavaCompileAction extends SpawnAction {
 
     public Builder setTargetLabel(Label targetLabel) {
       this.targetLabel = targetLabel;
-      return this;
-    }
-
-    public Builder setTestOnly(boolean testOnly) {
-      this.testOnly = testOnly;
       return this;
     }
   }

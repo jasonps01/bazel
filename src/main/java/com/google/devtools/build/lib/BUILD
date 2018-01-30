@@ -38,6 +38,8 @@ filegroup(
         "//src/main/java/com/google/devtools/build/lib/profiler/memory:srcs",
         "//src/main/java/com/google/devtools/build/lib/query2:srcs",
         "//src/main/java/com/google/devtools/build/lib/remote:srcs",
+        "//src/main/java/com/google/devtools/build/lib/remote/blobstore:srcs",
+        "//src/main/java/com/google/devtools/build/lib/remote/blobstore/http:srcs",
         "//src/main/java/com/google/devtools/build/lib/rules/apple/cpp:srcs",
         "//src/main/java/com/google/devtools/build/lib/rules/apple:srcs",
         "//src/main/java/com/google/devtools/build/lib/rules/apple/swift:srcs",
@@ -462,12 +464,12 @@ java_library(
             "rules/extra/*.java",
             "rules/filegroup/*.java",
             "rules/fileset/*.java",
-            "rules/test/*.java",
             "rules/repository/*.java",
             "skyframe/*.java",
         ],
         exclude = [
             "analysis/BuildInfo.java",
+            "analysis/actions/CommandLineItem.java",
             "analysis/TransitiveInfoProvider.java",
             "analysis/config/BuildConfigurationOptionDetails.java",
             "rules/repository/CoreWorkspaceRules.java",
@@ -482,6 +484,7 @@ java_library(
     deps = [
         ":build-request-options",
         "//src/main/java/com/google/devtools/build/lib:base-util",
+        "//src/main/java/com/google/devtools/build/lib:commandline_item",
         "//src/main/java/com/google/devtools/build/lib:events",
         "//src/main/java/com/google/devtools/build/lib:exitcode-external",
         "//src/main/java/com/google/devtools/build/lib:io",
@@ -527,6 +530,11 @@ java_library(
 )
 
 java_library(
+    name = "commandline_item",
+    srcs = ["analysis/actions/CommandLineItem.java"],
+)
+
+java_library(
     name = "bazel-rules",
     srcs = glob(
         [
@@ -557,6 +565,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib:packages-internal",
         "//src/main/java/com/google/devtools/build/lib:proto-rules",
         "//src/main/java/com/google/devtools/build/lib:python-rules",
+        "//src/main/java/com/google/devtools/build/lib:testing-support-rules",
         "//src/main/java/com/google/devtools/build/lib:util",
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform",
@@ -961,6 +970,29 @@ java_library(
 )
 
 java_library(
+    name = "testing-support-rules",
+    srcs = glob(
+        ["rules/test/*.java"],
+    ),
+    deps = [
+        ":packages-internal",
+        ":skylarkinterface",
+        ":util",
+        "//src/main/java/com/google/devtools/build/lib:build-base",
+        "//src/main/java/com/google/devtools/build/lib:core-rules",
+        "//src/main/java/com/google/devtools/build/lib:syntax",
+        "//src/main/java/com/google/devtools/build/lib:transitive-info-provider",
+        "//src/main/java/com/google/devtools/build/lib/actions",
+        "//src/main/java/com/google/devtools/build/lib/buildeventstream",
+        "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:build_event_stream_proto",
+        "//src/main/java/com/google/devtools/build/lib/concurrent",
+        "//src/main/java/com/google/devtools/build/lib/vfs",
+        "//src/main/protobuf:test_status_java_proto",
+        "//third_party:guava",
+    ],
+)
+
+java_library(
     name = "android-rules",
     srcs = glob(
         ["rules/android/*.java"],
@@ -973,6 +1005,7 @@ java_library(
         "rules/android/test_suite_property_name.txt",
     ],
     deps = [
+        ":commandline_item",
         "//src/main/java/com/google/devtools/build/lib:build-base",
         "//src/main/java/com/google/devtools/build/lib:events",
         "//src/main/java/com/google/devtools/build/lib:java-compilation",

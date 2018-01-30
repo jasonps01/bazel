@@ -18,8 +18,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
-import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -48,7 +46,6 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.zip.ZipOutputStream;
@@ -66,8 +63,6 @@ import org.objectweb.asm.Opcodes;
  * real header compilation implementation.
  */
 public class JavacTurbine implements AutoCloseable {
-
-  private static final Splitter SPACE_SPLITTER = Splitter.on(' ');
 
   public static void main(String[] args) throws IOException {
     System.exit(compile(TurbineOptionsParser.parse(Arrays.asList(args))).exitCode());
@@ -263,10 +258,19 @@ public class JavacTurbine implements AutoCloseable {
             .setTargetLabel(turbineOptions.targetLabel().orNull())
             .addDepsArtifacts(asPaths(turbineOptions.depsArtifacts()))
             .setPlatformJars(platformJars)
-            .setStrictJavaDeps(strictDepsMode.toString())
-            .addDirectMappings(parseJarsToTargets(turbineOptions.directJarsToTargets()))
-            .addIndirectMappings(parseJarsToTargets(turbineOptions.indirectJarsToTargets()));
-
+            .setStrictJavaDeps(strictDepsMode.toString());
+    ImmutableSet.Builder<Path> directJars = ImmutableSet.builder();
+    ImmutableMap.Builder<Path, JarOwner> jarsToTargets = ImmutableMap.builder();
+    for (Map.Entry<String, String> entry : turbineOptions.directJarsToTargets().entrySet()) {
+      Path path = Paths.get(entry.getKey());
+      directJars.add(path);
+      jarsToTargets.put(path, parseJarOwner(entry.getKey()));
+    }
+    for (Map.Entry<String, String> entry : turbineOptions.indirectJarsToTargets().entrySet()) {
+      jarsToTargets.put(Paths.get(entry.getKey()), parseJarOwner(entry.getValue()));
+    }
+    dependencyModuleBuilder.setDirectJars(directJars.build());
+    dependencyModuleBuilder.setJarsToTargets(jarsToTargets.build());
     if (turbineOptions.outputDeps().isPresent()) {
       dependencyModuleBuilder.setOutputDepsProtoFile(Paths.get(turbineOptions.outputDeps().get()));
     }
@@ -274,23 +278,14 @@ public class JavacTurbine implements AutoCloseable {
     return dependencyModuleBuilder.build();
   }
 
-  private static ImmutableMap<Path, JarOwner> parseJarsToTargets(
-      ImmutableMap<String, String> input) {
-    ImmutableMap.Builder<Path, JarOwner> result = ImmutableMap.builder();
-    for (Map.Entry<String, String> entry : input.entrySet()) {
-      result.put(Paths.get(entry.getKey()), parseJarOwner(entry.getKey()));
-    }
-    return result.build();
-  }
-
   private static JarOwner parseJarOwner(String line) {
-    List<String> ownerStringParts = SPACE_SPLITTER.splitToList(line);
-    JarOwner owner;
-    Preconditions.checkState(ownerStringParts.size() == 1 || ownerStringParts.size() == 2);
-    if (ownerStringParts.size() == 1) {
-      owner = JarOwner.create(ownerStringParts.get(0));
+    int separatorIndex = line.indexOf(';');
+    final JarOwner owner;
+    if (separatorIndex == -1) {
+      owner = JarOwner.create(line);
     } else {
-      owner = JarOwner.create(ownerStringParts.get(0), ownerStringParts.get(1));
+      owner =
+          JarOwner.create(line.substring(0, separatorIndex), line.substring(separatorIndex + 1));
     }
     return owner;
   }

@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Interner;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
@@ -30,6 +31,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.concurrent.BlazeInterners;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.LazyString;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.errorprone.annotations.CompileTimeConstant;
@@ -42,7 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.function.Function;
+import java.util.UUID;
 import javax.annotation.Nullable;
 
 /** A customizable, serializable class for building memory efficient command lines. */
@@ -60,6 +62,12 @@ public final class CustomCommandLine extends CommandLine {
      *     ArgvFragment doesn't have any args, it should return {@code argi} unmodified.
      */
     int eval(List<Object> arguments, int argi, ImmutableList.Builder<String> builder);
+
+    int addToFingerprint(
+        List<Object> arguments,
+        int argi,
+        ActionKeyContext actionKeyContext,
+        Fingerprint fingerprint);
   }
 
   /**
@@ -74,13 +82,23 @@ public final class CustomCommandLine extends CommandLine {
       return argi; // Doesn't consume any arguments, so return argi unmodified
     }
 
+    @Override
+    public int addToFingerprint(
+        List<Object> arguments,
+        int argi,
+        ActionKeyContext actionKeyContext,
+        Fingerprint fingerprint) {
+      addToFingerprint(actionKeyContext, fingerprint);
+      return argi; // Doesn't consume any arguments, so return argi unmodified
+    }
+
     abstract void eval(ImmutableList.Builder<String> builder);
+
+    abstract void addToFingerprint(ActionKeyContext actionKeyContext, Fingerprint fingerprint);
   }
 
-  // TODO(bazel-team): CustomMultiArgv is  going to be difficult to expose
-  // in Skylark. Maybe we can get rid of them by refactoring JavaCompileAction. It also
-  // raises immutability / serialization issues.
-  /** Custom Java code producing a List of String arguments. */
+  /** Deprecated. Do not use. TODO(b/64841073): Remove this */
+  @Deprecated
   public abstract static class CustomMultiArgv extends StandardArgvFragment {
 
     @Override
@@ -89,6 +107,13 @@ public final class CustomCommandLine extends CommandLine {
     }
 
     public abstract Iterable<String> argv();
+
+    @Override
+    final void addToFingerprint(ActionKeyContext actionKeyContext, Fingerprint fingerprint) {
+      for (String arg : argv()) {
+        fingerprint.addString(arg);
+      }
+    }
   }
 
   /**
@@ -179,17 +204,17 @@ public final class CustomCommandLine extends CommandLine {
       }
 
       /** Each argument is mapped using the supplied map function */
-      public MappedVectorArg<T> mapped(Function<T, String> mapFn) {
+      public MappedVectorArg<T> mapped(CommandLineItem.MapFn<T> mapFn) {
         return new MappedVectorArg<>(this, mapFn);
       }
     }
 
     /** A vector arg that maps some type T to strings. */
-    public static class MappedVectorArg<T> extends VectorArg<String> {
+    static class MappedVectorArg<T> extends VectorArg<String> {
       private final Iterable<T> values;
-      private final Function<T, String> mapFn;
+      private final CommandLineItem.MapFn<T> mapFn;
 
-      private MappedVectorArg(SimpleVectorArg<T> other, Function<T, String> mapFn) {
+      private MappedVectorArg(SimpleVectorArg<T> other, CommandLineItem.MapFn<T> mapFn) {
         super(
             other.isNestedSet,
             other.isEmpty,
@@ -263,7 +288,7 @@ public final class CustomCommandLine extends CommandLine {
     @SuppressWarnings("unchecked")
     private static void push(List<Object> arguments, VectorArg<?> vectorArg) {
       final Iterable<?> values;
-      final Function<?, String> mapFn;
+      final CommandLineItem.MapFn<?> mapFn;
       if (vectorArg instanceof SimpleVectorArg) {
         values = ((SimpleVectorArg) vectorArg).values;
         mapFn = null;
@@ -306,6 +331,12 @@ public final class CustomCommandLine extends CommandLine {
 
     private static final class VectorArgFragment implements ArgvFragment {
       private static Interner<VectorArgFragment> interner = BlazeInterners.newStrongInterner();
+      private static final UUID FORMAT_EACH_UUID =
+          UUID.fromString("f830781f-2e0d-4e3b-9b99-ece7f249e0f3");
+      private static final UUID BEFORE_EACH_UUID =
+          UUID.fromString("07d22a0d-2691-4f1c-9f47-5294de1f94e4");
+      private static final UUID JOIN_WITH_UUID =
+          UUID.fromString("c96ed6f0-9220-40f6-9e0c-1c0c5e0b47e4");
 
       private final boolean isNestedSet;
       private final boolean hasMapEach;
@@ -342,14 +373,12 @@ public final class CustomCommandLine extends CommandLine {
             mutatedValues.add(arguments.get(argi++));
           }
         }
-        if (hasMapEach) {
-          Function<Object, String> mapFn = (Function<Object, String>) arguments.get(argi++);
-          for (int i = 0; i < count; ++i) {
-            mutatedValues.set(i, mapFn.apply(mutatedValues.get(i)));
-          }
-        }
+        CommandLineItem.MapFn<Object> mapFn =
+            hasMapEach
+                ? (CommandLineItem.MapFn<Object>) arguments.get(argi++)
+                : CommandLineItem.MapFn.DEFAULT;
         for (int i = 0; i < count; ++i) {
-          mutatedValues.set(i, valueToString(mutatedValues.get(i)));
+          mutatedValues.set(i, mapFn.expandToCommandLine(mutatedValues.get(i)));
         }
         if (hasFormatEach) {
           String formatStr = (String) arguments.get(argi++);
@@ -370,6 +399,48 @@ public final class CustomCommandLine extends CommandLine {
           for (int i = 0; i < count; ++i) {
             builder.add((String) mutatedValues.get(i));
           }
+        }
+        return argi;
+      }
+
+      @SuppressWarnings("unchecked")
+      @Override
+      public int addToFingerprint(
+          List<Object> arguments,
+          int argi,
+          ActionKeyContext actionKeyContext,
+          Fingerprint fingerprint) {
+        if (isNestedSet) {
+          NestedSet<Object> values = (NestedSet<Object>) arguments.get(argi++);
+          CommandLineItem.MapFn<Object> mapFn =
+              hasMapEach
+                  ? (CommandLineItem.MapFn<Object>) arguments.get(argi++)
+                  : CommandLineItem.MapFn.DEFAULT;
+          actionKeyContext.addNestedSetToFingerprint(mapFn, fingerprint, values);
+        } else {
+          int count = (Integer) arguments.get(argi++);
+          CommandLineItem.MapFn<Object> mapFn =
+              hasMapEach
+                  ? (CommandLineItem.MapFn<Object>)
+                      arguments.get(argi + count) // Peek ahead to mapFn
+                  : CommandLineItem.MapFn.DEFAULT;
+          for (int i = 0; i < count; ++i) {
+            fingerprint.addString(mapFn.expandToCommandLine(arguments.get(argi++)));
+          }
+          if (hasMapEach) {
+            ++argi; // Consume mapFn
+          }
+        }
+        if (hasFormatEach) {
+          fingerprint.addUUID(FORMAT_EACH_UUID);
+          fingerprint.addString((String) arguments.get(argi++));
+        }
+        if (hasBeforeEach) {
+          fingerprint.addUUID(BEFORE_EACH_UUID);
+          fingerprint.addString((String) arguments.get(argi++));
+        } else if (hasJoinWith) {
+          fingerprint.addUUID(JOIN_WITH_UUID);
+          fingerprint.addString((String) arguments.get(argi++));
         }
         return argi;
       }
@@ -399,6 +470,7 @@ public final class CustomCommandLine extends CommandLine {
 
   private static class FormatArg implements ArgvFragment {
     private static final FormatArg INSTANCE = new FormatArg();
+    private static final UUID FORMAT_UUID = UUID.fromString("377cee34-e947-49e0-94a2-6ab95b396ec4");
 
     private static void push(List<Object> arguments, String formatStr, Object... args) {
       arguments.add(INSTANCE);
@@ -413,15 +485,31 @@ public final class CustomCommandLine extends CommandLine {
       String formatStr = (String) arguments.get(argi++);
       Object[] args = new Object[argCount];
       for (int i = 0; i < argCount; ++i) {
-        args[i] = valueToString(arguments.get(argi++));
+        args[i] = CommandLineItem.expandToCommandLine(arguments.get(argi++));
       }
       builder.add(String.format(formatStr, args));
+      return argi;
+    }
+
+    @Override
+    public int addToFingerprint(
+        List<Object> arguments,
+        int argi,
+        ActionKeyContext actionKeyContext,
+        Fingerprint fingerprint) {
+      int argCount = (Integer) arguments.get(argi++);
+      fingerprint.addUUID(FORMAT_UUID);
+      fingerprint.addString((String) arguments.get(argi++));
+      for (int i = 0; i < argCount; ++i) {
+        fingerprint.addString(CommandLineItem.expandToCommandLine(arguments.get(argi++)));
+      }
       return argi;
     }
   }
 
   private static class PrefixArg implements ArgvFragment {
     private static final PrefixArg INSTANCE = new PrefixArg();
+    private static final UUID PREFIX_UUID = UUID.fromString("a95eccdf-4f54-46fc-b925-c8c7e1f50c95");
 
     private static void push(List<Object> arguments, String before, Object arg) {
       arguments.add(INSTANCE);
@@ -433,7 +521,19 @@ public final class CustomCommandLine extends CommandLine {
     public int eval(List<Object> arguments, int argi, ImmutableList.Builder<String> builder) {
       String before = (String) arguments.get(argi++);
       Object arg = arguments.get(argi++);
-      builder.add(before + valueToString(arg));
+      builder.add(before + CommandLineItem.expandToCommandLine(arg));
+      return argi;
+    }
+
+    @Override
+    public int addToFingerprint(
+        List<Object> arguments,
+        int argi,
+        ActionKeyContext actionKeyContext,
+        Fingerprint fingerprint) {
+      fingerprint.addUUID(PREFIX_UUID);
+      fingerprint.addString((String) arguments.get(argi++));
+      fingerprint.addString(CommandLineItem.expandToCommandLine(arguments.get(argi++)));
       return argi;
     }
   }
@@ -496,6 +596,7 @@ public final class CustomCommandLine extends CommandLine {
   private static final class ExpandedTreeArtifactExecPathsArg
       extends TreeArtifactExpansionArgvFragment {
     private final Artifact treeArtifact;
+    private static final UUID TREE_UUID = UUID.fromString("13b7626b-c77d-4a30-ad56-ff08c06b1cee");
 
     private ExpandedTreeArtifactExecPathsArg(Artifact treeArtifact) {
       Preconditions.checkArgument(
@@ -517,6 +618,12 @@ public final class CustomCommandLine extends CommandLine {
     public String describe() {
       return String.format(
           "ExpandedTreeArtifactExecPathsArg{ treeArtifact: %s}", treeArtifact.getExecPathString());
+    }
+
+    @Override
+    void addToFingerprint(ActionKeyContext actionKeyContext, Fingerprint fingerprint) {
+      fingerprint.addUUID(TREE_UUID);
+      fingerprint.addPath(treeArtifact.getExecPath());
     }
   }
 
@@ -1074,7 +1181,7 @@ public final class CustomCommandLine extends CommandLine {
           i = ((ArgvFragment) substitutedArg).eval(arguments, i, builder);
         }
       } else {
-        builder.add(valueToString(substitutedArg));
+        builder.add(CommandLineItem.expandToCommandLine(substitutedArg));
       }
     }
     return builder.build();
@@ -1082,7 +1189,7 @@ public final class CustomCommandLine extends CommandLine {
 
   private void evalSimpleVectorArg(Iterable<?> arg, ImmutableList.Builder<String> builder) {
     for (Object value : arg) {
-      builder.add(valueToString(value));
+      builder.add(CommandLineItem.expandToCommandLine(value));
     }
   }
 
@@ -1102,9 +1209,34 @@ public final class CustomCommandLine extends CommandLine {
     }
   }
 
-  private static String valueToString(Object value) {
-    return value instanceof Artifact
-        ? ((Artifact) value).getExecPath().getPathString()
-        : value.toString();
+  @Override
+  public void addToFingerprint(ActionKeyContext actionKeyContext, Fingerprint fingerprint) {
+    int count = arguments.size();
+    for (int i = 0; i < count; ) {
+      Object arg = arguments.get(i++);
+      Object substitutedArg = substituteTreeFileArtifactArgvFragment(arg);
+      if (substitutedArg instanceof Iterable) {
+        addSimpleVectorArgToFingerprint(
+            (Iterable<?>) substitutedArg, actionKeyContext, fingerprint);
+      } else if (substitutedArg instanceof ArgvFragment) {
+        i =
+            ((ArgvFragment) substitutedArg)
+                .addToFingerprint(arguments, i, actionKeyContext, fingerprint);
+      } else {
+        fingerprint.addString(CommandLineItem.expandToCommandLine(substitutedArg));
+      }
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private void addSimpleVectorArgToFingerprint(
+      Iterable<?> arg, ActionKeyContext actionKeyContext, Fingerprint fingerprint) {
+    if (arg instanceof NestedSet) {
+      actionKeyContext.addNestedSetToFingerprint(fingerprint, (NestedSet<Object>) arg);
+    } else {
+      for (Object value : arg) {
+        fingerprint.addString(CommandLineItem.expandToCommandLine(value));
+      }
+    }
   }
 }

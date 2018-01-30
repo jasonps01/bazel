@@ -80,12 +80,17 @@ import com.google.devtools.build.lib.rules.Alias.AliasRule;
 import com.google.devtools.build.lib.rules.android.AarImportBaseRule;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration;
 import com.google.devtools.build.lib.rules.android.AndroidDeviceRule;
+import com.google.devtools.build.lib.rules.android.AndroidDeviceScriptFixtureRule;
+import com.google.devtools.build.lib.rules.android.AndroidHostServiceFixtureRule;
+import com.google.devtools.build.lib.rules.android.AndroidInstrumentationInfo;
+import com.google.devtools.build.lib.rules.android.AndroidInstrumentationTestRule;
 import com.google.devtools.build.lib.rules.android.AndroidLibraryBaseRule;
 import com.google.devtools.build.lib.rules.android.AndroidLocalTestBaseRule;
 import com.google.devtools.build.lib.rules.android.AndroidNeverlinkAspect;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses.AndroidToolsDefaultsJarRule;
 import com.google.devtools.build.lib.rules.android.AndroidSkylarkCommon;
+import com.google.devtools.build.lib.rules.android.ApkInfo;
 import com.google.devtools.build.lib.rules.android.DexArchiveAspect;
 import com.google.devtools.build.lib.rules.apple.AppleCommandLineOptions;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
@@ -111,6 +116,7 @@ import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.cpp.CpuTransformer;
 import com.google.devtools.build.lib.rules.cpp.proto.CcProtoAspect;
 import com.google.devtools.build.lib.rules.cpp.proto.CcProtoLibraryRule;
+import com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition;
 import com.google.devtools.build.lib.rules.extra.ActionListenerRule;
 import com.google.devtools.build.lib.rules.extra.ExtraActionRule;
 import com.google.devtools.build.lib.rules.genquery.GenQueryRule;
@@ -135,7 +141,6 @@ import com.google.devtools.build.lib.rules.objc.AppleSkylarkCommon;
 import com.google.devtools.build.lib.rules.objc.AppleStaticLibraryRule;
 import com.google.devtools.build.lib.rules.objc.AppleStubBinaryRule;
 import com.google.devtools.build.lib.rules.objc.IosDeviceRule;
-import com.google.devtools.build.lib.rules.objc.IosTestRule;
 import com.google.devtools.build.lib.rules.objc.J2ObjcAspect;
 import com.google.devtools.build.lib.rules.objc.J2ObjcCommandLineOptions;
 import com.google.devtools.build.lib.rules.objc.J2ObjcConfiguration;
@@ -165,8 +170,8 @@ import com.google.devtools.build.lib.rules.python.PythonConfigurationLoader;
 import com.google.devtools.build.lib.rules.python.PythonOptions;
 import com.google.devtools.build.lib.rules.repository.CoreWorkspaceRules;
 import com.google.devtools.build.lib.rules.repository.NewLocalRepositoryRule;
-import com.google.devtools.build.lib.rules.test.SkylarkTestingModule;
 import com.google.devtools.build.lib.rules.test.TestSuiteRule;
+import com.google.devtools.build.lib.rules.test.TestingSupportRules;
 import com.google.devtools.build.lib.util.ResourceFileLoader;
 import java.io.IOException;
 
@@ -306,19 +311,6 @@ public class BazelRuleClassProvider {
         }
       };
 
-  public static final RuleSet TESTING_SUPPORT =
-      new RuleSet() {
-        @Override
-        public void init(Builder builder) {
-          builder.addSkylarkAccessibleTopLevels("testing", new SkylarkTestingModule());
-        }
-
-        @Override
-        public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CoreRules.INSTANCE);
-        }
-      };
-
   public static final RuleSet SH_RULES =
       new RuleSet() {
         @Override
@@ -332,6 +324,23 @@ public class BazelRuleClassProvider {
         @Override
         public ImmutableList<RuleSet> requires() {
           return ImmutableList.of(CoreRules.INSTANCE);
+        }
+      };
+
+  /**
+   * Rules defined before this set will fail when trying to declare a data transition. So it's best
+   * to define this as early as possible.
+   */
+  public static final RuleSet LIPO_DATA_TRANSITION =
+      new RuleSet() {
+        @Override
+        public void init(Builder builder) {
+          builder.setLipoDataTransition(DisableLipoTransition.INSTANCE);
+        }
+
+        @Override
+        public ImmutableList<RuleSet> requires() {
+          return ImmutableList.of();
         }
       };
 
@@ -484,8 +493,14 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new AndroidDeviceRule());
           builder.addRuleDefinition(new AndroidLocalTestBaseRule());
           builder.addRuleDefinition(new BazelAndroidLocalTestRule());
+          builder.addRuleDefinition(new AndroidInstrumentationTestRule());
+          builder.addRuleDefinition(new AndroidDeviceScriptFixtureRule());
+          builder.addRuleDefinition(new AndroidHostServiceFixtureRule());
 
           builder.addSkylarkAccessibleTopLevels("android_common", new AndroidSkylarkCommon());
+          builder.addSkylarkAccessibleTopLevels(ApkInfo.PROVIDER.getName(), ApkInfo.PROVIDER);
+          builder.addSkylarkAccessibleTopLevels(
+              AndroidInstrumentationInfo.PROVIDER.getName(), AndroidInstrumentationInfo.PROVIDER);
 
           try {
             builder.addWorkspaceFilePrefix(
@@ -552,7 +567,6 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new AppleCcToolchainRule());
           builder.addRuleDefinition(new AppleToolchain.RequiresXcodeConfigRule(toolsRepository));
           builder.addRuleDefinition(new IosDeviceRule());
-          builder.addRuleDefinition(new IosTestRule());
           builder.addRuleDefinition(new ObjcBundleRule());
           builder.addRuleDefinition(new ObjcBundleLibraryRule());
           builder.addRuleDefinition(new ObjcFrameworkRule());
@@ -561,8 +575,6 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new ObjcRuleClasses.CoptsRule());
           builder.addRuleDefinition(new ObjcRuleClasses.BundlingRule());
           builder.addRuleDefinition(new ObjcRuleClasses.DylibDependingRule(objcProtoAspect));
-          builder.addRuleDefinition(new ObjcRuleClasses.ReleaseBundlingRule());
-          builder.addRuleDefinition(new ObjcRuleClasses.SimulatorRule());
           builder.addRuleDefinition(new ObjcRuleClasses.CompilingRule());
           builder.addRuleDefinition(new ObjcRuleClasses.LinkingRule(objcProtoAspect));
           builder.addRuleDefinition(new ObjcRuleClasses.PlatformRule());
@@ -574,8 +586,6 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new ObjcRuleClasses.ResourceToolsRule());
           builder.addRuleDefinition(new ObjcRuleClasses.XcrunRule());
           builder.addRuleDefinition(new ObjcRuleClasses.LibtoolRule());
-          builder.addRuleDefinition(new ObjcRuleClasses.IpaRule());
-          builder.addRuleDefinition(new ObjcRuleClasses.ReleaseBundlingToolsRule());
           builder.addRuleDefinition(new ObjcRuleClasses.CrosstoolRule());
           builder.addRuleDefinition(new XcodeConfigRule());
           builder.addRuleDefinition(new XcodeConfigAliasRule());
@@ -632,6 +642,7 @@ public class BazelRuleClassProvider {
 
   private static final ImmutableSet<RuleSet> RULE_SETS =
       ImmutableSet.of(
+          LIPO_DATA_TRANSITION,
           BAZEL_SETUP,
           CoreRules.INSTANCE,
           CoreWorkspaceRules.INSTANCE,
@@ -648,7 +659,7 @@ public class BazelRuleClassProvider {
           PYTHON_RULES,
           OBJC_RULES,
           J2OBJC_RULES,
-          TESTING_SUPPORT,
+          TestingSupportRules.INSTANCE,
           VARIOUS_WORKSPACE_RULES,
           // This rule set is a little special: it needs to depend on every configuration fragment
           // that has Make variables, so we put it last.

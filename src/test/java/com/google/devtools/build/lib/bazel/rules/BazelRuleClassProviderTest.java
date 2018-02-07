@@ -25,6 +25,7 @@ import com.google.devtools.build.lib.analysis.config.FragmentOptions;
 import com.google.devtools.build.lib.packages.RuleClass;
 import com.google.devtools.build.lib.rules.config.ConfigRules;
 import com.google.devtools.build.lib.rules.core.CoreRules;
+import com.google.devtools.build.lib.rules.cpp.transitions.LipoDataTransitionRuleSet;
 import com.google.devtools.build.lib.rules.repository.CoreWorkspaceRules;
 import java.util.HashSet;
 import java.util.List;
@@ -64,7 +65,7 @@ public class BazelRuleClassProviderTest {
     ConfiguredRuleClassProvider.Builder builder = new ConfiguredRuleClassProvider.Builder();
     builder.setToolsRepository(BazelRuleClassProvider.TOOLS_REPOSITORY);
     Set<RuleSet> result = new HashSet<>();
-    result.add(BazelRuleClassProvider.LIPO_DATA_TRANSITION);
+    result.add(LipoDataTransitionRuleSet.INSTANCE);
     result.add(BazelRuleClassProvider.BAZEL_SETUP);
     collectTransitiveClosure(result, top);
     for (RuleSet module : result) {
@@ -95,7 +96,7 @@ public class BazelRuleClassProviderTest {
 
   @Test
   public void genericConsistency() {
-    checkModule(BazelRuleClassProvider.GENERIC_RULES);
+    checkModule(GenericRules.INSTANCE);
   }
 
   @Test
@@ -115,12 +116,12 @@ public class BazelRuleClassProviderTest {
 
   @Test
   public void cppConsistency() {
-    checkModule(BazelRuleClassProvider.CPP_RULES);
+    checkModule(CcRules.INSTANCE);
   }
 
   @Test
   public void javaConsistency() {
-    checkModule(BazelRuleClassProvider.JAVA_RULES);
+    checkModule(JavaRules.INSTANCE);
   }
 
   @Test
@@ -135,7 +136,7 @@ public class BazelRuleClassProviderTest {
 
   @Test
   public void objcConsistency() {
-    checkModule(BazelRuleClassProvider.OBJC_RULES);
+    checkModule(ObjcRules.INSTANCE);
   }
 
   @Test

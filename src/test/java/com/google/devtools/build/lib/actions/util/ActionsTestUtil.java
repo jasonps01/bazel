@@ -40,6 +40,7 @@ import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.ActionResult;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
+import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
 import com.google.devtools.build.lib.actions.ArtifactResolver;
@@ -360,16 +361,6 @@ public final class ActionsTestUtil {
     return transform(artifacts, Artifact::prettyPrint);
   }
 
-  /**
-   * This function is exactly duplication of {@link #prettyArtifactNames(Iterable)}
-   * It appears by mistake. It has more than 144 usages in the code. I decided to not remove it
-   * or not to mark it as deprecated. Just leave it to kindly remind that our world is not perfect.
-   * It should not us hurt to much.
-   */
-  public static List<String> prettyJarNames(Iterable<Artifact> jars) {
-    return prettyArtifactNames(jars);
-  }
-
   public static <T, R> List<R> transform(Iterable<T> iterable, Function<T, R> mapper) {
     // Can not use com.google.common.collect.Iterables.transform() there, as it returns Iterable.
     return Streams.stream(iterable)
@@ -607,7 +598,7 @@ public final class ActionsTestUtil {
   }
 
   public static SpawnActionTemplate createDummySpawnActionTemplate(
-      Artifact inputTreeArtifact, Artifact outputTreeArtifact) {
+      SpecialArtifact inputTreeArtifact, SpecialArtifact outputTreeArtifact) {
     return new SpawnActionTemplate.Builder(inputTreeArtifact, outputTreeArtifact)
         .setCommandLineTemplate(CustomCommandLine.builder().build())
         .setExecutable(PathFragment.create("bin/executable"))

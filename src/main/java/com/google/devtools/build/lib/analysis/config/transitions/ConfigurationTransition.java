@@ -15,14 +15,13 @@
 package com.google.devtools.build.lib.analysis.config.transitions;
 
 /**
- * Declaration how the configuration should change when following a label or label list attribute.
- *
- * <p>Do not add to this. This is a legacy interface from when Blaze had limited support for
- * transitions. Use {@link PatchTransition} or {@link SplitTransition} instead.
+ * A configuration transition.
  */
-@Deprecated
-public enum ConfigurationTransitionProxy implements Transition {
-  /** Transition from the target configuration to the data configuration. */
-  // TODO(bazel-team): Move this elsewhere.
-  DATA,
+public interface ConfigurationTransition {
+  /**
+   * Does this transition switch to a "host" configuration?
+   */
+  default boolean isHostTransition() {
+    return false;
+  }
 }

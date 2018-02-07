@@ -25,7 +25,6 @@ import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredAspectFactory;
-import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
@@ -37,7 +36,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.packages.AspectDefinition;
 import com.google.devtools.build.lib.packages.AspectParameters;
-import com.google.devtools.build.lib.packages.Attribute;
+import com.google.devtools.build.lib.packages.Attribute.LabelLateBoundDefault;
 import com.google.devtools.build.lib.packages.NativeAspectClass;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.rules.cpp.AspectLegalCppSemantics;
@@ -61,38 +60,40 @@ import com.google.devtools.build.lib.rules.proto.ProtoLangToolchainProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoSourceFileBlacklist;
 import com.google.devtools.build.lib.rules.proto.ProtoSupportDataProvider;
 import com.google.devtools.build.lib.rules.proto.SupportData;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.Collection;
 
 /** Part of the implementation of cc_proto_library. */
-public class CcProtoAspect extends NativeAspectClass implements ConfiguredAspectFactory {
+public abstract class CcProtoAspect extends NativeAspectClass implements ConfiguredAspectFactory {
 
   private static final String PROTO_TOOLCHAIN_ATTR = ":aspect_cc_proto_toolchain";
 
-  private static final Attribute.LateBoundDefault<?, Label> PROTO_TOOLCHAIN_LABEL =
-      Attribute.LateBoundDefault.fromTargetConfiguration(
+  private static final LabelLateBoundDefault<?> PROTO_TOOLCHAIN_LABEL =
+      LabelLateBoundDefault.fromTargetConfiguration(
           ProtoConfiguration.class,
           Label.parseAbsoluteUnchecked("@com_google_protobuf//:cc_toolchain"),
           (rule, attributes, protoConfig) -> protoConfig.protoToolchainForCc());
 
   private final CppSemantics cppSemantics;
-  private final Attribute.LateBoundDefault<?, Label> ccToolchainAttrValue;
+  private final LabelLateBoundDefault<?> ccToolchainAttrValue;
 
-  public CcProtoAspect(AspectLegalCppSemantics cppSemantics,
-      Attribute.LateBoundDefault<?, Label> ccToolchainAttrValue) {
+  protected CcProtoAspect(
+      AspectLegalCppSemantics cppSemantics, LabelLateBoundDefault<?> ccToolchainAttrValue) {
     this.cppSemantics = cppSemantics;
     this.ccToolchainAttrValue = ccToolchainAttrValue;
   }
 
   @Override
   public ConfiguredAspect create(
-      ConfiguredTarget base, RuleContext ruleContext, AspectParameters parameters)
+      ConfiguredTargetAndTarget ctatBase, RuleContext ruleContext, AspectParameters parameters)
       throws InterruptedException {
     // Get SupportData, which is provided by the proto_library rule we attach to.
     SupportData supportData =
-        checkNotNull(base.getProvider(ProtoSupportDataProvider.class)).getSupportData();
+        checkNotNull(ctatBase.getConfiguredTarget().getProvider(ProtoSupportDataProvider.class))
+            .getSupportData();
 
     try {
       ConfiguredAspect.Builder result = new ConfiguredAspect.Builder(this, parameters, ruleContext);

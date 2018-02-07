@@ -37,13 +37,13 @@ import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.HostTransition;
+import com.google.devtools.build.lib.analysis.config.transitions.ConfigurationTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.SplitTransition;
-import com.google.devtools.build.lib.analysis.config.transitions.Transition;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.Attribute.AllowedValueSet;
-import com.google.devtools.build.lib.packages.Attribute.LateBoundDefault;
+import com.google.devtools.build.lib.packages.Attribute.LabelLateBoundDefault;
 import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SafeImplicitOutputsFunction;
 import com.google.devtools.build.lib.packages.Rule;
@@ -199,8 +199,8 @@ public final class AndroidRuleClasses {
   public static final String NOCOMPRESS_EXTENSIONS_ATTR = "nocompress_extensions";
 
   /** The default label of android_sdk option */
-  public static LateBoundDefault<?, Label> getAndroidSdkLabel(Label androidSdk) {
-    return LateBoundDefault.fromTargetConfiguration(
+  public static LabelLateBoundDefault<?> getAndroidSdkLabel(Label androidSdk) {
+    return LabelLateBoundDefault.fromTargetConfiguration(
         AndroidConfiguration.class,
         androidSdk,
         (rule, attributes, configuration) -> configuration.getSdk());
@@ -300,7 +300,7 @@ public final class AndroidRuleClasses {
             ImmutableSet.of("android_binary", "android_library");
 
         @Override
-        public Transition buildTransitionFor(Rule depRule) {
+        public ConfigurationTransition buildTransitionFor(Rule depRule) {
           return keepFilterRuleClasses.contains(depRule.getRuleClass())
               ? null
               : ResourceFilterFactory.REMOVE_DYNAMICALLY_CONFIGURED_RESOURCE_FILTERING_TRANSITION;
@@ -569,6 +569,7 @@ public final class AndroidRuleClasses {
                   .cfg(HostTransition.INSTANCE)
                   .exec()
                   .value(env.getToolsLabel(AndroidRuleClasses.MANIFEST_MERGE_TOOL_LABEL)))
+          .advertiseSkylarkProvider(AndroidResourcesInfo.PROVIDER.id())
           .build();
     }
 
@@ -952,7 +953,7 @@ public final class AndroidRuleClasses {
               <li><code>manifest_merger = "android"</code>: Use the android manifest merger. Allows
                 features like placeholder substitution and tools attributes for defining merge
                 behavior. Follows the semantics from
-                <a href="http://tools.android.com/tech-docs/new-build-system/user-guide/manifest-merger">
+                <a href="https://developer.android.com/studio/build/manifest-merge.html">
                 the documentation</a> except it has been modified to also remove all
                 <code>&lt;uses-permission&gt;</code> and <code>&lt;uses-permission-sdk-23&gt;</code>
                 tags. Performs an attribute-level merge.</li>

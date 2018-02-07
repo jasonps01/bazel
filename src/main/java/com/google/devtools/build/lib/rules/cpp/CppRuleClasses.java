@@ -30,18 +30,13 @@ import static com.google.devtools.build.lib.rules.cpp.CppFileTypes.PIC_OBJECT_FI
 import static com.google.devtools.build.lib.rules.cpp.CppFileTypes.SHARED_LIBRARY;
 import static com.google.devtools.build.lib.rules.cpp.CppFileTypes.VERSIONED_SHARED_LIBRARY;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.LanguageDependentFragment.LibraryLanguage;
 import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
-import com.google.devtools.build.lib.analysis.config.transitions.ConfigurationTransitionProxy;
-import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
-import com.google.devtools.build.lib.analysis.config.transitions.Transition;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.InstrumentationSpec;
 import com.google.devtools.build.lib.cmdline.Label;
-import com.google.devtools.build.lib.packages.Attribute.LateBoundDefault;
+import com.google.devtools.build.lib.packages.Attribute.LabelLateBoundDefault;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SafeImplicitOutputsFunction;
 import com.google.devtools.build.lib.packages.RuleTransitionFactory;
-import com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition;
 import com.google.devtools.build.lib.rules.cpp.transitions.EnableLipoTransition;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.OsUtils;
@@ -56,24 +51,13 @@ public class CppRuleClasses {
    * <p>This attribute connects a target to the LIPO context target configured with the lipo input
    * collector configuration.
    */
-  public static final LateBoundDefault<?, Label> LIPO_CONTEXT_COLLECTOR =
-      LateBoundDefault.fromTargetConfiguration(
+  public static final LabelLateBoundDefault<?> LIPO_CONTEXT_COLLECTOR =
+      LabelLateBoundDefault.fromTargetConfiguration(
           CppConfiguration.class,
           null,
           // TODO(b/69548520): Remove call to isLipoOptimization
           (rule, attributes, cppConfig) ->
               cppConfig.isLipoOptimization() ? cppConfig.getLipoContextLabel() : null);
-
-  /**
-   * Declares the implementations for C++ transition enums.
-   *
-   * <p>New transitions should extend {@link PatchTransition}, which avoids the need for this map.
-   */
-  public static final ImmutableMap<Transition, Transition> DYNAMIC_TRANSITIONS_MAP =
-      ImmutableMap.of(
-          ConfigurationTransitionProxy.DATA, DisableLipoTransition.INSTANCE
-      );
-
 
   /**
    * Rule transition factory that enables LIPO on the LIPO context binary (i.e. applies a DATA ->
@@ -88,13 +72,13 @@ public class CppRuleClasses {
    */
   public static final String CROSSTOOL_LABEL = "//tools/cpp:toolchain";
 
-  public static final LateBoundDefault<?, Label> DEFAULT_MALLOC =
-      LateBoundDefault.fromTargetConfiguration(
+  public static final LabelLateBoundDefault<?> DEFAULT_MALLOC =
+      LabelLateBoundDefault.fromTargetConfiguration(
           CppConfiguration.class, null, (rule, attributes, cppConfig) -> cppConfig.customMalloc());
 
-  public static LateBoundDefault<CppConfiguration, Label> ccToolchainAttribute(
+  public static LabelLateBoundDefault<CppConfiguration> ccToolchainAttribute(
       RuleDefinitionEnvironment env) {
-    return LateBoundDefault.fromTargetConfiguration(
+    return LabelLateBoundDefault.fromTargetConfiguration(
         CppConfiguration.class,
         env.getToolsLabel(CROSSTOOL_LABEL),
         (rules, attributes, cppConfig) -> cppConfig.getCcToolchainRuleLabel());

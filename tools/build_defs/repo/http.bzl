@@ -67,8 +67,12 @@ def _http_archive_impl(ctx):
   _patch(ctx)
   ctx.file("WORKSPACE", "workspace(name = \"{name}\")\n".format(name=ctx.name))
   if ctx.attr.build_file:
+    bash_exe = ctx.os.environ["BAZEL_SH"] if "BAZEL_SH" in ctx.os.environ else "bash"
+    ctx.execute([bash_exe, "-c", "rm -f BUILD BUILD.bazel"])
     ctx.symlink(ctx.attr.build_file, "BUILD")
   elif ctx.attr.build_file_content:
+    bash_exe = ctx.os.environ["BAZEL_SH"] if "BAZEL_SH" in ctx.os.environ else "bash"
+    ctx.execute([bash_exe, "-c", "rm -f BUILD.bazel"])
     ctx.file("BUILD", ctx.attr.build_file_content)
 
 
@@ -108,9 +112,6 @@ http_archive = repository_rule(
 )
 """Downloads a Bazel repository as a compressed archive file, decompresses it,
 and makes its targets available for binding.
-
-The repository should already contain a BUILD file. If it does not, use
-`new_http_archive` instead.
 
 It supports the following file extensions: `"zip"`, `"jar"`, `"war"`,
 `"tar.gz"`, `"tgz"`, `"tar.xz"`, and `tar.bz2`.

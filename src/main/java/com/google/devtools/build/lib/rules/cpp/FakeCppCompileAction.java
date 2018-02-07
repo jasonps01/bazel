@@ -59,12 +59,14 @@ public class FakeCppCompileAction extends CppCompileAction {
       ActionOwner owner,
       NestedSet<Artifact> allInputs,
       FeatureConfiguration featureConfiguration,
+      PathFragment crosstoolTopPathFragment,
       CcToolchainFeatures.Variables variables,
       Artifact sourceFile,
       boolean shouldScanIncludes,
       boolean shouldPruneModules,
       boolean usePic,
       boolean useHeaderModules,
+      boolean isStrictSystemIncludes,
       NestedSet<Artifact> mandatoryInputs,
       ImmutableList<Artifact> builtinIncludeFiles,
       NestedSet<Artifact> prunableInputs,
@@ -72,9 +74,7 @@ public class FakeCppCompileAction extends CppCompileAction {
       PathFragment tempOutputFile,
       DotdFile dotdFile,
       ImmutableMap<String, String> localShellEnvironment,
-      CppConfiguration cppConfiguration,
       CppCompilationContext context,
-      Class<? extends CppCompileActionContext> actionContext,
       Predicate<String> nocopts,
       Iterable<IncludeScannable> lipoScannables,
       CppSemantics cppSemantics,
@@ -84,12 +84,14 @@ public class FakeCppCompileAction extends CppCompileAction {
         owner,
         allInputs,
         featureConfiguration,
+        crosstoolTopPathFragment,
         variables,
         sourceFile,
         shouldScanIncludes,
         shouldPruneModules,
         usePic,
         useHeaderModules,
+        isStrictSystemIncludes,
         mandatoryInputs,
         builtinIncludeFiles,
         prunableInputs,
@@ -100,7 +102,6 @@ public class FakeCppCompileAction extends CppCompileAction {
         null,
         null,
         localShellEnvironment,
-        cppConfiguration,
         // We only allow inclusion of header files explicitly declared in
         // "srcs", so we only use declaredIncludeSrcs, not declaredIncludeDirs.
         // (Disallowing use of undeclared headers for cc_fake_binary is needed
@@ -109,7 +110,6 @@ public class FakeCppCompileAction extends CppCompileAction {
         // the cc_fake_binary, and the runfiles must be determined at analysis
         // time, so they can't depend on the contents of the ".d" file.)
         CppCompilationContext.disallowUndeclaredHeaders(context),
-        actionContext,
         nocopts,
         lipoScannables,
         ImmutableList.<Artifact>of(),
@@ -131,7 +131,8 @@ public class FakeCppCompileAction extends CppCompileAction {
     // First, do a normal compilation, to generate the ".d" file. The generated object file is built
     // to a temporary location (tempOutputFile) and ignored afterwards.
     logger.info("Generating " + getDotdFile());
-    CppCompileActionContext context = actionExecutionContext.getContext(actionContext);
+    CppCompileActionContext context =
+        actionExecutionContext.getContext(CppCompileActionContext.class);
     CppCompileActionContext.Reply reply = null;
     try {
       CppCompileActionResult cppCompileActionResult =

@@ -35,7 +35,7 @@ public class AndroidInstrumentationTestRule implements RuleDefinition {
     return builder
         .setUndocumented()
         .add(
-            attr("instrumentation", LABEL)
+            attr("test_app", LABEL)
                 .mandatory()
                 .allowedFileTypes(FileTypeSet.NO_FILE)
                 .allowedRuleClasses("android_binary"))
@@ -56,7 +56,6 @@ public class AndroidInstrumentationTestRule implements RuleDefinition {
                 .allowedRuleClasses(
                     "android_device_script_fixture", "android_host_service_fixture"))
         .add(attr("fixture_args", STRING_DICT))
-        .add(attr("log_levels", STRING_DICT))
         .add(
             attr("$test_entry_point", LABEL)
                 .exec()

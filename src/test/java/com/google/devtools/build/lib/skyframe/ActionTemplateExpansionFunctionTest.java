@@ -38,7 +38,6 @@ import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate;
 import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate.OutputPathMapper;
 import com.google.devtools.build.lib.events.NullEventHandler;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
-import com.google.devtools.build.lib.skyframe.ArtifactSkyKey.OwnedArtifact;
 import com.google.devtools.build.lib.testutil.FoundationTestCase;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -96,9 +95,9 @@ public final class ActionTemplateExpansionFunctionTest extends FoundationTestCas
 
   @Test
   public void testActionTemplateExpansionFunction() throws Exception {
-    Artifact inputTreeArtifact = createAndPopulateTreeArtifact(
-        "inputTreeArtifact", "child0", "child1", "child2");
-    Artifact outputTreeArtifact = createTreeArtifact("outputTreeArtifact");
+    SpecialArtifact inputTreeArtifact =
+        createAndPopulateTreeArtifact("inputTreeArtifact", "child0", "child1", "child2");
+    SpecialArtifact outputTreeArtifact = createTreeArtifact("outputTreeArtifact");
 
     SpawnActionTemplate spawnActionTemplate = ActionsTestUtil.createDummySpawnActionTemplate(
         inputTreeArtifact, outputTreeArtifact);
@@ -120,10 +119,9 @@ public final class ActionTemplateExpansionFunctionTest extends FoundationTestCas
 
   @Test
   public void testThrowsOnActionConflict() throws Exception {
-    Artifact inputTreeArtifact = createAndPopulateTreeArtifact(
-        "inputTreeArtifact", "child0", "child1", "child2");
-    Artifact outputTreeArtifact = createTreeArtifact("outputTreeArtifact");
-
+    SpecialArtifact inputTreeArtifact =
+        createAndPopulateTreeArtifact("inputTreeArtifact", "child0", "child1", "child2");
+    SpecialArtifact outputTreeArtifact = createTreeArtifact("outputTreeArtifact");
 
     OutputPathMapper mapper = new OutputPathMapper() {
       @Override
@@ -148,9 +146,9 @@ public final class ActionTemplateExpansionFunctionTest extends FoundationTestCas
 
   @Test
   public void testThrowsOnArtifactPrefixConflict() throws Exception {
-    Artifact inputTreeArtifact = createAndPopulateTreeArtifact(
-        "inputTreeArtifact", "child0", "child1", "child2");
-    Artifact outputTreeArtifact = createTreeArtifact("outputTreeArtifact");
+    SpecialArtifact inputTreeArtifact =
+        createAndPopulateTreeArtifact("inputTreeArtifact", "child0", "child1", "child2");
+    SpecialArtifact outputTreeArtifact = createTreeArtifact("outputTreeArtifact");
 
     OutputPathMapper mapper = new OutputPathMapper() {
       private int i = 0;
@@ -205,7 +203,7 @@ public final class ActionTemplateExpansionFunctionTest extends FoundationTestCas
     return actionList.build();
   }
 
-  private Artifact createTreeArtifact(String path) {
+  private SpecialArtifact createTreeArtifact(String path) {
     PathFragment execPath = PathFragment.create("out").getRelative(path);
     Path fullPath = rootDirectory.getRelative(execPath);
     return new SpecialArtifact(
@@ -216,9 +214,9 @@ public final class ActionTemplateExpansionFunctionTest extends FoundationTestCas
         SpecialArtifactType.TREE);
   }
 
-  private Artifact createAndPopulateTreeArtifact(String path, String... childRelativePaths)
+  private SpecialArtifact createAndPopulateTreeArtifact(String path, String... childRelativePaths)
       throws Exception {
-    Artifact treeArtifact = createTreeArtifact(path);
+    SpecialArtifact treeArtifact = createTreeArtifact(path);
     Map<TreeFileArtifact, FileArtifactValue> treeFileArtifactMap = new LinkedHashMap<>();
 
     for (String childRelativePath : childRelativePaths) {
@@ -244,8 +242,8 @@ public final class ActionTemplateExpansionFunctionTest extends FoundationTestCas
     }
     @Override
     public SkyValue compute(SkyKey skyKey, Environment env) {
-      OwnedArtifact ownedArtifact = (OwnedArtifact) skyKey.argument();
-      Artifact artifact = ownedArtifact.getArtifact();
+      ArtifactSkyKey artifactSkyKey = (ArtifactSkyKey) skyKey.argument();
+      Artifact artifact = artifactSkyKey.getArtifact();
       return Preconditions.checkNotNull(artifactValueMap.get(artifact));
     }
 

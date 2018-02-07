@@ -569,7 +569,8 @@ public class CppLinkActionBuilder {
                 toolchain,
                 fdoSupport,
                 usePicForLtoBackendActions,
-                CppHelper.useFission(cppConfiguration, toolchain),
+                CppHelper.shouldCreatePerObjectDebugInfo(
+                    cppConfiguration, toolchain, featureConfiguration),
                 argv)
             : new LtoBackendArtifacts(
                 ltoOutputRootPrefix,
@@ -582,7 +583,8 @@ public class CppLinkActionBuilder {
                 toolchain,
                 fdoSupport,
                 usePicForLtoBackendActions,
-                CppHelper.useFission(cppConfiguration, toolchain),
+                CppHelper.shouldCreatePerObjectDebugInfo(
+                    cppConfiguration, toolchain, featureConfiguration),
                 argv);
     return ltoArtifact;
   }
@@ -1646,7 +1648,8 @@ public class CppLinkActionBuilder {
       }
 
       if (getLinkType().staticness().equals(Staticness.DYNAMIC)
-          && CppHelper.useFission(cppConfiguration, toolchain)) {
+          && CppHelper.shouldCreatePerObjectDebugInfo(
+              cppConfiguration, toolchain, featureConfiguration)) {
         buildVariables.addStringVariable(IS_USING_FISSION_VARIABLE, "");
       }
 
@@ -1666,6 +1669,8 @@ public class CppLinkActionBuilder {
 
       buildVariables.addCustomBuiltVariable(
           LIBRARIES_TO_LINK_VARIABLE, linkArgCollector.getLibrariesToLink());
+      // TODO(b/72803478): Remove once existing crosstools have been migrated
+      buildVariables.addStringVariable("libs_to_link_dont_emit_objects_for_archiver", "");
 
       buildVariables.addStringSequenceVariable(
           LIBRARY_SEARCH_DIRECTORIES_VARIABLE, linkArgCollector.getLibrarySearchDirectories());

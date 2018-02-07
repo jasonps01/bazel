@@ -54,6 +54,8 @@ import com.google.devtools.build.lib.query2.output.OutputFormatter;
 import com.google.devtools.build.lib.runtime.BlazeCommandDispatcher.LockingMode;
 import com.google.devtools.build.lib.runtime.commands.InfoItem;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.InvocationPolicy;
+import com.google.devtools.build.lib.server.CommandProtos.EnvironmentVariable;
+import com.google.devtools.build.lib.server.CommandProtos.ExecRequest;
 import com.google.devtools.build.lib.server.RPCServer;
 import com.google.devtools.build.lib.server.signal.InterruptSignalHandler;
 import com.google.devtools.build.lib.shell.JavaSubprocessFactory;
@@ -86,9 +88,11 @@ import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.OptionsProvider;
 import com.google.devtools.common.options.TriState;
 import java.io.BufferedOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -614,8 +618,7 @@ public final class BlazeRuntime {
    * @param requestStrings
    * @return the filtered request to write to the log.
    */
-  @VisibleForTesting
-  static String getRequestLogString(List<String> requestStrings) {
+  public static String getRequestLogString(List<String> requestStrings) {
     StringBuilder buf = new StringBuilder();
     buf.append('[');
     String sep = "";
@@ -702,7 +705,7 @@ public final class BlazeRuntime {
     return new CommandLineOptions(startupArgs, otherArgs);
   }
 
-  private static void captureSigint() {
+  private static InterruptSignalHandler captureSigint() {
     final Thread mainThread = Thread.currentThread();
     final AtomicInteger numInterrupts = new AtomicInteger();
 
@@ -718,7 +721,7 @@ public final class BlazeRuntime {
           }
         };
 
-    new InterruptSignalHandler() {
+    return new InterruptSignalHandler() {
       @Override
       public void run() {
         logger.info("User interrupt");
@@ -743,7 +746,7 @@ public final class BlazeRuntime {
    * exit status of the program.
    */
   private static int batchMain(Iterable<BlazeModule> modules, String[] args) {
-    captureSigint();
+    InterruptSignalHandler signalHandler = captureSigint();
     CommandLineOptions commandLineOptions = splitStartupOptions(modules, args);
     logger.info(
         "Running Blaze in batch mode with "
@@ -773,10 +776,11 @@ public final class BlazeRuntime {
     }
 
     BlazeCommandDispatcher dispatcher = new BlazeCommandDispatcher(runtime);
+    boolean shutdownDone = false;
 
     try {
       logger.info(getRequestLogString(commandLineOptions.getOtherArgs()));
-      return dispatcher.exec(
+      BlazeCommandResult result = dispatcher.exec(
           policy,
           commandLineOptions.getOtherArgs(),
           OutErr.SYSTEM_OUT_ERR,
@@ -784,14 +788,55 @@ public final class BlazeRuntime {
           "batch client",
           runtime.getClock().currentTimeMillis(),
           Optional.of(startupOptionsFromCommandLine.build()));
-    } catch (BlazeCommandDispatcher.ShutdownBlazeServerException e) {
-      return e.getExitStatus();
+      if (result.getExecRequest() == null) {
+        // Simple case: we are given an exit code
+        return result.getExitCode().getNumericExitCode();
+      }
+
+      // Not so simple case: we need to execute a binary on shutdown. exec() is not accessible from
+      // Java and is impossible on Windows in any case, so we just execute the binary after getting
+      // out of the way as completely as possible and forward its exit code.
+      // When this code is executed, no locks are held: the client lock is released by the client
+      // before it executes any command and the server lock is handled by BlazeCommandDispatcher,
+      // whose job is done by the time we get here.
+      runtime.shutdown();
+      dispatcher.shutdown();
+      shutdownDone = true;
+      signalHandler.uninstall();
+      ExecRequest request = result.getExecRequest();
+      String[] argv = new String[request.getArgvCount()];
+      for (int i = 0; i < argv.length; i++) {
+        argv[i] = request.getArgv(i).toString(StandardCharsets.ISO_8859_1);
+      }
+
+      String workingDirectory = request.getWorkingDirectory().toString(StandardCharsets.ISO_8859_1);
+      try {
+        ProcessBuilder process = new ProcessBuilder()
+            .command(argv)
+            .directory(new File(workingDirectory))
+            .inheritIO();
+
+        for (int i = 0;  i < request.getEnvironmentVariableCount(); i++) {
+          EnvironmentVariable variable = request.getEnvironmentVariable(i);
+          process.environment().put(variable.getName().toString(StandardCharsets.ISO_8859_1),
+              variable.getValue().toString(StandardCharsets.ISO_8859_1));
+        }
+
+        return process.start().waitFor();
+      } catch (IOException e) {
+        // We are in batch mode, thus, stdout/stderr are the same as that of the client.
+        System.err.println("Cannot execute process for 'run' command: " + e.getMessage());
+        logger.log(Level.SEVERE, "Exception while executing binary from 'run' command", e);
+        return ExitCode.LOCAL_ENVIRONMENTAL_ERROR.getNumericExitCode();
+      }
     } catch (InterruptedException e) {
       // This is almost main(), so it's okay to just swallow it. We are exiting soon.
       return ExitCode.INTERRUPTED.getNumericExitCode();
     } finally {
-      runtime.shutdown();
-      dispatcher.shutdown();
+      if (!shutdownDone) {
+        runtime.shutdown();
+        dispatcher.shutdown();
+      }
     }
   }
 
@@ -802,7 +847,26 @@ public final class BlazeRuntime {
   private static int serverMain(Iterable<BlazeModule> modules, OutErr outErr, String[] args) {
     InterruptSignalHandler sigintHandler = null;
     try {
-      final RPCServer blazeServer = createBlazeRPCServer(modules, Arrays.asList(args));
+      final RPCServer[] rpcServer = new RPCServer[1];
+      Runnable prepareForAbruptShutdown = () -> rpcServer[0].prepareForAbruptShutdown();
+      BlazeRuntime runtime = newRuntime(modules, Arrays.asList(args), prepareForAbruptShutdown);
+      BlazeCommandDispatcher dispatcher = new BlazeCommandDispatcher(runtime);
+      BlazeServerStartupOptions startupOptions =
+          runtime.getStartupOptionsProvider().getOptions(BlazeServerStartupOptions.class);
+      try {
+        // This is necessary so that Bazel kind of works during bootstrapping, at which time the
+        // gRPC server is not compiled in so that we don't need gRPC for bootstrapping.
+        Class<?> factoryClass = Class.forName(
+            "com.google.devtools.build.lib.server.GrpcServerImpl$Factory");
+        RPCServer.Factory factory = (RPCServer.Factory) factoryClass.getConstructor().newInstance();
+        rpcServer[0] = factory.create(dispatcher, runtime.getClock(),
+            startupOptions.commandPort,
+            runtime.getWorkspace().getWorkspace(),
+            runtime.getServerDirectory(),
+            startupOptions.maxIdleSeconds);
+      } catch (ReflectiveOperationException | IllegalArgumentException e) {
+        throw new AbruptExitException("gRPC server not compiled in", ExitCode.BLAZE_INTERNAL_ERROR);
+      }
 
       // Register the signal handler.
       sigintHandler =
@@ -810,11 +874,13 @@ public final class BlazeRuntime {
             @Override
             public void run() {
               logger.severe("User interrupt");
-              blazeServer.interrupt();
+              rpcServer[0].interrupt();
             }
           };
 
-      blazeServer.serve();
+      rpcServer[0].serve();
+      runtime.shutdown();
+      dispatcher.shutdown();
       return ExitCode.SUCCESS.getNumericExitCode();
     } catch (OptionsParsingException e) {
       outErr.printErr(e.getMessage());
@@ -847,40 +913,6 @@ public final class BlazeRuntime {
     } else {
       return JavaSubprocessFactory.INSTANCE;
     }
-  }
-
-  /**
-   * Creates and returns a new Blaze RPCServer. Call {@link RPCServer#serve()} to start the server.
-   */
-  @SuppressWarnings("LiteralClassName")  // bootstrap binary does not have gRPC
-  private static RPCServer createBlazeRPCServer(
-      Iterable<BlazeModule> modules, List<String> args)
-      throws IOException, OptionsParsingException, AbruptExitException {
-    final RPCServer[] rpcServer = new RPCServer[1];
-    Runnable prepareForAbruptShutdown = () -> rpcServer[0].prepareForAbruptShutdown();
-
-    BlazeRuntime runtime = newRuntime(modules, args, prepareForAbruptShutdown);
-    BlazeCommandDispatcher dispatcher = new BlazeCommandDispatcher(runtime);
-    CommandExecutor commandExecutor = new CommandExecutor(runtime, dispatcher);
-
-    BlazeServerStartupOptions startupOptions =
-        runtime.getStartupOptionsProvider().getOptions(BlazeServerStartupOptions.class);
-    try {
-      // This is necessary so that Bazel kind of works during bootstrapping, at which time the
-      // gRPC server is not compiled in so that we don't need gRPC for bootstrapping.
-      Class<?> factoryClass = Class.forName(
-          "com.google.devtools.build.lib.server.GrpcServerImpl$Factory");
-      RPCServer.Factory factory = (RPCServer.Factory) factoryClass.getConstructor().newInstance();
-      rpcServer[0] = factory.create(commandExecutor, runtime.getClock(),
-          startupOptions.commandPort,
-          runtime.getWorkspace().getWorkspace(),
-          runtime.getServerDirectory(),
-          startupOptions.maxIdleSeconds);
-      return rpcServer[0];
-    } catch (ReflectiveOperationException | IllegalArgumentException e) {
-      throw new AbruptExitException("gRPC server not compiled in", ExitCode.BLAZE_INTERNAL_ERROR);
-    }
-
   }
 
   /**

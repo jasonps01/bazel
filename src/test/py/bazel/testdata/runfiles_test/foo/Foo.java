@@ -1,10 +1,10 @@
-// Copyright 2017 The Bazel Authors. All rights reserved.
+// Copyright 2018 The Bazel Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package com.google.devtools.build.lib.analysis.config.transitions;
+import com.google.devtools.build.runfiles.Runfiles;
+import java.io.IOException;
 
-/**
- * A configuration transition.
- */
-public interface Transition {
-  /**
-   * Does this transition switch to a "host" configuration?
-   */
-  default boolean isHostTransition() {
-    return false;
+/** A mock Java binary only used in tests, to exercise the Java Runfiles library. */
+public class Foo {
+  public static void main(String[] args) throws IOException {
+    System.out.println("Hello Java Foo!");
+    Runfiles r = Runfiles.create();
+    System.out.println("rloc=" + r.rlocation("foo_ws/foo/datadep/hello.txt"));
   }
 }

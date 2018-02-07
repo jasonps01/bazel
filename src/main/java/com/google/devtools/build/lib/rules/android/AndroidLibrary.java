@@ -29,7 +29,6 @@ import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.TriState;
 import com.google.devtools.build.lib.rules.android.AndroidLibraryAarProvider.Aar;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
-import com.google.devtools.build.lib.rules.java.JavaPluginInfoProvider;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
 import com.google.devtools.build.lib.rules.java.JavaSourceInfoProvider;
 import com.google.devtools.build.lib.rules.java.JavaTargetAttributes;
@@ -174,7 +173,8 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
             false /* addCoverageSupport */,
             true /* collectJavaCompilationArgs */,
             false /* isBinary */,
-            null /* excludedRuntimeArtifacts */);
+            null /* excludedRuntimeArtifacts */,
+            false /* generateExtensionRegistry */);
     if (javaTargetAttributes == null) {
       return null;
     }
@@ -267,7 +267,6 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
         .add(
             AndroidCcLinkParamsProvider.class,
             AndroidCcLinkParamsProvider.create(androidCommon.getCcLinkParamsStore()))
-        .add(JavaPluginInfoProvider.class, JavaCommon.getTransitivePlugins(ruleContext))
         .add(ProguardSpecProvider.class, new ProguardSpecProvider(transitiveProguardConfigs))
         .addOutputGroup(OutputGroupInfo.HIDDEN_TOP_LEVEL, transitiveProguardConfigs)
         .add(

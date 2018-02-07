@@ -27,7 +27,8 @@ import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidAaptVersion;
-import com.google.devtools.build.lib.rules.android.ResourceContainerConverter.Builder.SeparatorType;
+import com.google.devtools.build.lib.rules.android.ResourceContainerConverter.ToArg;
+import com.google.devtools.build.lib.rules.android.ResourceContainerConverter.ToArg.Includes;
 import com.google.devtools.build.lib.util.OS;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -38,37 +39,37 @@ public class AndroidResourcesProcessorBuilder {
 
   private static final ResourceContainerConverter.ToArg AAPT2_RESOURCE_DEP_TO_ARG =
       ResourceContainerConverter.builder()
-          .includeResourceRoots()
-          .includeManifest()
-          .includeAapt2RTxt()
-          .includeSymbolsBin()
-          .includeCompiledSymbols()
-          .withSeparator(SeparatorType.COLON_COMMA)
+          .include(Includes.ResourceRoots)
+          .include(Includes.Manifest)
+          .include(Includes.Aapt2RTxt)
+          .include(Includes.SymbolsBin)
+          .include(Includes.CompiledSymbols)
+          .withSeparator(ToArg.SeparatorType.COLON_COMMA)
           .toArgConverter();
 
   private static final ResourceContainerConverter.ToArg AAPT2_RESOURCE_DEP_TO_ARG_NO_PARSE =
       ResourceContainerConverter.builder()
-          .includeResourceRoots()
-          .includeManifest()
-          .includeAapt2RTxt()
-          .includeCompiledSymbols()
-          .withSeparator(SeparatorType.COLON_COMMA)
+          .include(Includes.ResourceRoots)
+          .include(Includes.Manifest)
+          .include(Includes.Aapt2RTxt)
+          .include(Includes.CompiledSymbols)
+          .withSeparator(ToArg.SeparatorType.COLON_COMMA)
           .toArgConverter();
 
   private static final ResourceContainerConverter.ToArg RESOURCE_CONTAINER_TO_ARG =
       ResourceContainerConverter.builder()
-          .includeResourceRoots()
-          .includeManifest()
-          .withSeparator(SeparatorType.COLON_COMMA)
+          .include(Includes.ResourceRoots)
+          .include(Includes.Manifest)
+          .withSeparator(ToArg.SeparatorType.COLON_COMMA)
           .toArgConverter();
 
   private static final ResourceContainerConverter.ToArg RESOURCE_DEP_TO_ARG =
       ResourceContainerConverter.builder()
-          .includeResourceRoots()
-          .includeManifest()
-          .includeRTxt()
-          .includeSymbolsBin()
-          .withSeparator(SeparatorType.COLON_COMMA)
+          .include(Includes.ResourceRoots)
+          .include(Includes.Manifest)
+          .include(Includes.RTxt)
+          .include(Includes.SymbolsBin)
+          .withSeparator(ToArg.SeparatorType.COLON_COMMA)
           .toArgConverter();
 
   private ResourceContainer primary;
@@ -312,10 +313,6 @@ public class AndroidResourcesProcessorBuilder {
       builder.add("--conditionalKeepRules");
     }
 
-    if (resourceFilterFactory.hasDensities()) {
-      builder.add("--densities", resourceFilterFactory.getDensityString());
-    }
-
     configureCommonFlags(outs, inputs, builder);
 
     ParamFileInfo.Builder paramFileInfo = ParamFileInfo.builder(ParameterFileType.SHELL_QUOTED);
@@ -381,15 +378,6 @@ public class AndroidResourcesProcessorBuilder {
     builder.addExecPath("--aapt", sdk.getAapt().getExecutable());
     configureCommonFlags(outs, inputs, builder);
 
-    if (resourceFilterFactory.hasDensities()) {
-      // If we did not filter by density in analysis, filter in execution. Otherwise, don't filter
-      // in execution, but still pass the densities so they can be added to the manifest.
-      if (resourceFilterFactory.isPrefiltering()) {
-        builder.add("--densitiesForManifest", resourceFilterFactory.getDensityString());
-      } else {
-        builder.add("--densities", resourceFilterFactory.getDensityString());
-      }
-    }
     ImmutableList<String> filteredResources =
         resourceFilterFactory.getResourcesToIgnoreInExecution();
     if (!filteredResources.isEmpty()) {
@@ -441,7 +429,7 @@ public class AndroidResourcesProcessorBuilder {
       List<Artifact> outs, NestedSetBuilder<Artifact> inputs, Builder builder) {
 
     // Add data
-    builder.add("--primaryData", RESOURCE_CONTAINER_TO_ARG.expandToCommandLine(primary));
+    builder.add("--primaryData", RESOURCE_CONTAINER_TO_ARG.map(primary));
     inputs.addAll(primary.getArtifacts());
     inputs.add(primary.getManifest());
 
@@ -493,10 +481,17 @@ public class AndroidResourcesProcessorBuilder {
       builder.addExecPath("--packagePath", apkOut);
       outs.add(apkOut);
     }
+
+    // Always pass density and resource configuration filter strings to execution, even when
+    // filtering in analysis. Filtering in analysis cannot remove resources from Filesets, and, in
+    // addition, aapt needs access to resource filters to generate pseudolocalized resources and
+    // because its resource filtering is somewhat stricter for locales, and
+    // resource processing needs access to densities to add them to the manifest.
     if (resourceFilterFactory.hasConfigurationFilters()) {
-      // Always pass filters to aapt, even if we filtered in analysis, since aapt is stricter and
-      // might remove resources that we previously accepted.
       builder.add("--resourceConfigs", resourceFilterFactory.getConfigurationFilterString());
+    }
+    if (resourceFilterFactory.hasDensities()) {
+      builder.add("--densities", resourceFilterFactory.getDensityString());
     }
     if (!uncompressedExtensions.isEmpty()) {
       builder.addAll("--uncompressedExtensions", VectorArg.join(",").each(uncompressedExtensions));

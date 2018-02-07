@@ -39,7 +39,7 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.HostTransition;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
-import com.google.devtools.build.lib.packages.Attribute.LateBoundDefault;
+import com.google.devtools.build.lib.packages.Attribute.LabelLateBoundDefault;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SafeImplicitOutputsFunction;
 import com.google.devtools.build.lib.packages.RuleClass;
@@ -158,8 +158,8 @@ public class ObjcRuleClasses {
    *
    * <p>TODO(cpeyser): Use AppleCcToolchain instead of CcToolchain once released.
    */
-  public static final LateBoundDefault<?, Label> APPLE_TOOLCHAIN =
-      LateBoundDefault.fromTargetConfiguration(
+  public static final LabelLateBoundDefault<?> APPLE_TOOLCHAIN =
+      LabelLateBoundDefault.fromTargetConfiguration(
           CppConfiguration.class,
           Label.parseAbsoluteUnchecked(CROSSTOOL_LABEL),
           (rule, attributes, cppConfig) -> cppConfig.getCcToolchainRuleLabel());
@@ -541,10 +541,15 @@ public class ObjcRuleClasses {
     public RuleClass build(Builder builder, RuleDefinitionEnvironment env) {
       return builder
           /* <!-- #BLAZE_RULE($objc_compile_dependency_rule).ATTRIBUTE(hdrs) -->
-          The list of C, C++, Objective-C, and Objective-C++ files that are
-          included as headers by source files in this rule or by users of this
-          library. These will be compiled separately from the source if modules
-          are enabled.
+          The list of C, C++, Objective-C, and Objective-C++ header files published
+          by this library to be included by sources in dependent rules.
+          <p>
+          These headers describe the public interface for the library and will be
+          made available for inclusion by sources in this rule or in dependent
+          rules. Headers not meant to be included by a client of this library
+          should be listed in the srcs attribute instead.
+          <p>
+          These will be compiled separately from the source if modules are enabled.
           <!-- #END_BLAZE_RULE.ATTRIBUTE -->*/
           .add(attr("hdrs", LABEL_LIST)
               .direct_compile_time_input()
@@ -707,14 +712,14 @@ public class ObjcRuleClasses {
               attr(HEADER_SCANNER_ATTRIBUTE, LABEL)
                   .cfg(HostTransition.INSTANCE)
                   .value(
-                      LateBoundDefault.fromTargetConfiguration(
+                      LabelLateBoundDefault.fromTargetConfiguration(
                           ObjcConfiguration.class,
                           env.getToolsLabel("//tools/objc:header_scanner"),
                           (rule, attributes, objcConfig) -> objcConfig.getObjcHeaderScannerTool())))
           .add(
               attr(APPLE_SDK_ATTRIBUTE, LABEL)
                   .value(
-                      LateBoundDefault.fromTargetConfiguration(
+                      LabelLateBoundDefault.fromTargetConfiguration(
                           ObjcConfiguration.class,
                           null,
                           // Apple SDKs are currently only used by ObjC header thinning feature

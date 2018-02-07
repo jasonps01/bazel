@@ -249,19 +249,93 @@ class GrpcBlazeServer : public BlazeServer {
 ////////////////////////////////////////////////////////////////////////
 // Logic
 
-// A devtools_ijar::ZipExtractorProcessor to extract the InstallKeyFile
-class GetInstallKeyFileProcessor : public devtools_ijar::ZipExtractorProcessor {
+// A devtools_ijar::ZipExtractorProcessor that has a pure version of Accept.
+class PureZipExtractorProcessor : public devtools_ijar::ZipExtractorProcessor {
+ public:
+  virtual ~PureZipExtractorProcessor() {}
+
+  // Like devtools_ijar::ZipExtractorProcessor::Accept, but is guaranteed to not
+  // have side-effects.
+  virtual bool AcceptPure(const char *filename,
+                          const devtools_ijar::u4 attr) const = 0;
+};
+
+// A PureZipExtractorProcessor that adds the names of all the files ZIP up in
+// the Blaze binary to the given vector.
+class NoteAllFilesZipProcessor : public PureZipExtractorProcessor {
+ public:
+  explicit NoteAllFilesZipProcessor(std::vector<std::string>* files)
+      : files_(files) {}
+
+  bool AcceptPure(const char *filename,
+                  const devtools_ijar::u4 attr) const override {
+    return false;
+  }
+
+  bool Accept(const char *filename, const devtools_ijar::u4 attr) override {
+    files_->push_back(filename);
+    return false;
+  }
+
+  void Process(const char *filename, const devtools_ijar::u4 attr,
+               const devtools_ijar::u1 *data, const size_t size) override {
+    die(blaze_exit_code::INTERNAL_ERROR,
+        "NoteAllFilesZipProcessor::Process shouldn't be called");
+  }
+ private:
+  std::vector<std::string>* files_;
+};
+
+// A devtools_ijar::ZipExtractorProcessor that processes the ZIP entries using
+// the given PureZipExtractorProcessors.
+class CompoundZipProcessor : public devtools_ijar::ZipExtractorProcessor {
+ public:
+  explicit CompoundZipProcessor(
+      const vector<PureZipExtractorProcessor*>& processors)
+      : processors_(processors) {}
+
+  bool Accept(const char *filename, const devtools_ijar::u4 attr) override {
+    bool should_accept = false;
+    for (auto* processor : processors_) {
+      if (processor->Accept(filename, attr)) {
+        // ZipExtractorProcessor::Accept is allowed to be side-effectful, so
+        // we don't want to break out on the first true here.
+        should_accept = true;
+      }
+    }
+    return should_accept;
+  }
+
+  void Process(const char *filename, const devtools_ijar::u4 attr,
+               const devtools_ijar::u1 *data, const size_t size) override {
+    for (auto* processor : processors_) {
+      if (processor->AcceptPure(filename, attr)) {
+        processor->Process(filename, attr, data, size);
+      }
+    }
+  }
+
+ private:
+  const vector<PureZipExtractorProcessor*> processors_;
+};
+
+// A PureZipExtractorProcessor to extract the InstallKeyFile
+class GetInstallKeyFileProcessor : public PureZipExtractorProcessor {
  public:
   explicit GetInstallKeyFileProcessor(string *install_base_key)
       : install_base_key_(install_base_key) {}
 
-  virtual bool Accept(const char *filename, const devtools_ijar::u4 attr) {
-    globals->extracted_binaries.push_back(filename);
+  bool AcceptPure(const char *filename,
+                  const devtools_ijar::u4 attr) const override {
     return strcmp(filename, "install_base_key") == 0;
   }
 
-  virtual void Process(const char *filename, const devtools_ijar::u4 attr,
-                       const devtools_ijar::u1 *data, const size_t size) {
+  bool Accept(const char *filename, const devtools_ijar::u4 attr) override {
+    return AcceptPure(filename, attr);
+  }
+
+  void Process(const char *filename, const devtools_ijar::u4 attr,
+               const devtools_ijar::u1 *data, const size_t size) override {
     string str(reinterpret_cast<const char *>(data), size);
     blaze_util::StripWhitespace(&str);
     if (str.size() != 32) {
@@ -277,11 +351,14 @@ class GetInstallKeyFileProcessor : public devtools_ijar::ZipExtractorProcessor {
   string *install_base_key_;
 };
 
-// Returns the install base (the root concatenated with the contents of the file
-// 'install_base_key' contained as a ZIP entry in the Blaze binary); as a side
-// effect, it also populates the extracted_binaries global variable.
-static string GetInstallBase(const string &root, const string &self_path) {
-  GetInstallKeyFileProcessor processor(&globals->install_md5);
+// Populates globals->install_md5 and globals->extracted_binaries by reading the
+// ZIP entries in the Blaze binary.
+static void ComputeInstallMd5AndNoteAllFiles(const string &self_path) {
+  NoteAllFilesZipProcessor note_all_files_processor(
+      &globals->extracted_binaries);
+  GetInstallKeyFileProcessor install_key_processor(&globals->install_md5);
+  CompoundZipProcessor processor({&note_all_files_processor,
+                                  &install_key_processor});
   std::unique_ptr<devtools_ijar::ZipExtractor> extractor(
       devtools_ijar::ZipExtractor::Create(self_path.c_str(), &processor));
   if (extractor.get() == NULL) {
@@ -299,7 +376,6 @@ static string GetInstallBase(const string &root, const string &self_path) {
     die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
         "\nFailed to find install_base_key's in zip file");
   }
-  return blaze_util::JoinPath(root, globals->install_md5);
 }
 
 // Escapes colons by replacing them with '_C' and underscores by replacing them
@@ -318,13 +394,14 @@ string GetEmbeddedBinariesRoot(const string &install_base) {
 }
 
 // Returns the JVM command argument array.
-static vector<string> GetArgumentArray() {
+static vector<string> GetArgumentArray(
+    const WorkspaceLayout *workspace_layout) {
   vector<string> result;
 
   // e.g. A Blaze server process running in ~/src/build_root (where there's a
   // ~/src/build_root/WORKSPACE file) will appear in ps(1) as "blaze(src)".
   string workspace =
-      blaze_util::Basename(blaze_util::Dirname(globals->workspace));
+      workspace_layout->GetPrettyWorkspaceName(globals->workspace);
   string product = globals->options->product_name;
   blaze_util::ToLower(&product);
   result.push_back(product + "(" + workspace + ")");
@@ -597,7 +674,7 @@ static void VerifyJavaVersionAndSetJvm() {
 // Starts the Blaze server.
 static int StartServer(const WorkspaceLayout *workspace_layout,
                         BlazeServerStartup **server_startup) {
-  vector<string> jvm_args_vector = GetArgumentArray();
+  vector<string> jvm_args_vector = GetArgumentArray(workspace_layout);
   string argument_string = GetArgumentString(jvm_args_vector);
   string server_dir =
       blaze_util::JoinPath(globals->options->output_base, "server");
@@ -658,7 +735,7 @@ static void StartStandalone(const WorkspaceLayout *workspace_layout,
         globals->options->product_name.c_str(),
         globals->options->product_name.c_str(), product.c_str());
   }
-  vector<string> jvm_args_vector = GetArgumentArray();
+  vector<string> jvm_args_vector = GetArgumentArray(workspace_layout);
   if (!command.empty()) {
     jvm_args_vector.push_back(command);
     AddLoggingArgs(&jvm_args_vector);
@@ -797,19 +874,23 @@ static void StartServerAndConnect(const WorkspaceLayout *workspace_layout,
       server_pid);
 }
 
-// A devtools_ijar::ZipExtractorProcessor to extract the files from the blaze
-// zip.
-class ExtractBlazeZipProcessor : public devtools_ijar::ZipExtractorProcessor {
+// A PureZipExtractorProcessor to extract the files from the blaze zip.
+class ExtractBlazeZipProcessor : public PureZipExtractorProcessor {
  public:
   explicit ExtractBlazeZipProcessor(const string &embedded_binaries)
       : embedded_binaries_(embedded_binaries) {}
 
-  virtual bool Accept(const char *filename, const devtools_ijar::u4 attr) {
+  bool AcceptPure(const char *filename,
+                  const devtools_ijar::u4 attr) const override {
     return !devtools_ijar::zipattr_is_dir(attr);
   }
 
-  virtual void Process(const char *filename, const devtools_ijar::u4 attr,
-                       const devtools_ijar::u1 *data, const size_t size) {
+  bool Accept(const char *filename, const devtools_ijar::u4 attr) override {
+    return AcceptPure(filename, attr);
+  }
+
+  void Process(const char *filename, const devtools_ijar::u4 attr,
+               const devtools_ijar::u1 *data, const size_t size) override {
     string path = blaze_util::JoinPath(embedded_binaries_, filename);
     if (!blaze_util::MakeDirectories(blaze_util::Dirname(path), 0777)) {
       pdie(blaze_exit_code::INTERNAL_ERROR, "couldn't create '%s'",
@@ -831,7 +912,11 @@ class ExtractBlazeZipProcessor : public devtools_ijar::ZipExtractorProcessor {
 // is 'embedded_binaries'.
 static void ActuallyExtractData(const string &argv0,
                                 const string &embedded_binaries) {
-  ExtractBlazeZipProcessor processor(embedded_binaries);
+  std::string install_md5;
+  GetInstallKeyFileProcessor install_key_processor(&install_md5);
+  ExtractBlazeZipProcessor extract_blaze_processor(embedded_binaries);
+  CompoundZipProcessor processor({&extract_blaze_processor,
+                                  &install_key_processor});
   if (!blaze_util::MakeDirectories(embedded_binaries, 0777)) {
     pdie(blaze_exit_code::INTERNAL_ERROR, "couldn't create '%s'",
          embedded_binaries.c_str());
@@ -851,6 +936,19 @@ static void ActuallyExtractData(const string &argv0,
     die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
         "\nFailed to extract %s as a zip file: %s",
         globals->options->product_name.c_str(), extractor->GetError());
+  }
+
+  if (install_md5 != globals->install_md5) {
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "The %s binary at %s was replaced during the client's self-extraction "
+        "(old md5: %s new md5: %s). If you expected this then you should "
+        "simply re-run %s in order to pick up the different version. If you "
+        "didn't expect this then you should investigate what happened.",
+        globals->options->product_name.c_str(),
+        argv0.c_str(),
+        globals->install_md5.c_str(),
+        install_md5.c_str(),
+        globals->options->product_name.c_str());
   }
 
   // Set the timestamps of the extracted files to the future and make sure (or
@@ -970,27 +1068,6 @@ static void ExtractData(const string &self_path) {
         continue;
       }
       if (!blaze_util::CanReadFile(path)) {
-        // TODO(laszlocsomor): remove the following `#if 1` block after I or
-        // somebody else fixed https://github.com/bazelbuild/bazel/issues/3618.
-#if 1
-        fprintf(stderr,
-                "DEBUG: corrupt installation: file '%s' missing. "
-                "Dumping debug data.\n",
-                path.c_str());
-        string p = path;
-        while (!p.empty()) {
-          fprintf(stderr, "DEBUG: p=(%s), exists=%d, isdir=%d, canread=%d\n",
-                  p.c_str(), blaze_util::PathExists(p) ? 1 : 0,
-                  blaze_util::IsDirectory(p) ? 1 : 0,
-                  blaze_util::CanReadFile(p) ? 1 : 0);
-          string parent = blaze_util::Dirname(p);
-          if (parent == p) {
-            break;
-          } else {
-            p = parent;
-          }
-        }
-#endif
         die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
             "Error: corrupt installation: file '%s' missing."
             " Please remove '%s' and try again.",
@@ -1058,7 +1135,8 @@ static bool ServerNeedsToBeKilled(const vector<string> &args1,
 }
 
 // Kills the running Blaze server, if any, if the startup options do not match.
-static void KillRunningServerIfDifferentStartupOptions(BlazeServer *server) {
+static void KillRunningServerIfDifferentStartupOptions(
+    const WorkspaceLayout *workspace_layout, BlazeServer *server) {
   if (!server->Connected()) {
     return;
   }
@@ -1077,7 +1155,7 @@ static void KillRunningServerIfDifferentStartupOptions(BlazeServer *server) {
   // These strings contain null-separated command line arguments. If they are
   // the same, the server can stay alive, otherwise, it needs shuffle off this
   // mortal coil.
-  if (ServerNeedsToBeKilled(arguments, GetArgumentArray())) {
+  if (ServerNeedsToBeKilled(arguments, GetArgumentArray(workspace_layout))) {
     globals->restart_reason = NEW_OPTIONS;
     PrintWarning(
         "Running %s server needs to be killed, because the "
@@ -1210,8 +1288,9 @@ static void ComputeWorkspace(const WorkspaceLayout *workspace_layout) {
 }
 
 // Figure out the base directories based on embedded data, username, cwd, etc.
-// Sets globals->options->install_base, globals->options->output_base,
-// globals->lockfile, globals->jvm_log_file.
+// Ensures that all of globals->options->install_base,
+// globals->options->output_base, globals->extracted_binaries,
+// globals->lockfile, globals->jvm_log_file, and globals->install_md5 are set.
 static void ComputeBaseDirectories(const WorkspaceLayout *workspace_layout,
                                    const string &self_path) {
   // Only start a server when in a workspace because otherwise we won't do more
@@ -1226,12 +1305,13 @@ static void ComputeBaseDirectories(const WorkspaceLayout *workspace_layout,
   if (globals->options->install_base.empty()) {
     string install_user_root =
         blaze_util::JoinPath(globals->options->output_user_root, "install");
-    globals->options->install_base =
-        GetInstallBase(install_user_root, self_path);
+    ComputeInstallMd5AndNoteAllFiles(self_path);
+    globals->options->install_base = blaze_util::JoinPath(install_user_root,
+                                                          globals->install_md5);
   } else {
-    // We call GetInstallBase anyway to populate extracted_binaries and
-    // install_md5.
-    GetInstallBase("", self_path);
+    // We still need to populate globals->install_md5 and
+    // globals->extracted_binaries.
+    ComputeInstallMd5AndNoteAllFiles(self_path);
   }
 
   if (globals->options->output_base.empty()) {
@@ -1415,7 +1495,7 @@ int Main(int argc, const char *argv[], WorkspaceLayout *workspace_layout,
 
   blaze_server->Connect();
   EnsureCorrectRunningVersion(blaze_server);
-  KillRunningServerIfDifferentStartupOptions(blaze_server);
+  KillRunningServerIfDifferentStartupOptions(workspace_layout, blaze_server);
 
   if (globals->options->batch) {
     SetScheduling(globals->options->batch_cpu_scheduling,
@@ -1700,10 +1780,9 @@ unsigned int GrpcBlazeServer::Communicate() {
   std::thread cancel_thread(&GrpcBlazeServer::CancelThread, this);
   bool command_id_set = false;
   bool pipe_broken = false;
-  int exit_code = -1;
+  command_server::RunResponse final_response;
   bool finished = false;
   bool finished_warning_emitted = false;
-  bool termination_expected = false;
 
   while (reader->Read(&response)) {
     if (finished && !finished_warning_emitted) {
@@ -1719,8 +1798,7 @@ unsigned int GrpcBlazeServer::Communicate() {
     const char *broken_pipe_name = nullptr;
 
     if (response.finished()) {
-      exit_code = response.exit_code();
-      termination_expected = response.termination_expected();
+      final_response = response;
       finished = true;
     }
 
@@ -1758,7 +1836,7 @@ unsigned int GrpcBlazeServer::Communicate() {
 
   // If the server has shut down, but does not terminate itself within a 1m
   // grace period, terminate it.
-  if (termination_expected &&
+  if (final_response.termination_expected() &&
       !AwaitServerProcessTermination(globals->server_pid,
                                      globals->options->output_base,
                                      kPostShutdownGracePeriodSeconds)) {
@@ -1782,10 +1860,31 @@ unsigned int GrpcBlazeServer::Communicate() {
             "(log file: '%s')\n\n",
             globals->jvm_log_file.c_str());
     return GetExitCodeForAbruptExit(*globals);
+  } else if (final_response.has_exec_request()) {
+    const command_server::ExecRequest& request = final_response.exec_request();
+    if (request.argv_size() < 1) {
+      fprintf(stderr,
+          "\nServer requested exec() but did not pass a binary to execute\n\n");
+      return blaze_exit_code::INTERNAL_ERROR;
+    }
+
+    vector<string> argv;
+    argv.insert(argv.begin(), request.argv().begin(), request.argv().end());
+    for (const auto& variable : request.environment_variable()) {
+      SetEnv(variable.name(), variable.value());
+    }
+
+    if (!blaze_util::ChangeDirectory(request.working_directory())) {
+      pdie(blaze_exit_code::INTERNAL_ERROR, "changing directory into %s failed",
+           request.working_directory().c_str());
+    }
+    ExecuteProgram(request.argv(0), argv);
   }
 
   // We'll exit with exit code SIGPIPE on Unixes due to PropagateSignalOnExit()
-  return pipe_broken ? blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR : exit_code;
+  return pipe_broken
+      ? blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR
+      : final_response.exit_code();
 }
 
 void GrpcBlazeServer::Disconnect() {

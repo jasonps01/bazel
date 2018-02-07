@@ -39,6 +39,13 @@ py_test(
 )
 
 py_test(
+    name = "py_test",
+    size = "medium",
+    srcs = ["py_test.py"],
+    deps = [":test_base"],
+)
+
+py_test(
     name = "bazel_server_mode_test",
     size = "medium",
     srcs = ["bazel_server_mode_test.py"],
@@ -81,13 +88,18 @@ py_test(
     name = "launcher_test",
     size = "medium",
     srcs = ["launcher_test.py"],
+    tags = ["manual"],  # TODO(b/72827255): Reenable once it works.
     deps = [":test_base"],
 )
 
 py_test(
     name = "runfiles_test",
     srcs = ["runfiles_test.py"],
-    deps = [":test_base"],
+    data = glob(["testdata/runfiles_test/**"]),
+    deps = [
+        ":test_base",
+        "//third_party/py/six",
+    ],
 )
 
 py_test(

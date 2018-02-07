@@ -15,11 +15,15 @@ package com.google.devtools.build.lib.collect.nestedset;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.common.base.Objects;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.Multiset;
 import com.google.devtools.build.lib.analysis.actions.CommandLineItem;
+import com.google.devtools.build.lib.analysis.actions.CommandLineItem.CapturingMapFn;
 import com.google.devtools.build.lib.analysis.actions.CommandLineItem.MapFn;
+import com.google.devtools.build.lib.testutil.MoreAsserts;
 import com.google.devtools.build.lib.util.Fingerprint;
+import java.util.function.Consumer;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -99,7 +103,7 @@ public class NestedSetFingerprintCacheTest {
     cache.addNestedSetToFingerprint(
         CommandLineItem.MapFn.DEFAULT, explicitDefaultMapFnFingerprint, a);
     Fingerprint mappedFingerprint = new Fingerprint();
-    cache.addNestedSetToFingerprint(s -> s + "_mapped", mappedFingerprint, a);
+    cache.addNestedSetToFingerprint((s, args) -> args.accept(s + "_mapped"), mappedFingerprint, a);
 
     String defaultMapFnDigest = defaultMapFnFingerprint.hexDigestAndReset();
     String explicitDefaultMapFnDigest = explicitDefaultMapFnFingerprint.hexDigestAndReset();
@@ -111,5 +115,120 @@ public class NestedSetFingerprintCacheTest {
     for (Multiset.Entry<Object> entry : cache.fingerprinted.entrySet()) {
       assertThat(entry.getCount()).isEqualTo(2);
     }
+  }
+
+  @Test
+  public void testMultipleInstancesOfMapFnThrows() {
+    NestedSet<String> nestedSet =
+        NestedSetBuilder.<String>stableOrder().add("a0").add("a1").build();
+
+    // Make sure a normal method reference doesn't get blacklisted.
+    for (int i = 0; i < 2; ++i) {
+      cache.addNestedSetToFingerprint(
+          NestedSetFingerprintCacheTest::simpleExpand, new Fingerprint(), nestedSet);
+    }
+
+    // Try again to make sure Java synthesizes a new class for a second method reference.
+    for (int i = 0; i < 2; ++i) {
+      cache.addNestedSetToFingerprint(
+          NestedSetFingerprintCacheTest::simpleExpand2, new Fingerprint(), nestedSet);
+    }
+
+    // Make sure a non-capturing lambda doesn't get blacklisted
+    for (int i = 0; i < 2; ++i) {
+      cache.addNestedSetToFingerprint(
+          (s, args) -> args.accept(s + "_mapped"), new Fingerprint(), nestedSet);
+    }
+
+    // Make sure a CapturingMapFn doesn't get blacklisted
+    for (int i = 0; i < 2; ++i) {
+      cache.addNestedSetToFingerprint(
+          (CapturingMapFn<String>) (s, args) -> args.accept(s + 1), new Fingerprint(), nestedSet);
+    }
+
+    // Make sure a ParametrizedMapFn doesn't get blacklisted until it exceeds its instance count
+    cache.addNestedSetToFingerprint(new IntParametrizedMapFn(1), new Fingerprint(), nestedSet);
+    cache.addNestedSetToFingerprint(new IntParametrizedMapFn(2), new Fingerprint(), nestedSet);
+    MoreAsserts.expectThrows(
+        IllegalArgumentException.class,
+        () ->
+            cache.addNestedSetToFingerprint(
+                new IntParametrizedMapFn(3), new Fingerprint(), nestedSet));
+
+    // Make sure a capturing method reference gets blacklisted
+    MoreAsserts.expectThrows(
+        IllegalArgumentException.class,
+        () -> {
+          for (int i = 0; i < 2; ++i) {
+            StringJoiner str = new StringJoiner("hello");
+            cache.addNestedSetToFingerprint(str::expand, new Fingerprint(), nestedSet);
+          }
+        });
+
+    // Do make sure that a capturing lambda gets blacklisted
+    MoreAsserts.expectThrows(
+        IllegalArgumentException.class,
+        () -> {
+          for (int i = 0; i < 2; ++i) {
+            final int capturedVariable = i;
+            cache.addNestedSetToFingerprint(
+                (s, args) -> args.accept(s + capturedVariable), new Fingerprint(), nestedSet);
+          }
+        });
+  }
+
+  private static class IntParametrizedMapFn extends CommandLineItem.ParametrizedMapFn<String> {
+    private final int i;
+
+    private IntParametrizedMapFn(int i) {
+      this.i = i;
+    }
+
+    @Override
+    public void expandToCommandLine(String object, Consumer<String> args) {
+      args.accept(object + i);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (o == null || getClass() != o.getClass()) {
+        return false;
+      }
+      IntParametrizedMapFn that = (IntParametrizedMapFn) o;
+      return i == that.i;
+    }
+
+    @Override
+    public int maxInstancesAllowed() {
+      return 2;
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hashCode(i);
+    }
+  }
+
+  private static class StringJoiner {
+    private final String str;
+
+    private StringJoiner(String str) {
+      this.str = str;
+    }
+
+    private void expand(String other, Consumer<String> args) {
+      args.accept(str + other);
+    }
+  }
+
+  private static void simpleExpand(String o, Consumer<String> args) {
+    args.accept(o + "_mapped");
+  }
+
+  private static void simpleExpand2(String o, Consumer<String> args) {
+    args.accept(o + "_mapped2");
   }
 }

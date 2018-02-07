@@ -35,6 +35,8 @@ import com.google.devtools.build.lib.skylarkinterface.SkylarkSignature;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.SkylarkList.MutableList;
 import com.google.devtools.build.lib.testutil.TestMode;
+import java.util.List;
+import java.util.Map;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -72,6 +74,42 @@ public class SkylarkEvaluationTest extends EvaluationTest {
       return "foobar";
     }
   };
+
+  @SkylarkModule(name = "Mock", doc = "")
+  static class NativeInfoMock extends NativeInfo {
+
+    private static final NativeProvider<NativeInfoMock> CONSTRUCTOR =
+        new NativeProvider<NativeInfoMock>(NativeInfoMock.class, "native_info_mock") {};
+
+    public NativeInfoMock() {
+      super(CONSTRUCTOR);
+    }
+
+    @SkylarkCallable(name = "callable_string", doc = "", structField = false)
+    public String callableString() {
+      return "a";
+    }
+
+    @SkylarkCallable(name = "struct_field_string", doc = "", structField = true)
+    public String structFieldString() {
+      return "a";
+    }
+
+    @SkylarkCallable(name = "struct_field_callable", doc = "", structField = true)
+    public BuiltinFunction structFieldCallable() {
+      return foobar;
+    }
+
+    @SkylarkCallable(
+      name = "struct_field_none",
+      doc = "",
+      structField = true,
+      allowReturnNones = true
+    )
+    public String structFieldNone() {
+      return null;
+    }
+  }
 
   @SkylarkModule(name = "Mock", doc = "")
   static class Mock {
@@ -118,6 +156,10 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     @SkylarkCallable(name = "string", doc = "")
     public String string() {
       return "a";
+    }
+    @SkylarkCallable(name = "string_list_dict", doc = "")
+    public Map<String, List<String>> stringListDict() {
+      return ImmutableMap.of("a", ImmutableList.of("b", "c"));
     }
 
     @SkylarkCallable(
@@ -751,6 +793,18 @@ public class SkylarkEvaluationTest extends EvaluationTest {
             "type 'Mock' has no method isEmpty(string str)", "mock.isEmpty(str='abc')");
   }
 
+  @Test
+  public void testStringListDictValues() throws Exception {
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "def func(mock):",
+            "  for i, v in mock.string_list_dict().items():",
+            "    modified_list = v + ['extra_string']",
+            "  return modified_list",
+            "m = func(mock)")
+        .testLookup("m", MutableList.of(env, "b", "c", "extra_string"));
+  }
 
   @Test
   public void testJavaCallWithPositionalAndKwargs() throws Exception {
@@ -1175,7 +1229,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
         "  return e",
         "e = str(func())").testLookup("e", "[3, [1, 4]]");
   }
-  
+
   @Test
   public void testDictTupleAssignmentAsLValue() throws Exception {
     new SkylarkTest().setUp("def func():",
@@ -1328,11 +1382,32 @@ public class SkylarkEvaluationTest extends EvaluationTest {
             "return_bad",
             "string",
             "string_list",
+            "string_list_dict",
             "struct_field",
             "struct_field_callable",
             "value_of",
             "voidfunc",
             "with_params");
+  }
+
+  @Test
+  public void testStrNativeInfo() throws Exception {
+    new SkylarkTest()
+        .update("mock", new NativeInfoMock())
+        .testEval(
+            "str(mock)",
+            "'struct(struct_field_callable = <built-in function foobar>, struct_field_none = None, "
+                + "struct_field_string = \"a\")'");
+  }
+
+  @Test
+  public void testDirNativeInfo() throws Exception {
+    new SkylarkTest()
+        .update("mock", new NativeInfoMock())
+        .testEval(
+            "dir(mock)",
+            "['callable_string', 'struct_field_callable', "
+                + "'struct_field_none', 'struct_field_string']");
   }
 
   @Test
@@ -1542,10 +1617,10 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     new SkylarkTest()
         .update("val", new SkylarkClassObjectWithSkylarkCallables())
         .testIfExactError(
-            // TODO(bazel-team): This should probably list callable_only_field/method as well.
+            // TODO(bazel-team): This should probably list callable_only_method as well.
             "'struct_with_skylark_callables' object has no attribute 'nonexistent_field'\n"
-                + "Available attributes: collision_field, collision_method, values_only_field, "
-                + "values_only_method",
+                + "Available attributes: callable_only_field, collision_field, collision_method, "
+                + "values_only_field, values_only_method",
             "v = val.nonexistent_field");
   }
 

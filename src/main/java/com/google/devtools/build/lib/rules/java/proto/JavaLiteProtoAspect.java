@@ -27,7 +27,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredAspectFactory;
-import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
@@ -44,7 +43,7 @@ import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.AspectDefinition;
 import com.google.devtools.build.lib.packages.AspectParameters;
 import com.google.devtools.build.lib.packages.Attribute;
-import com.google.devtools.build.lib.packages.Attribute.LateBoundDefault;
+import com.google.devtools.build.lib.packages.Attribute.LabelLateBoundDefault;
 import com.google.devtools.build.lib.packages.NativeAspectClass;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
@@ -63,6 +62,7 @@ import com.google.devtools.build.lib.rules.proto.ProtoLangToolchainProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoSupportDataProvider;
 import com.google.devtools.build.lib.rules.proto.SupportData;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
 import javax.annotation.Nullable;
 
 /** An Aspect which JavaLiteProtoLibrary injects to build Java Lite protos. */
@@ -70,8 +70,8 @@ public class JavaLiteProtoAspect extends NativeAspectClass implements Configured
 
   public static final String PROTO_TOOLCHAIN_ATTR = ":aspect_proto_toolchain_for_javalite";
 
-  public static LateBoundDefault<?, Label> getProtoToolchainLabel(String defaultValue) {
-    return LateBoundDefault.fromTargetConfiguration(
+  public static LabelLateBoundDefault<?> getProtoToolchainLabel(String defaultValue) {
+    return LabelLateBoundDefault.fromTargetConfiguration(
         ProtoConfiguration.class,
         Label.parseAbsoluteUnchecked(defaultValue),
         (rule, attributes, protoConfig) -> protoConfig.protoToolchainForJavaLite());
@@ -81,13 +81,13 @@ public class JavaLiteProtoAspect extends NativeAspectClass implements Configured
 
   @Nullable private final String jacocoLabel;
   private final String defaultProtoToolchainLabel;
-  private final LateBoundDefault<?, Label> hostJdkAttribute;
+  private final LabelLateBoundDefault<?> hostJdkAttribute;
 
   public JavaLiteProtoAspect(
       JavaSemantics javaSemantics,
       @Nullable String jacocoLabel,
       String defaultProtoToolchainLabel,
-      LateBoundDefault<?, Label> hostJdkAttribute) {
+      LabelLateBoundDefault<?> hostJdkAttribute) {
     this.javaSemantics = javaSemantics;
     this.jacocoLabel = jacocoLabel;
     this.defaultProtoToolchainLabel = defaultProtoToolchainLabel;
@@ -96,13 +96,14 @@ public class JavaLiteProtoAspect extends NativeAspectClass implements Configured
 
   @Override
   public ConfiguredAspect create(
-      ConfiguredTarget base, RuleContext ruleContext, AspectParameters parameters)
+      ConfiguredTargetAndTarget ctatBase, RuleContext ruleContext, AspectParameters parameters)
       throws InterruptedException {
     ConfiguredAspect.Builder aspect = new ConfiguredAspect.Builder(this, parameters, ruleContext);
 
     // Get SupportData, which is provided by the proto_library rule we attach to.
     SupportData supportData =
-        checkNotNull(base.getProvider(ProtoSupportDataProvider.class)).getSupportData();
+        checkNotNull(ctatBase.getConfiguredTarget().getProvider(ProtoSupportDataProvider.class))
+            .getSupportData();
 
     Impl impl = new Impl(ruleContext, supportData, javaSemantics);
     impl.addProviders(aspect);
@@ -277,7 +278,8 @@ public class JavaLiteProtoAspect extends NativeAspectClass implements Configured
               JavaRuleOutputJarsProvider.builder(),
               /*createOutputSourceJar*/ false,
               /*outputSourceJar=*/ null);
-      return helper.buildCompilationArgsProvider(artifacts, true /* isReportedAsStrict */);
+      return helper.buildCompilationArgsProvider(
+          artifacts, /*isReportedAsStrict=*/ true, /*isNeverlink=*/ false);
     }
 
     private ImmutableList<TransitiveInfoCollection> getProtoRuntimeDeps() {

@@ -1653,7 +1653,7 @@ print(x)                        # 1
 CallSuffix = '(' [Arguments] ')' .
 
 Arguments = Argument {',' Argument} .
-Argument  = identifier | identifier '=' Test | '*' identifier | '**' identifier .
+Argument  = Test | identifier '=' Test | '*' identifier | '**' identifier .
 ```
 
 A value `f` of type `function` may be called using the expression `f(...)`.
@@ -1997,7 +1997,7 @@ A `return` statement ends the execution of a function and returns a
 value to the caller of the function.
 
 ```text
-ReturnStmt = 'return' Expression .
+ReturnStmt = 'return' [Expression] .
 ```
 
 A return statement may have zero, one, or more
@@ -3192,7 +3192,7 @@ SmallStmt = ReturnStmt
           | LoadStmt
           .
 
-ReturnStmt   = 'return' Expression .
+ReturnStmt   = 'return' [Expression] .
 BreakStmt    = 'break' .
 ContinueStmt = 'continue' .
 PassStmt     = 'pass' .
@@ -3228,7 +3228,7 @@ CallSuffix  = '(' [Arguments [',']] ')' .
 SliceSuffix = '[' [Expression] [':' Test [':' Test]] ']' .
 
 Arguments = Argument {',' Argument} .
-Argument  = identifier | identifier '=' Test | '*' identifier | '**' identifier .
+Argument  = Test | identifier '=' Test | '*' identifier | '**' identifier .
 
 ListExpr = '[' [Expression [',']] ']' .
 ListComp = '[' Test {CompClause} ']'.

@@ -58,6 +58,7 @@ import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
 import com.google.devtools.build.lib.rules.java.JavaCompilationHelper;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
+import com.google.devtools.build.lib.rules.java.JavaPluginInfoProvider;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider.OutputJar;
 import com.google.devtools.build.lib.rules.java.JavaRuntimeJarProvider;
@@ -473,7 +474,8 @@ public class AndroidCommon {
       boolean addCoverageSupport,
       boolean collectJavaCompilationArgs,
       boolean isBinary,
-      NestedSet<Artifact> excludedRuntimeArtifacts)
+      NestedSet<Artifact> excludedRuntimeArtifacts,
+      boolean generateExtensionRegistry)
       throws InterruptedException, RuleErrorException {
 
     classJar = ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_LIBRARY_CLASS_JAR);
@@ -553,7 +555,7 @@ public class AndroidCommon {
         artifactsBuilder,
         collectJavaCompilationArgs,
         filesBuilder,
-        isBinary);
+        generateExtensionRegistry);
     if (ruleContext.hasErrors()) {
       return null;
     }
@@ -604,7 +606,7 @@ public class AndroidCommon {
       JavaCompilationArtifacts.Builder javaArtifactsBuilder,
       boolean collectJavaCompilationArgs,
       NestedSetBuilder<Artifact> filesBuilder,
-      boolean isBinary)
+      boolean generateExtensionRegistry)
       throws InterruptedException {
     JavaTargetAttributes attributes = helper.getAttributes();
     if (ruleContext.hasErrors()) {
@@ -650,7 +652,7 @@ public class AndroidCommon {
         javaArtifactsBuilder,
         nativeHeaderOutput);
 
-    if (isBinary) {
+    if (generateExtensionRegistry) {
       generatedExtensionRegistryProvider =
           javaSemantics.createGeneratedExtensionRegistry(
               ruleContext,
@@ -740,8 +742,11 @@ public class AndroidCommon {
         .addProvider(JavaCompilationArgsProvider.class, compilationArgsProvider)
         .addProvider(JavaRuleOutputJarsProvider.class, ruleOutputJarsProvider)
         .addProvider(JavaSourceJarsProvider.class, sourceJarsProvider)
+        .addProvider(JavaPluginInfoProvider.class, JavaCommon.getTransitivePlugins(ruleContext))
         .setNeverlink(isNeverlink)
         .build();
+
+    AndroidResourcesInfo resourceInfo = resourceApk.toResourceInfo(ruleContext.getLabel());
 
     return builder
         .setFilesToBuild(filesToBuild)
@@ -752,9 +757,7 @@ public class AndroidCommon {
             JavaRuntimeJarProvider.class,
             new JavaRuntimeJarProvider(javaCommon.getJavaCompilationArtifacts().getRuntimeJars()))
         .addProvider(RunfilesProvider.class, RunfilesProvider.simple(getRunfiles()))
-        .addProvider(
-            AndroidResourcesProvider.class,
-            resourceApk.toResourceProvider(ruleContext.getLabel()))
+        .addNativeDeclaredProvider(resourceInfo)
         .addProvider(
             AndroidIdeInfoProvider.class,
             createAndroidIdeInfoProvider(
@@ -766,7 +769,8 @@ public class AndroidCommon {
                 zipAlignedApk,
                 apksUnderTest,
                 nativeLibs))
-        .addSkylarkTransitiveInfo(AndroidSkylarkApiProvider.NAME, new AndroidSkylarkApiProvider())
+        .addSkylarkTransitiveInfo(
+            AndroidSkylarkApiProvider.NAME, new AndroidSkylarkApiProvider(resourceInfo))
         .addOutputGroup(
             OutputGroupInfo.HIDDEN_TOP_LEVEL, collectHiddenTopLevelArtifacts(ruleContext))
         .addOutputGroup(

@@ -89,11 +89,11 @@ public final class CommandInterruptionTest {
     }
 
     @Override
-    public ExitCode exec(CommandEnvironment env, OptionsProvider options) {
+    public BlazeCommandResult exec(CommandEnvironment env, OptionsProvider options) {
       CommandState commandState = new CommandState(
           env, options.getOptions(WaitOptions.class).expectInterruption, isTestShuttingDown);
       commandStateHandoff.getAndSet(null).set(commandState);
-      return commandState.waitForExitCodeFromTest();
+      return BlazeCommandResult.exitCode(commandState.waitForExitCodeFromTest());
     }
 
     @Override
@@ -140,9 +140,8 @@ public final class CommandInterruptionTest {
             ImmutableList.of(
                 "snooze",
                 expectInterruption ? "--expect_interruption" : "--noexpect_interruption"),
-            BlazeCommandDispatcher.LockingMode.ERROR_OUT,
             "CommandInterruptionTest",
-            OutErr.SYSTEM_OUT_ERR);
+            OutErr.SYSTEM_OUT_ERR).getExitCode().getNumericExitCode();
       } catch (Exception throwable) {
         if (commandStateHandoff.isDone()) {
           commandStateHandoff.get().completeWithFailure(throwable);

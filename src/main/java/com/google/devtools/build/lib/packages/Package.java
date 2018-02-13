@@ -536,7 +536,7 @@ public class Package {
     // stat(2) is executed.
     Path filename = getPackageDirectory().getRelative(targetName);
     String suffix;
-    if (!PathFragment.create(targetName).isNormalized()) {
+    if (!PathFragment.isNormalized(targetName)) {
       // Don't check for file existence in this case because the error message
       // would be confusing and wrong. If the targetName is "foo/bar/.", and
       // there is a directory "foo/bar", it doesn't mean that "//pkg:foo/bar/."
@@ -1584,13 +1584,19 @@ public class Package {
 
     @Override
     public void serialize(
-        PackageCodecDependencies codecDeps, Package input, CodedOutputStream codedOut)
+        PackageCodecDependencies codecDeps,
+        com.google.devtools.build.lib.skyframe.serialization.SerializationContext context,
+        Package input,
+        CodedOutputStream codedOut)
         throws IOException, SerializationException {
       codecDeps.getPackageSerializer().serialize(input, codedOut);
     }
 
     @Override
-    public Package deserialize(PackageCodecDependencies codecDeps, CodedInputStream codedIn)
+    public Package deserialize(
+        PackageCodecDependencies codecDeps,
+        com.google.devtools.build.lib.skyframe.serialization.DeserializationContext context,
+        CodedInputStream codedIn)
         throws SerializationException, IOException {
       try {
         return codecDeps.getPackageDeserializer().deserialize(codedIn);

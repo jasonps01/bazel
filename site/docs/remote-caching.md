@@ -19,6 +19,7 @@ make builds significantly faster.
     * [Bazel Remote Cache](#bazel-remote-cache)
     * [Google Cloud Storage](#google-cloud-storage)
     * [Other servers](#other-servers)
+* [Authentication](#authentication)
 * [HTTP Caching Protocol](#http-caching-protocol)
 * [Run Bazel using the remote cache](#run-bazel-using-the-remote-cache)
     * [Read from and write to the remote cache](#read-from-and-write-to-the-remote-cache)
@@ -26,7 +27,8 @@ make builds significantly faster.
     * [Exclude specific targets from using the remote cache](#exclude-specific-targets-from-using-the-remote-cache)
     * [Delete content from the remote cache](#delete-content-from-the-remote-cache)
 * [Known Issues](#known-issues)
-* [Bazel remote execution (in development)](#remote-execution-in-development)
+* [External Links](#external-links)
+* [Bazel remote execution (in development)](#bazel-remote-execution-in-development)
 
 ## Remote caching overview
 
@@ -173,6 +175,14 @@ to/from your GCS bucket.
 You can set up any HTTP/1.1 server that supports PUT and GET as the cache's
 backend. Users have reported success with caching backends such as [Hazelcast],
 [Apache httpd], and [AWS S3].
+
+## Authentication
+
+As of version 0.11.0 support for HTTP Basic Authentication was added to Bazel.
+You can pass a username and password to Bazel via the remote cache URL. The
+syntax is `https://username:password@hostname.com:port/path`. Please note that
+HTTP Basic Authentication transmits username and password in plaintext over the
+network and it's thus critical to always use it with HTTPS.
 
 ## HTTP Caching Protocol
 
@@ -327,6 +337,11 @@ two users with different compilers installed will wrongly share cache hits
 because the outputs are different but they have the same action hash. Please
 watch [issue #4558] for updates.
 
+## External Links
+
+* **Your Build in a Datacenter:** The Bazel team gave a [talk](https://fosdem.org/2018/schedule/event/datacenter_build/) about remote caching and execution at FOSDEM 2018.
+
+* **Faster Bazel builds with remote caching: a benchmark:** Nicolò Valigi wrote a [blog post](https://nicolovaligi.com/faster-bazel-remote-caching-benchmark.html) in which he benchmarks remote caching in Bazel.
 
 ## Bazel remote execution (in development)
 

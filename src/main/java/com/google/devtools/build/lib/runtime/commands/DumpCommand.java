@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.runtime.commands;
 import static java.util.stream.Collectors.toList;
 
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.PackageFactory;
 import com.google.devtools.build.lib.packages.RuleClass;
@@ -32,7 +33,6 @@ import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor.RuleStat;
 import com.google.devtools.build.lib.util.ExitCode;
-import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
@@ -206,8 +206,9 @@ public class DumpCommand implements BlazeCommand {
       }
 
       if (dumpOptions.dumpVfs) {
+        // TODO(b/72498697): Remove this flag
         out.println("Filesystem cache");
-        FileSystemUtils.dump(env.getOutputBase().getFileSystem(), out);
+        out.println("dump --vfs is no longer meaningful");
         out.println();
       }
 
@@ -222,7 +223,7 @@ public class DumpCommand implements BlazeCommand {
       }
 
       if (dumpOptions.dumpRules) {
-        dumpRuleStats(env.getBlazeWorkspace(), env.getSkyframeExecutor(), out);
+        dumpRuleStats(env.getReporter(), env.getBlazeWorkspace(), env.getSkyframeExecutor(), out);
         out.println();
       }
 
@@ -290,8 +291,12 @@ public class DumpCommand implements BlazeCommand {
     }
   }
 
-  private void dumpRuleStats(BlazeWorkspace workspace, SkyframeExecutor executor, PrintStream out) {
-    List<RuleStat> ruleStats = executor.getRuleStats();
+  private void dumpRuleStats(
+      ExtendedEventHandler eventHandler,
+      BlazeWorkspace workspace,
+      SkyframeExecutor executor,
+      PrintStream out) {
+    List<RuleStat> ruleStats = executor.getRuleStats(eventHandler);
     if (ruleStats.isEmpty()) {
       out.print("No rules in Blaze server, please run a build command first.");
       return;

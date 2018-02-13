@@ -505,9 +505,9 @@ public class JavaCommon {
 
     if (!javaExecutable.isAbsolute()) {
       javaExecutable =
-          PathFragment.create(PathFragment.create(ruleContext.getWorkspaceName()), javaExecutable);
+          PathFragment.create(ruleContext.getWorkspaceName()).getRelative(javaExecutable);
     }
-    return javaExecutable.normalize().getPathString();
+    return javaExecutable.getPathString();
   }
 
   /**
@@ -639,7 +639,6 @@ public class JavaCommon {
 
     addPlugins(javaTargetAttributes);
 
-    javaTargetAttributes.setRuleKind(ruleContext.getRule().getRuleClass());
     javaTargetAttributes.setTargetLabel(ruleContext.getLabel());
 
     return javaTargetAttributes;

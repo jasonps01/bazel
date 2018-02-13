@@ -60,11 +60,13 @@ import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationInfoProvider;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaRuntimeJarProvider;
-import com.google.devtools.build.lib.rules.java.proto.JavaLiteProtoAspect;
+import com.google.devtools.build.lib.rules.java.proto.JavaProtoAspectCommon;
 import com.google.devtools.build.lib.rules.java.proto.JavaProtoLibraryAspectProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoLangToolchainProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
+import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -72,8 +74,12 @@ import java.util.Map;
 import java.util.Set;
 
 /** Aspect to {@link DexArchiveProvider build .dex Archives} from Jars. */
+@AutoCodec
 public final class DexArchiveAspect extends NativeAspectClass implements ConfiguredAspectFactory {
   public static final String NAME = "DexArchiveAspect";
+
+  public static final ObjectCodec<DexArchiveAspect> CODEC = new DexArchiveAspect_AutoCodec();
+
   /**
    * Function that returns a {@link Rule}'s {@code incremental_dexing} attribute for use by this
    * aspect. Must be provided when attaching this aspect to a target.
@@ -109,7 +115,7 @@ public final class DexArchiveAspect extends NativeAspectClass implements Configu
           ":android_sdk",
           "aidl_lib", // for the aidl runtime in the android_sdk rule
           // To get from proto_library through proto_lang_toolchain rule to proto runtime library.
-          JavaLiteProtoAspect.PROTO_TOOLCHAIN_ATTR, "runtime");
+          JavaProtoAspectCommon.LITE_PROTO_TOOLCHAIN_ATTR, "runtime");
 
   private static final FlagMatcher DEXOPTS_SUPPORTED_IN_DEXBUILDER =
       new FlagMatcher(
@@ -392,6 +398,9 @@ public final class DexArchiveAspect extends NativeAspectClass implements Configu
             .addExecPaths(VectorArg.addBefore("--bootclasspath_entry").each(bootclasspath));
     if (getAndroidConfig(ruleContext).checkDesugarDeps()) {
       args.add("--emit_dependency_metadata_as_needed");
+    }
+    if (getAndroidConfig(ruleContext).desugarJava8Libs()) {
+      args.add("--desugar_supported_core_libs");
     }
 
     ruleContext.registerAction(

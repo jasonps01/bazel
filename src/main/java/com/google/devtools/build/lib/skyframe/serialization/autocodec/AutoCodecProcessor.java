@@ -110,6 +110,9 @@ public class AutoCodecProcessor extends AbstractProcessor {
         case POLYMORPHIC:
           codecClassBuilder = buildClassWithPolymorphicStrategy(encodedType, dependencyType);
           break;
+        case SINGLETON:
+          codecClassBuilder = buildClassWithSingletonStrategy(encodedType, dependencyType);
+          break;
         default:
           throw new IllegalArgumentException("Unknown strategy: " + annotation.strategy());
       }
@@ -299,13 +302,46 @@ public class AutoCodecProcessor extends AbstractProcessor {
     return serializeBuilder.build();
   }
 
+  private String findGetterForAutoValue(VariableElement parameter, TypeElement type) {
+    List<ExecutableElement> methods = ElementFilter.methodsIn(type.getEnclosedElements());
+
+    ImmutableList.Builder<String> possibleGetterNamesBuilder =
+        ImmutableList.<String>builder().add(parameter.getSimpleName().toString());
+
+    if (parameter.asType().getKind() == TypeKind.BOOLEAN) {
+      possibleGetterNamesBuilder.add(
+          addCamelCasePrefix(parameter.getSimpleName().toString(), "is"));
+    } else {
+      possibleGetterNamesBuilder.add(
+          addCamelCasePrefix(parameter.getSimpleName().toString(), "get"));
+    }
+    ImmutableList<String> possibleGetterNames = possibleGetterNamesBuilder.build();
+
+    for (Element element : methods) {
+      if (possibleGetterNames.contains(element.getSimpleName().toString())) {
+        return element.getSimpleName().toString();
+      }
+    }
+
+    throw new IllegalArgumentException(
+        "No AutoValue getter found corresponding to parameter " + parameter.getSimpleName());
+  }
+
+  private String addCamelCasePrefix(String name, String prefix) {
+    if (name.length() == 1) {
+      return prefix + Character.toUpperCase(name.charAt(0));
+    } else {
+      return prefix + Character.toUpperCase(name.charAt(0)) + name.substring(1);
+    }
+  }
+
   private MethodSpec buildSerializeMethodWithInstantiatorForAutoValue(
       TypeElement encodedType, PartitionedParameters parameters) {
     MethodSpec.Builder serializeBuilder =
         AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, parameters.dependency);
     for (VariableElement parameter : parameters.fields) {
       TypeKind typeKind = parameter.asType().getKind();
-      String getter = "input." + parameter.getSimpleName() + "()";
+      String getter = "input." + findGetterForAutoValue(parameter, encodedType) + "()";
       switch (typeKind) {
         case BOOLEAN:
           serializeBuilder.addStatement("codedOut.writeBoolNoTag($L)", getter);
@@ -375,8 +411,7 @@ public class AutoCodecProcessor extends AbstractProcessor {
           break;
         case DECLARED:
           marshallers.writeSerializationCode(
-              new Marshaller.Context(
-                  serializeBuilder, (DeclaredType) parameter.asType(), paramAccessor));
+              new Marshaller.Context(serializeBuilder, parameter.asType(), paramAccessor));
           break;
         default:
           throw new UnsupportedOperationException("Unimplemented or invalid kind: " + typeKind);
@@ -410,7 +445,7 @@ public class AutoCodecProcessor extends AbstractProcessor {
           break;
         case DECLARED:
           marshallers.writeDeserializationCode(
-              new Marshaller.Context(builder, (DeclaredType) parameter.asType(), paramName));
+              new Marshaller.Context(builder, parameter.asType(), paramName));
           break;
         default:
           throw new IllegalArgumentException("Unimplemented or invalid kind: " + typeKind);
@@ -560,7 +595,7 @@ public class AutoCodecProcessor extends AbstractProcessor {
     return Optional.empty();
   }
 
-  private static TypeSpec.Builder buildClassWithPolymorphicStrategy(
+  private TypeSpec.Builder buildClassWithPolymorphicStrategy(
       TypeElement encodedType, @Nullable TypeElement dependency) {
     if (!encodedType.getModifiers().contains(Modifier.ABSTRACT)) {
       throw new IllegalArgumentException(
@@ -573,16 +608,21 @@ public class AutoCodecProcessor extends AbstractProcessor {
     return codecClassBuilder;
   }
 
-  private static MethodSpec buildPolymorphicSerializeMethod(
+  private MethodSpec buildPolymorphicSerializeMethod(
       TypeElement encodedType, @Nullable TypeElement dependency) {
     MethodSpec.Builder builder =
         AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, dependency);
+    TypeName polyClass = TypeName.get(env.getTypeUtils().erasure(encodedType.asType()));
     if (dependency == null) {
-      builder.addStatement("$T.serialize(input, codedOut, null)", PolymorphicHelper.class);
+      builder.addStatement(
+          "$T.serialize(context, input, $T.class, codedOut, null)",
+          PolymorphicHelper.class,
+          polyClass);
     } else {
       builder.addStatement(
-          "$T.serialize(input, codedOut, $T.ofNullable(dependency))",
+          "$T.serialize(context, input, $T.class, codedOut, $T.ofNullable(dependency))",
           PolymorphicHelper.class,
+          polyClass,
           Optional.class);
     }
     return builder.build();
@@ -594,17 +634,35 @@ public class AutoCodecProcessor extends AbstractProcessor {
         AutoCodecUtil.initializeDeserializeMethodBuilder(encodedType, dependency);
     if (dependency == null) {
       builder.addStatement(
-          "return ($T) $T.deserialize(codedIn, null)",
+          "return ($T) $T.deserialize(context, codedIn, null)",
           TypeName.get(encodedType.asType()),
           PolymorphicHelper.class);
     } else {
       builder.addStatement(
-          "return ($T) $T.deserialize(codedIn, $T.ofNullable(dependency))",
+          "return ($T) $T.deserialize(context, codedIn, $T.ofNullable(dependency))",
           TypeName.get(encodedType.asType()),
           PolymorphicHelper.class,
           Optional.class);
     }
     return builder.build();
+  }
+
+  private static TypeSpec.Builder buildClassWithSingletonStrategy(
+      TypeElement encodedType, @Nullable TypeElement dependency) {
+    if (dependency != null) {
+      throw new IllegalArgumentException(
+          encodedType + " specifies a dependency, but SINGLETON is selected as the strategy.");
+    }
+    TypeSpec.Builder codecClassBuilder =
+        AutoCodecUtil.initializeCodecClassBuilder(encodedType, dependency);
+    // Serialization is a no-op.
+    codecClassBuilder.addMethod(
+        AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, dependency).build());
+    MethodSpec.Builder deserializeMethodBuilder =
+        AutoCodecUtil.initializeDeserializeMethodBuilder(encodedType, dependency);
+    deserializeMethodBuilder.addStatement("return $T.INSTANCE", TypeName.get(encodedType.asType()));
+    codecClassBuilder.addMethod(deserializeMethodBuilder.build());
+    return codecClassBuilder;
   }
 
   /** True when {@code type} has the same type as {@code clazz}. */

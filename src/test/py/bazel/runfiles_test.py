@@ -56,12 +56,14 @@ class RunfilesTest(test_base.TestBase):
 
     self.assertTrue(os.path.exists(bin_path))
 
-    exit_code, stdout, stderr = self.RunProgram([bin_path])
+    exit_code, stdout, stderr = self.RunProgram(
+        [bin_path], env_add={"TEST_SRCDIR": "__ignore_me__"})
     self.AssertExitCode(exit_code, 0, stderr)
     if len(stdout) != 2:
       self.fail("stdout: %s" % stdout)
     self.assertEqual(stdout[0], "Hello Java Foo!")
     six.assertRegex(self, stdout[1], "^rloc=.*/foo/datadep/hello.txt")
+    self.assertNotIn("__ignore_me__", stdout[1])
     with open(stdout[1].split("=", 1)[1], "r") as f:
       lines = [l.strip() for l in f.readlines()]
     if len(lines) != 1:
@@ -96,14 +98,17 @@ class RunfilesTest(test_base.TestBase):
 
     self.assertTrue(os.path.exists(bin_path))
 
-    exit_code, stdout, stderr = self.RunProgram([bin_path])
+    exit_code, stdout, stderr = self.RunProgram(
+        [bin_path], env_add={"TEST_SRCDIR": "__ignore_me__"})
     self.AssertExitCode(exit_code, 0, stderr)
     if len(stdout) < 4:
       self.fail("stdout: %s" % stdout)
     self.assertEqual(stdout[0], "Hello Python Foo!")
     six.assertRegex(self, stdout[1], "^rloc=.*/foo/datadep/hello.txt")
+    self.assertNotIn("__ignore_me__", stdout[1])
     self.assertEqual(stdout[2], "Hello Python Bar!")
     six.assertRegex(self, stdout[3], "^rloc=.*/bar/bar-py-data.txt")
+    self.assertNotIn("__ignore_me__", stdout[3])
 
     with open(stdout[1].split("=", 1)[1], "r") as f:
       lines = [l.strip() for l in f.readlines()]
@@ -116,6 +121,56 @@ class RunfilesTest(test_base.TestBase):
     if len(lines) != 1:
       self.fail("lines: %s" % lines)
     self.assertEqual(lines[0], "data for bar.py")
+
+  def testRunfilesLibrariesFindRunfilesWithoutEnvvars(self):
+    for s, t in [
+        ("WORKSPACE.mock", "WORKSPACE"),
+        ("bar/BUILD.mock", "bar/BUILD"),
+        ("bar/bar.py", "bar/bar.py"),
+        ("bar/bar-py-data.txt", "bar/bar-py-data.txt"),
+        ("bar/Bar.java", "bar/Bar.java"),
+        ("bar/bar-java-data.txt", "bar/bar-java-data.txt"),
+    ]:
+      self.CopyFile(
+          self.Rlocation(
+              "io_bazel/src/test/py/bazel/testdata/runfiles_test/" + s), t)
+
+    exit_code, stdout, stderr = self.RunBazel(["info", "bazel-bin"])
+    self.AssertExitCode(exit_code, 0, stderr)
+    bazel_bin = stdout[0]
+
+    exit_code, _, stderr = self.RunBazel(["build", "//bar:all"])
+    self.AssertExitCode(exit_code, 0, stderr)
+
+    for lang in [("py", "Python", "bar.py"), ("java", "Java", "Bar.java")]:
+      if test_base.TestBase.IsWindows():
+        bin_path = os.path.join(bazel_bin, "bar/bar-%s.exe" % lang[0])
+      else:
+        bin_path = os.path.join(bazel_bin, "bar/bar-" + lang[0])
+
+      self.assertTrue(os.path.exists(bin_path))
+
+      exit_code, stdout, stderr = self.RunProgram(
+          [bin_path],
+          env_remove=set([
+              "RUNFILES_MANIFEST_FILE",
+              "RUNFILES_MANIFEST_ONLY",
+              "RUNFILES_DIR",
+              "JAVA_RUNFILES",
+          ]),
+          env_add={"TEST_SRCDIR": "__ignore_me__"})
+      self.AssertExitCode(exit_code, 0, stderr)
+      if len(stdout) < 2:
+        self.fail("stdout(%s): %s" % (lang[0], stdout))
+      self.assertEqual(stdout[0], "Hello %s Bar!" % lang[1])
+      six.assertRegex(self, stdout[1], "^rloc=.*/bar/bar-%s-data.txt" % lang[0])
+      self.assertNotIn("__ignore_me__", stdout[1])
+
+      with open(stdout[1].split("=", 1)[1], "r") as f:
+        lines = [l.strip() for l in f.readlines()]
+      if len(lines) != 1:
+        self.fail("lines(%s): %s" % (lang[0], lines))
+      self.assertEqual(lines[0], "data for " + lang[2])
 
 
 if __name__ == "__main__":

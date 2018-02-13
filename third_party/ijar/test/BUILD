@@ -101,6 +101,14 @@ genrule(
     tools = ["//third_party/ijar"],
 )
 
+genrule(
+    name = "interface_ijar_testlib_with_target_label",
+    srcs = [":ijar_testlib"],
+    outs = ["interface_ijar_testlib_with_target_label.jar"],
+    cmd = "$(location //third_party/ijar) --target_label //foo:foo --injecting_rule_kind foo_library $< $@",
+    tools = ["//third_party/ijar"],
+)
+
 java_library(
     name = "typeannotations2",
     srcs = glob(["typeannotations2/**/*.java"]),
@@ -180,6 +188,7 @@ java_test(
         "UseRestrictedAnnotation.java",
         "package-info.java",
         ":interface_ijar_testlib",
+        ":interface_ijar_testlib_with_target_label",
         ":liblocal_and_anonymous_lib.jar",
         ":local_and_anonymous-interface.jar",
         ":module_info-interface.jar",

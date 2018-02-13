@@ -16,7 +16,6 @@ package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.base.Functions;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -30,6 +29,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
+import com.google.devtools.build.lib.rules.cpp.CcCommon.CoptsFilter;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction.DotdFile;
@@ -65,7 +65,7 @@ public class CppCompileActionBuilder {
   private Artifact gcnoFile;
   private CppCompilationContext context = CppCompilationContext.EMPTY;
   private final List<String> pluginOpts = new ArrayList<>();
-  private Predicate<String> coptsFilter = Predicates.alwaysTrue();
+  private CoptsFilter coptsFilter = CoptsFilter.alwaysPasses();
   private ImmutableList<PathFragment> extraSystemIncludePrefixes = ImmutableList.of();
   private boolean usePic;
   private boolean allowUsingHeaderModules;
@@ -261,7 +261,7 @@ public class CppCompileActionBuilder {
     } else if (CppFileTypes.CPP_MODULE.matches(sourcePath)) {
       return CppCompileAction.CPP_MODULE_CODEGEN;
     }
-    // CcLibraryHelper ensures CppCompileAction only gets instantiated for supported file types.
+    // CcCompilationHelper ensures CppCompileAction only gets instantiated for supported file types.
     throw new IllegalStateException();
   }
 
@@ -488,8 +488,7 @@ public class CppCompileActionBuilder {
       if (includePath.startsWith(Label.EXTERNAL_PATH_PREFIX)) {
         includePath = includePath.relativeTo(Label.EXTERNAL_PATH_PREFIX);
       }
-      if (includePath.isAbsolute()
-          || !PathFragment.EMPTY_FRAGMENT.getRelative(includePath).normalize().isNormalized()) {
+      if (includePath.isAbsolute() || includePath.containsUplevelReferences()) {
         errorReporter.accept(
             String.format(
                 "The include path '%s' references a path outside of the execution root.",
@@ -690,7 +689,7 @@ public class CppCompileActionBuilder {
     return ccToolchain;
   }
 
-  public CppCompileActionBuilder setCoptsFilter(Predicate<String> coptsFilter) {
+  public CppCompileActionBuilder setCoptsFilter(CoptsFilter coptsFilter) {
     this.coptsFilter = Preconditions.checkNotNull(coptsFilter);
     return this;
   }

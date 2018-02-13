@@ -56,7 +56,14 @@ class CoreLibrarySupport {
 
   public boolean isRenamedCoreLibrary(String internalName) {
     String unprefixedName = rewriter.unprefix(internalName);
-    return renamedPrefixes.stream().anyMatch(prefix -> unprefixedName.startsWith(prefix));
+    if (!unprefixedName.startsWith("java/")) {
+      return false; // shortcut
+    }
+    // Rename any classes desugar might generate under java/ (for emulated interfaces) as well as
+    // configured prefixes
+    return unprefixedName.contains("$$Lambda$")
+        || unprefixedName.endsWith("$$CC")
+        || renamedPrefixes.stream().anyMatch(prefix -> unprefixedName.startsWith(prefix));
   }
 
   public String renameCoreLibrary(String internalName) {
@@ -64,6 +71,14 @@ class CoreLibrarySupport {
     return (internalName.startsWith("java/"))
         ? "j$/" + internalName.substring(/* cut away "java/" prefix */ 5)
         : internalName;
+  }
+
+  /**
+   * Returns {@code true} for java.* classes or interfaces that are subtypes of emulated interfaces.
+   * Note that implies that this method always returns {@code false} for user-written classes.
+   */
+  public boolean isEmulatedCoreClassOrInterface(String internalName) {
+    return getEmulatedCoreClassOrInterface(internalName) != null;
   }
 
   public boolean isEmulatedCoreLibraryInvocation(
@@ -74,9 +89,6 @@ class CoreLibrarySupport {
   @Nullable
   public Class<?> getEmulatedCoreLibraryInvocationTarget(
       int opcode, String owner, String name, String desc, boolean itf) {
-    if (owner.contains("$$Lambda$") || owner.endsWith("$$CC")) {
-      return null;  // regular desugaring handles invocations on generated classes, no emulation
-    }
     Class<?> clazz = getEmulatedCoreClassOrInterface(owner);
     if (clazz == null) {
       return null;
@@ -94,6 +106,10 @@ class CoreLibrarySupport {
   }
 
   private Class<?> getEmulatedCoreClassOrInterface(String internalName) {
+    if (internalName.contains("$$Lambda$") || internalName.endsWith("$$CC")) {
+      // Regular desugaring handles generated classes, no emulation is needed
+      return null;
+    }
     {
       String unprefixedOwner = rewriter.unprefix(internalName);
       if (!unprefixedOwner.startsWith("java/util/") || isRenamedCoreLibrary(unprefixedOwner)) {

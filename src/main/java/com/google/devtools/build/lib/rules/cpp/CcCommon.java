@@ -15,8 +15,6 @@ package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
 import com.google.common.base.Strings;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
@@ -45,13 +43,16 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform;
-import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper.SourceCategory;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationHelper.SourceCategory;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.CollidingProvidesException;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.HeadersCheckingMode;
 import com.google.devtools.build.lib.shell.ShellUtils;
+import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.Pair;
@@ -59,6 +60,7 @@ import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import javax.annotation.Nullable;
@@ -117,7 +119,6 @@ public final class CcCommon {
   private static final ImmutableSet<String> DEFAULT_FEATURES =
       ImmutableSet.of(
           CppRuleClasses.DEPENDENCY_FILE,
-          CppRuleClasses.COMPILE_ACTION_FLAGS_IN_FLAG_SET,
           CppRuleClasses.RANDOM_SEED,
           CppRuleClasses.MODULE_MAPS,
           CppRuleClasses.MODULE_MAP_HOME_CWD,
@@ -145,6 +146,31 @@ public final class CcCommon {
     this.fdoSupport =
         Preconditions.checkNotNull(
             CppHelper.getFdoSupportUsingDefaultCcToolchainAttribute(ruleContext));
+  }
+
+  /**
+   * Merges a list of output groups into one. The sets for each entry with a given key are merged.
+   */
+  public static Map<String, NestedSet<Artifact>> mergeOutputGroups(
+      ImmutableList<Map<String, NestedSet<Artifact>>> outputGroups) {
+    Map<String, NestedSetBuilder<Artifact>> mergedOutputGroupsBuilder = new TreeMap<>();
+
+    for (Map<String, NestedSet<Artifact>> outputGroup : outputGroups) {
+      for (Map.Entry<String, NestedSet<Artifact>> entryOutputGroup : outputGroup.entrySet()) {
+        String key = entryOutputGroup.getKey();
+        mergedOutputGroupsBuilder.computeIfAbsent(
+            key, (String k) -> NestedSetBuilder.compileOrder());
+        mergedOutputGroupsBuilder.get(key).addTransitive(entryOutputGroup.getValue());
+      }
+    }
+
+    Map<String, NestedSet<Artifact>> mergedOutputGroups = new TreeMap<>();
+    for (Map.Entry<String, NestedSetBuilder<Artifact>> entryOutputGroupBuilder :
+        mergedOutputGroupsBuilder.entrySet()) {
+      mergedOutputGroups.put(
+          entryOutputGroupBuilder.getKey(), entryOutputGroupBuilder.getValue().build());
+    }
+    return mergedOutputGroups;
   }
 
   /**
@@ -176,7 +202,7 @@ public final class CcCommon {
   }
 
   public ImmutableList<String> getCopts() {
-    if (!getCoptsFilter(ruleContext).apply("-Wno-future-warnings")) {
+    if (!getCoptsFilter(ruleContext).passesFilter("-Wno-future-warnings")) {
       ruleContext.attributeWarning(
           "nocopts",
           String.format(
@@ -359,18 +385,55 @@ public final class CcCommon {
     }
   }
 
+  /** A filter that removes copts from a c++ compile action according to a nocopts regex. */
+  @AutoCodec
+  static class CoptsFilter {
+    public static final ObjectCodec<CoptsFilter> CODEC = new CcCommon_CoptsFilter_AutoCodec();
+
+    private final Pattern noCoptsPattern;
+    private final boolean allPasses;
+
+    @VisibleForSerialization
+    CoptsFilter(Pattern noCoptsPattern, boolean allPasses) {
+      this.noCoptsPattern = noCoptsPattern;
+      this.allPasses = allPasses;
+    }
+
+    /** Creates a filter that filters all matches to a regex. */
+    public static CoptsFilter fromRegex(Pattern noCoptsPattern) {
+      return new CoptsFilter(noCoptsPattern, false);
+    }
+
+    /** Creates a filter that passes on all inputs. */
+    public static CoptsFilter alwaysPasses() {
+      return new CoptsFilter(null, true);
+    }
+
+    /**
+     * Returns true if the provided string passes through the filter, or false if it should be
+     * removed.
+     */
+    public boolean passesFilter(String flag) {
+      if (allPasses) {
+        return true;
+      } else {
+        return !noCoptsPattern.matcher(flag).matches();
+      }
+    }
+  }
+
   /** Returns copts filter built from the make variable expanded nocopts attribute. */
-  Predicate<String> getCoptsFilter() {
+  CoptsFilter getCoptsFilter() {
     return getCoptsFilter(ruleContext);
   }
 
   /** @see CcCommon#getCoptsFilter() */
-  private static Predicate<String> getCoptsFilter(RuleContext ruleContext) {
+  private static CoptsFilter getCoptsFilter(RuleContext ruleContext) {
     Pattern noCoptsPattern = getNoCoptsPattern(ruleContext);
     if (noCoptsPattern == null) {
-      return Predicates.alwaysTrue();
+      return CoptsFilter.alwaysPasses();
     }
-    return flag -> !noCoptsPattern.matcher(flag).matches();
+    return CoptsFilter.fromRegex(noCoptsPattern);
   }
 
   @Nullable
@@ -402,7 +465,7 @@ public final class CcCommon {
    * otherwise.
    */
   static boolean noCoptsMatches(String option, RuleContext ruleContext) {
-    return !getCoptsFilter(ruleContext).apply(option);
+    return !getCoptsFilter(ruleContext).passesFilter(option);
   }
 
   private static final String DEFINES_ATTRIBUTE = "defines";
@@ -482,8 +545,8 @@ public final class CcCommon {
             "ignoring invalid absolute path '" + includesAttr + "'");
         continue;
       }
-      PathFragment includesPath = packageFragment.getRelative(includesAttr).normalize();
-      if (!includesPath.isNormalized()) {
+      PathFragment includesPath = packageFragment.getRelative(includesAttr);
+      if (includesPath.containsUplevelReferences()) {
         ruleContext.attributeError("includes",
             "Path references a path above the execution root.");
       }

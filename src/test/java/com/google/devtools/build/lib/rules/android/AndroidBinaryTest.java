@@ -51,6 +51,7 @@ import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompileAction;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
 import com.google.devtools.build.lib.testutil.MoreAsserts;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -1547,19 +1548,6 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "png");
   }
 
-  private void testDirectResourceFiltering(
-      String filters, List<String> unexpectedQualifiers, ImmutableList<String> expectedQualifiers)
-      throws Exception {
-    testDirectResourceFiltering(
-        filters,
-        /* densities= */ "",
-        unexpectedQualifiers,
-        expectedQualifiers,
-        /* expectUnqualifiedResource= */ true,
-        "drawable",
-        "png");
-  }
-
   private void testDensityResourceFiltering(
       String densities, List<String> unexpectedQualifiers, List<String> expectedQualifiers)
       throws Exception {
@@ -1569,6 +1557,19 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         unexpectedQualifiers,
         expectedQualifiers,
         /* expectUnqualifiedResource= */ false,
+        "drawable",
+        "png");
+  }
+
+  private void testDirectResourceFiltering(
+      String filters, List<String> unexpectedQualifiers, ImmutableList<String> expectedQualifiers)
+      throws Exception {
+    testDirectResourceFiltering(
+        filters,
+        /* densities= */ "",
+        unexpectedQualifiers,
+        expectedQualifiers,
+        /* expectUnqualifiedResource= */ true,
         "drawable",
         "png");
   }
@@ -2004,7 +2005,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "<resources><string name = 'lib_string'>Libs!</string></resources>");
     scratch.file("java/r/android/res/values/strings.xml",
         "<resources><string name = 'hello'>Hello Android!</string></resources>");
-    Artifact jar = getResourceClassJar(getConfiguredTarget("//java/r/android:r"));
+    Artifact jar = getResourceClassJar(getConfiguredTargetAndTarget("//java/r/android:r"));
     assertThat(getGeneratingAction(jar).getMnemonic()).isEqualTo("RClassGenerator");
     assertThat(getGeneratingSpawnActionArgs(jar))
         .containsAllOf("--primaryRTxt", "--primaryManifest", "--library", "--classJarOutput");
@@ -2019,7 +2020,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "               )");
     scratch.file("java/r/android/res/values/strings.xml",
         "<resources><string name = 'hello'>Hello Android!</string></resources>");
-    Artifact jar = getResourceClassJar(getConfiguredTarget("//java/r/android:r"));
+    Artifact jar = getResourceClassJar(getConfiguredTargetAndTarget("//java/r/android:r"));
     assertThat(getGeneratingAction(jar).getMnemonic()).isEqualTo("RClassGenerator");
     List<String> args = getGeneratingSpawnActionArgs(jar);
     assertThat(args).containsAllOf("--primaryRTxt", "--primaryManifest", "--classJarOutput");
@@ -2044,7 +2045,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "<resources><string name = 'lib_string'>Libs!</string></resources>");
     scratch.file("java/r/android/res/values/strings.xml",
         "<resources><string name = 'hello'>Hello Android!</string></resources>");
-    ConfiguredTarget binary = getConfiguredTarget("//java/r/android:r");
+    ConfiguredTargetAndTarget binary = getConfiguredTargetAndTarget("//java/r/android:r");
     Artifact jar = getResourceClassJar(binary);
     assertThat(getGeneratingAction(jar).getMnemonic()).isEqualTo("RClassGenerator");
     List<String> args = getGeneratingSpawnActionArgs(jar);
@@ -2867,6 +2868,59 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "    srcs = [':jar'])",
         "filegroup(name = 'jar',",
         "    srcs = ['lib.jar'])");
+  }
+
+  @Test
+  public void testDesugarJava8Libs_noProguard() throws Exception {
+    useConfiguration("--experimental_desugar_java8_libs");
+    scratch.file(
+        "java/com/google/android/BUILD",
+        "android_binary(",
+        "  name = 'foo',",
+        "  srcs = ['foo.java'],",
+        "  manifest = 'AndroidManifest.xml',",
+        "  multidex = 'native',",
+        ")");
+
+    ConfiguredTarget top = getConfiguredTarget("//java/com/google/android:foo");
+    Artifact artifact = getBinArtifact("_dx/foo/_final_classes.dex.zip", top);
+    assertThat(artifact).named("_final_classes.dex.zip").isNotNull();
+    Action generatingAction = getGeneratingAction(artifact);
+    assertThat(ActionsTestUtil.baseArtifactNames(generatingAction.getInputs()))
+        .containsAllOf("classes.dex.zip", /*canned*/ "java8_legacy.dex.zip");
+  }
+
+  @Test
+  public void testDesugarJava8Libs_withProguard() throws Exception {
+    useConfiguration("--experimental_desugar_java8_libs");
+    scratch.file(
+        "java/com/google/android/BUILD",
+        "android_binary(",
+        "  name = 'foo',",
+        "  srcs = ['foo.java'],",
+        "  manifest = 'AndroidManifest.xml',",
+        "  multidex = 'native',",
+        "  proguard_specs = ['foo.cfg'],",
+        ")");
+
+    ConfiguredTarget top = getConfiguredTarget("//java/com/google/android:foo");
+    Artifact artifact = getBinArtifact("_dx/foo/_final_classes.dex.zip", top);
+    assertThat(artifact).named("_final_classes.dex.zip").isNotNull();
+    Action generatingAction = getGeneratingAction(artifact);
+    assertThat(ActionsTestUtil.baseArtifactNames(generatingAction.getInputs()))
+        .containsAllOf("classes.dex.zip", /*built*/ "_java8_legacy.dex.zip");
+  }
+
+  @Test
+  public void testDesugarJava8Libs_noMultidexError() throws Exception {
+    useConfiguration("--experimental_desugar_java8_libs");
+    checkError(/*packageName=*/ "java/com/google/android", /*ruleName=*/ "foo",
+        /*expectedErrorMessage=*/ "multidex",
+        "android_binary(",
+        "  name = 'foo',",
+        "  srcs = ['foo.java'],",
+        "  manifest = 'AndroidManifest.xml',",
+        ")");
   }
 
   @Test
@@ -4024,6 +4078,35 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
   }
 
   @Test
+  public void testInstrumentationInfoCreatableFromSkylark() throws Exception {
+    scratch.file(
+        "java/com/google/android/instr/BUILD",
+        "load(':instr.bzl', 'instr')",
+        "android_binary(name = 'b1',",
+        "               srcs = ['b1.java'],",
+        "               instruments = ':b2',",
+        "               manifest = 'AndroidManifest.xml')",
+        "android_binary(name = 'b2',",
+        "               srcs = ['b2.java'],",
+        "               manifest = 'AndroidManifest.xml')",
+        "instr(name = 'instr', dep = ':b1')");
+    scratch.file(
+        "java/com/google/android/instr/instr.bzl",
+        "def _impl(ctx):",
+        "  target = ctx.attr.dep[AndroidInstrumentationInfo].target_apk",
+        "  instr = ctx.attr.dep[AndroidInstrumentationInfo].instrumentation_apk",
+        "  return [AndroidInstrumentationInfo(target_apk=target,instrumentation_apk=instr)]",
+        "instr = rule(implementation=_impl,",
+        "             attrs={'dep': attr.label(providers=[AndroidInstrumentationInfo])})");
+    ConfiguredTarget instr = getConfiguredTarget("//java/com/google/android/instr");
+    assertThat(instr).isNotNull();
+    assertThat(instr.get(AndroidInstrumentationInfo.PROVIDER).getTargetApk().prettyPrint())
+        .isEqualTo("java/com/google/android/instr/b2.apk");
+    assertThat(instr.get(AndroidInstrumentationInfo.PROVIDER).getInstrumentationApk().prettyPrint())
+        .isEqualTo("java/com/google/android/instr/b1.apk");
+  }
+
+  @Test
   public void testInstrumentationInfoProviderHasApks() throws Exception {
     scratch.file(
         "java/com/google/android/instr/BUILD",
@@ -4084,8 +4167,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
             "--checkHashMismatch",
             "IGNORE",
             "--explicitFilters",
-            "R\\.class,R\\$.*\\.class,/BR\\.class$,/databinding/[^/]+Binding\\.class$,"
-                + "com/google/protobuf/BlazeGeneratedExtensionRegistryLiteLoader\\.class",
+            "R\\.class,R\\$.*\\.class,/BR\\.class$,/databinding/[^/]+Binding\\.class$",
             "--outputMode",
             "DONT_CARE");
   }

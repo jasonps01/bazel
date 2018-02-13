@@ -26,7 +26,8 @@ import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
-import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper.Info;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationHelper.CompilationInfo;
+import com.google.devtools.build.lib.rules.cpp.CcLinkingHelper.LinkingInfo;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.vfs.Path;
@@ -97,13 +98,12 @@ public abstract class CcIncLibrary implements RuleConfiguredTargetFactory {
 
     // For every source artifact, we compute a virtual artifact that is below the include directory.
     // These are used for include checking.
-    PathFragment prefixFragment = packageFragment.getRelative(expandedIncSymlinkAttr);
-    if (!prefixFragment.isNormalized()) {
+    if (!PathFragment.isNormalized(expandedIncSymlinkAttr)) {
       ruleContext.attributeWarning("prefix", "should not contain '.' or '..' elements");
     }
+    PathFragment prefixFragment = packageFragment.getRelative(expandedIncSymlinkAttr);
     ImmutableSortedMap.Builder<Artifact, Artifact> virtualArtifactMapBuilder =
         ImmutableSortedMap.orderedBy(Artifact.EXEC_PATH_COMPARATOR);
-    prefixFragment = prefixFragment.normalize();
     ImmutableList<Artifact> hdrs = ruleContext.getPrerequisiteArtifacts("hdrs", Mode.TARGET).list();
     for (Artifact src : hdrs) {
       // All declared header files must start with package/targetPrefix.
@@ -130,14 +130,21 @@ public abstract class CcIncLibrary implements RuleConfiguredTargetFactory {
         new CreateIncSymlinkAction(ruleContext.getActionOwner(), virtualArtifactMap, includeRoot));
     FdoSupportProvider fdoSupport =
         CppHelper.getFdoSupportUsingDefaultCcToolchainAttribute(ruleContext);
-    Info.CompilationInfo compilationInfo =
-        new CcLibraryHelper(ruleContext, semantics, featureConfiguration, ccToolchain, fdoSupport)
+    CompilationInfo compilationInfo =
+        new CcCompilationHelper(
+                ruleContext, semantics, featureConfiguration, ccToolchain, fdoSupport)
             .addIncludeDirs(Arrays.asList(includePath))
             .addPublicHeaders(virtualArtifactMap.keySet())
             .addDeps(ruleContext.getPrerequisites("deps", Mode.TARGET))
             .compile();
-    Info.LinkingInfo linkingInfo =
-        new CcLibraryHelper(ruleContext, semantics, featureConfiguration, ccToolchain, fdoSupport)
+    LinkingInfo linkingInfo =
+        new CcLinkingHelper(
+                ruleContext,
+                semantics,
+                featureConfiguration,
+                ccToolchain,
+                fdoSupport,
+                ruleContext.getConfiguration())
             .addDeps(ruleContext.getPrerequisites("deps", Mode.TARGET))
             .link(
                 compilationInfo.getCcCompilationOutputs(),
@@ -154,8 +161,8 @@ public abstract class CcIncLibrary implements RuleConfiguredTargetFactory {
         .addProviders(linkingInfo.getProviders())
         .addSkylarkTransitiveInfo(CcSkylarkApiProvider.NAME, new CcSkylarkApiProvider())
         .addOutputGroups(
-            Info.mergeOutputGroups(
-                compilationInfo.getOutputGroups(), linkingInfo.getOutputGroups()))
+            CcCommon.mergeOutputGroups(
+                ImmutableList.of(compilationInfo.getOutputGroups(), linkingInfo.getOutputGroups())))
         .add(InstrumentedFilesProvider.class, instrumentedFilesProvider)
         .add(RunfilesProvider.class, RunfilesProvider.simple(Runfiles.EMPTY))
         .build();

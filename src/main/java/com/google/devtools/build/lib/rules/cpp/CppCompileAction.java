@@ -15,7 +15,6 @@ package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -54,13 +53,18 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
+import com.google.devtools.build.lib.rules.cpp.CcCommon.CoptsFilter;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppCompileActionContext.Reply;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
 import com.google.devtools.build.lib.rules.cpp.CppHelper.PregreppedHeader;
+import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.util.DependencySet;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.ShellEscaper;
+import com.google.devtools.build.lib.vfs.FileSystemProvider;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -178,6 +182,10 @@ public class CppCompileAction extends AbstractAction
   private final boolean usePic;
   private final boolean useHeaderModules;
   private final boolean isStrictSystemIncludes;
+  private final boolean needsDotdInputPruning;
+  protected final boolean needsIncludeValidation;
+  private final IncludeProcessing includeProcessing;
+
   private final CppCompilationContext context;
   private final Iterable<IncludeScannable> lipoScannables;
   private final ImmutableList<Artifact> builtinIncludeFiles;
@@ -191,7 +199,6 @@ public class CppCompileAction extends AbstractAction
   private final String actionName;
 
   private final FeatureConfiguration featureConfiguration;
-  protected final CppSemantics cppSemantics;
 
   /**
    * Identifier for the actual execution time behavior of the action.
@@ -279,7 +286,7 @@ public class CppCompileAction extends AbstractAction
       Artifact optionalSourceFile,
       ImmutableMap<String, String> localShellEnvironment,
       CppCompilationContext context,
-      Predicate<String> coptsFilter,
+      CoptsFilter coptsFilter,
       Iterable<IncludeScannable> lipoScannables,
       ImmutableList<Artifact> additionalIncludeScanningRoots,
       UUID actionClassId,
@@ -318,7 +325,6 @@ public class CppCompileAction extends AbstractAction
     this.compileCommandLine =
         CompileCommandLine.builder(
                 sourceFile,
-                outputFile,
                 coptsFilter,
                 actionName,
                 crosstoolTopPathFragment,
@@ -337,7 +343,10 @@ public class CppCompileAction extends AbstractAction
     this.mandatoryInputs = mandatoryInputs;
     this.prunableInputs = prunableInputs;
     this.builtinIncludeFiles = builtinIncludeFiles;
-    this.cppSemantics = cppSemantics;
+    this.needsDotdInputPruning = cppSemantics.needsDotdInputPruning();
+    this.needsIncludeValidation = cppSemantics.needsIncludeValidation();
+    this.includeProcessing = cppSemantics.getIncludeProcessing();
+
     this.additionalIncludeScanningRoots = ImmutableList.copyOf(additionalIncludeScanningRoots);
     this.builtInIncludeDirectories =
         ImmutableList.copyOf(cppProvider.getBuiltInIncludeDirectories());
@@ -422,9 +431,9 @@ public class CppCompileAction extends AbstractAction
     try {
       initialResult =
           actionExecutionContext
-              .getContext(CppCompileActionContext.class)
+              .getContext(CppIncludeScanningContext.class)
               .findAdditionalInputs(
-                  this, actionExecutionContext, cppSemantics.getIncludeProcessing());
+                  this, actionExecutionContext, includeProcessing);
     } catch (ExecException e) {
       throw e.toActionExecutionException(
           "Include scanning of rule '" + getOwner().getLabel() + "'",
@@ -620,7 +629,7 @@ public class CppCompileAction extends AbstractAction
   @Override
   public List<String> getCmdlineIncludes() {
     ImmutableList.Builder<String> cmdlineIncludes = ImmutableList.builder();
-    List<String> args = getArgv();
+    List<String> args = getArguments();
     for (Iterator<String> argi = args.iterator(); argi.hasNext();) {
       String arg = argi.next();
       if (arg.equals("-include") && argi.hasNext()) {
@@ -682,21 +691,9 @@ public class CppCompileAction extends AbstractAction
     return ImmutableMap.copyOf(environment);
   }
 
-  /**
-   * Returns a new, mutable list of command and arguments (argv) to be passed
-   * to the gcc subprocess.
-   */
-  public final List<String> getArgv() {
-    return getArgv(getInternalOutputFile());
-  }
-
-  protected final List<String> getArgv(PathFragment outputFile) {
-    return compileCommandLine.getArgv(outputFile, overwrittenVariables);
-  }
-
   @Override
   public List<String> getArguments() {
-    return getArgv();
+    return compileCommandLine.getArguments(overwrittenVariables);
   }
 
   @Override
@@ -1046,7 +1043,8 @@ public class CppCompileAction extends AbstractAction
   public ResourceSet estimateResourceConsumptionLocal() {
     // We use a local compile, so much of the time is spent waiting for IO,
     // but there is still significant CPU; hence we estimate 50% cpu usage.
-    return ResourceSet.createWithRamCpuIo(/*memoryMb=*/200, /*cpuUsage=*/0.5, /*ioUsage=*/0.0);
+    return ResourceSet.createWithRamCpuIo(
+        /* memoryMb= */ 200, /* cpuUsage= */ 0.5, /* ioUsage= */ 0.0);
   }
 
   @Override
@@ -1063,10 +1061,10 @@ public class CppCompileAction extends AbstractAction
     // itself is fully determined by the input source files and module maps.
     // A better long-term solution would be to make the compiler to find them automatically and
     // never hand in the .pcm files explicitly on the command line in the first place.
-    f.addStrings(compileCommandLine.getArgv(getInternalOutputFile(), null));
+    f.addStrings(compileCommandLine.getArguments(/* overwrittenVariables= */ null));
 
     /*
-     * getArgv() above captures all changes which affect the compilation
+     * getArguments() above captures all changes which affect the compilation
      * command and hence the contents of the object file.  But we need to
      * also make sure that we reexecute the action if any of the fields
      * that affect whether validateIncludes() will report an error or warning
@@ -1116,8 +1114,8 @@ public class CppCompileAction extends AbstractAction
     ensureCoverageNotesFilesExist();
 
     // This is the .d file scanning part.
-    IncludeScanningContext scanningContext =
-        actionExecutionContext.getContext(IncludeScanningContext.class);
+    CppIncludeExtractionContext scanningContext =
+        actionExecutionContext.getContext(CppIncludeExtractionContext.class);
     Path execRoot = actionExecutionContext.getExecRoot();
 
     NestedSet<Artifact> discoveredInputs;
@@ -1141,7 +1139,7 @@ public class CppCompileAction extends AbstractAction
     // hdrs_check: This cannot be switched off for C++ build actions,
     // because doing so would allow for incorrect builds.
     // HeadersCheckingMode.NONE should only be used for ObjC build actions.
-    if (cppSemantics.needsIncludeValidation()) {
+    if (needsIncludeValidation) {
       validateInclusions(
           discoveredInputs,
           actionExecutionContext.getArtifactExpander(),
@@ -1157,7 +1155,7 @@ public class CppCompileAction extends AbstractAction
       ShowIncludesFilter showIncludesFilterForStdout,
       ShowIncludesFilter showIncludesFilterForStderr)
       throws ActionExecutionException {
-    if (!cppSemantics.needsDotdInputPruning()) {
+    if (!needsDotdInputPruning) {
       return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
     }
     ImmutableList.Builder<Path> dependencies = new ImmutableList.Builder<>();
@@ -1171,7 +1169,7 @@ public class CppCompileAction extends AbstractAction
             .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
             .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());
 
-    if (cppSemantics.needsIncludeValidation()) {
+    if (needsIncludeValidation) {
       discoveryBuilder.shouldValidateInclusions();
     }
 
@@ -1182,7 +1180,7 @@ public class CppCompileAction extends AbstractAction
   public NestedSet<Artifact> discoverInputsFromDotdFiles(
       Path execRoot, ArtifactResolver artifactResolver, Reply reply)
       throws ActionExecutionException {
-    if (!cppSemantics.needsDotdInputPruning() || getDotdFile() == null) {
+    if (!needsDotdInputPruning || getDotdFile() == null) {
       return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
     }
     HeaderDiscovery.Builder discoveryBuilder =
@@ -1193,7 +1191,7 @@ public class CppCompileAction extends AbstractAction
             .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
             .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());
 
-    if (cppSemantics.needsIncludeValidation()) {
+    if (needsIncludeValidation) {
       discoveryBuilder.shouldValidateInclusions();
     }
 
@@ -1267,8 +1265,8 @@ public class CppCompileAction extends AbstractAction
       throws ActionExecutionException, InterruptedException {
     Iterable<Artifact> scannedIncludes;
     try {
-      scannedIncludes = actionExecutionContext.getContext(CppCompileActionContext.class)
-          .findAdditionalInputs(this, actionExecutionContext,  cppSemantics.getIncludeProcessing());
+      scannedIncludes = actionExecutionContext.getContext(CppIncludeScanningContext.class)
+          .findAdditionalInputs(this, actionExecutionContext, includeProcessing);
     } catch (ExecException e) {
       throw e.toActionExecutionException(this);
     }
@@ -1309,9 +1307,9 @@ public class CppCompileAction extends AbstractAction
     message.append(getProgressMessage());
     message.append('\n');
     // Outputting one argument per line makes it easier to diff the results.
-    // The first element in getArgv() is actually the command to execute.
+    // The first element in getArguments() is actually the command to execute.
     String legend = "  Command: ";
-    for (String argument : ShellEscaper.escapeAll(getArgv())) {
+    for (String argument : ShellEscaper.escapeAll(getArguments())) {
       message.append(legend);
       message.append(argument);
       message.append('\n');
@@ -1344,7 +1342,11 @@ public class CppCompileAction extends AbstractAction
    *   <li>just an execPath that refers to a virtual .d file that is not written to disk
    * </ol>
    */
+  @AutoCodec(dependency = FileSystemProvider.class)
   public static class DotdFile {
+    public static final InjectingObjectCodec<DotdFile, FileSystemProvider> CODEC =
+        new CppCompileAction_DotdFile_AutoCodec();
+
     private final Artifact artifact;
     private final PathFragment execPath;
 
@@ -1355,6 +1357,13 @@ public class CppCompileAction extends AbstractAction
 
     public DotdFile(PathFragment execPath) {
       this.artifact = null;
+      this.execPath = execPath;
+    }
+
+    @AutoCodec.Instantiator
+    @VisibleForSerialization
+    DotdFile(Artifact artifact, PathFragment execPath) {
+      this.artifact = artifact;
       this.execPath = execPath;
     }
 

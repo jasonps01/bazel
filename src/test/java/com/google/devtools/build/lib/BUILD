@@ -9,8 +9,7 @@ package(
 CROSS_PLATFORM_WINDOWS_TESTS = [
     "util/DependencySetWindowsTest.java",
     "vfs/PathFragmentWindowsTest.java",
-    "vfs/WindowsLocalPathTest.java",
-    "windows/PathWindowsTest.java",
+    "vfs/WindowsPathTest.java",
 ]
 
 # Tests for Windows-specific functionality that run on Windows.
@@ -18,7 +17,6 @@ WINDOWS_ON_WINDOWS_TESTS = glob(
     ["windows/*.java"],
     exclude = [
         "windows/MockSubprocess.java",
-        "windows/PathWindowsTest.java",
     ],
 )
 
@@ -60,6 +58,7 @@ filegroup(
         "//src/test/java/com/google/devtools/build/lib/skyframe/serialization:srcs",
         "//src/test/java/com/google/devtools/build/lib/skyframe:srcs",
         "//src/test/java/com/google/devtools/build/lib/skylark:srcs",
+        "//src/test/java/com/google/devtools/build/lib/skylarkinterface/processor:srcs",
     ],
     visibility = ["//src:__pkg__"],
 )
@@ -374,6 +373,7 @@ java_library(
     deps = [
         ":guava_junit_truth",
         ":vfs_filesystem_test",
+        "//src/main/java/com/google/devtools/build/lib:os_util",
         "//src/main/java/com/google/devtools/build/lib/vfs",
     ],
 )
@@ -401,7 +401,7 @@ java_test(
 # systems
 java_test(
     name = "windows_test",
-    srcs = CROSS_PLATFORM_WINDOWS_TESTS + ["vfs/LocalPathAbstractTest.java"],
+    srcs = CROSS_PLATFORM_WINDOWS_TESTS + ["vfs/PathAbstractTest.java"],
     jvm_flags = [
         "-Dblaze.os=Windows",
         "-Dbazel.windows_unix_root=C:/fake/msys",

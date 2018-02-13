@@ -14,8 +14,10 @@
 package com.google.devtools.build.lib.vfs;
 
 import com.google.common.base.Preconditions;
+import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodecAdapter;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
@@ -30,15 +32,13 @@ import java.util.Objects;
  * <p>Two {@link RootedPath}s are considered equal iff they have equal roots and equal relative
  * paths.
  *
- * <p>TODO(bazel-team): refactor Artifact to use this instead of Root. TODO(bazel-team): use an
- * opaque root representation so as to not expose the absolute path to clients via #asPath or
- * #getRoot.
+ * <p>TODO(bazel-team): use an opaque root representation so as to not expose the absolute path to
+ * clients via #asPath or #getRoot.
  */
 public class RootedPath implements Serializable {
 
   private final Root root;
   private final PathFragment rootRelativePath;
-  private final Path path;
 
   /** Constructs a {@link RootedPath} from a {@link Root} and path fragment relative to the root. */
   private RootedPath(Root root, PathFragment rootRelativePath) {
@@ -48,8 +48,7 @@ public class RootedPath implements Serializable {
         rootRelativePath,
         root);
     this.root = root;
-    this.rootRelativePath = rootRelativePath.normalize();
-    this.path = root.getRelative(this.rootRelativePath);
+    this.rootRelativePath = rootRelativePath;
   }
 
   /** Returns a rooted path representing {@code rootRelativePath} relative to {@code root}. */
@@ -90,11 +89,7 @@ public class RootedPath implements Serializable {
   }
 
   public Path asPath() {
-    // Ideally, this helper method would not be needed. But Skyframe's FileFunction and
-    // DirectoryListingFunction need to do filesystem operations on the absolute path and
-    // Path#getRelative(relPath) is O(relPath.segmentCount()). Therefore we precompute the absolute
-    // path represented by this relative path.
-    return path;
+    return root.getRelative(rootRelativePath);
   }
 
   public Root getRoot() {
@@ -145,17 +140,18 @@ public class RootedPath implements Serializable {
     }
 
     @Override
-    public void serialize(RootedPath rootedPath, CodedOutputStream codedOut)
+    public void serialize(
+        SerializationContext context, RootedPath rootedPath, CodedOutputStream codedOut)
         throws IOException, SerializationException {
-      rootCodec.serialize(rootedPath.getRoot(), codedOut);
-      PathFragment.CODEC.serialize(rootedPath.getRootRelativePath(), codedOut);
+      rootCodec.serialize(context, rootedPath.getRoot(), codedOut);
+      PathFragment.CODEC.serialize(context, rootedPath.getRootRelativePath(), codedOut);
     }
 
     @Override
-    public RootedPath deserialize(CodedInputStream codedIn)
+    public RootedPath deserialize(DeserializationContext context, CodedInputStream codedIn)
         throws IOException, SerializationException {
-      Root root = rootCodec.deserialize(codedIn);
-      PathFragment rootRelativePath = PathFragment.CODEC.deserialize(codedIn);
+      Root root = rootCodec.deserialize(context, codedIn);
+      PathFragment rootRelativePath = PathFragment.CODEC.deserialize(context, codedIn);
       return toRootedPath(root, rootRelativePath);
     }
   }

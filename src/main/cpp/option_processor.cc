@@ -31,7 +31,9 @@
 #include "src/main/cpp/workspace_layout.h"
 
 // On OSX, there apparently is no header that defines this.
+#ifndef environ
 extern char **environ;
+#endif
 
 namespace blaze {
 
@@ -237,9 +239,9 @@ blaze_exit_code::ExitCode OptionProcessor::ParseOptions(
   // paths to the rc files. This list may contain duplicates.
   vector<string> candidate_blazerc_paths;
   if (use_master_blazerc) {
-    workspace_layout_->FindCandidateBlazercPaths(
-        workspace, cwd, cmd_line_->path_to_binary, cmd_line_->startup_args,
-        &candidate_blazerc_paths);
+    candidate_blazerc_paths =
+        workspace_layout_->FindCandidateBlazercPaths(
+            workspace, cwd, cmd_line_->path_to_binary, cmd_line_->startup_args);
   }
 
   string user_blazerc_path;

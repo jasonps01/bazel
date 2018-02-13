@@ -34,13 +34,13 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.MutableClassToInstanceMap;
 import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
+import com.google.devtools.build.lib.actions.BuildConfigurationInterface;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.config.transitions.ComposingPatchTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
-import com.google.devtools.build.lib.buildeventstream.BuildEvent;
 import com.google.devtools.build.lib.buildeventstream.BuildEventConverters;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
@@ -53,8 +53,10 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.packages.Target;
+import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.strings.StringCodecs;
@@ -94,30 +96,32 @@ import java.util.TreeMap;
 import javax.annotation.Nullable;
 
 /**
- * Instances of BuildConfiguration represent a collection of context
- * information which may affect a build (for example: the target platform for
- * compilation, or whether or not debug tables are required).  In fact, all
- * "environmental" information (e.g. from the tool's command-line, as opposed
- * to the BUILD file) that can affect the output of any build tool should be
- * explicitly represented in the BuildConfiguration instance.
+ * Instances of BuildConfiguration represent a collection of context information which may affect a
+ * build (for example: the target platform for compilation, or whether or not debug tables are
+ * required). In fact, all "environmental" information (e.g. from the tool's command-line, as
+ * opposed to the BUILD file) that can affect the output of any build tool should be explicitly
+ * represented in the BuildConfiguration instance.
  *
- * <p>A single build may require building tools to run on a variety of
- * platforms: when compiling a server application for production, we must build
- * the build tools (like compilers) to run on the host platform, but cross-compile
- * the application for the production environment.
+ * <p>A single build may require building tools to run on a variety of platforms: when compiling a
+ * server application for production, we must build the build tools (like compilers) to run on the
+ * host platform, but cross-compile the application for the production environment.
  *
- * <p>There is always at least one BuildConfiguration instance in any build:
- * the one representing the host platform. Additional instances may be created,
- * in a cross-compilation build, for example.
+ * <p>There is always at least one BuildConfiguration instance in any build: the one representing
+ * the host platform. Additional instances may be created, in a cross-compilation build, for
+ * example.
  *
  * <p>Instances of BuildConfiguration are canonical:
+ *
  * <pre>c1.equals(c2) <=> c1==c2.</pre>
  */
-@SkylarkModule(name = "configuration",
-    category = SkylarkModuleCategory.BUILTIN,
-    doc = "Data required for the analysis of a target that comes from targets that "
-        + "depend on it and not targets that it depends on.")
-public class BuildConfiguration implements BuildEvent {
+@SkylarkModule(
+  name = "configuration",
+  category = SkylarkModuleCategory.BUILTIN,
+  doc =
+      "Data required for the analysis of a target that comes from targets that "
+          + "depend on it and not targets that it depends on."
+)
+public class BuildConfiguration implements BuildConfigurationInterface {
   public static final InjectingObjectCodec<BuildConfiguration, FileSystemProvider> CODEC =
       new BuildConfigurationCodec();
 
@@ -1307,6 +1311,16 @@ public class BuildConfiguration implements BuildEvent {
     return Objects.hash(isActionsEnabled(), fragments, buildOptions.getOptions());
   }
 
+  public void describe(StringBuilder sb) {
+    sb.append(isActionsEnabled()).append('\n');
+    for (Fragment fragment : fragments.values()) {
+      sb.append(fragment.getClass().getName()).append('\n');
+    }
+    for (String s : buildOptions.toString().split(" ")) {
+      sb.append(s).append('\n');
+    }
+  }
+
   @Override
   public int hashCode() {
     return hashCode;
@@ -2177,30 +2191,35 @@ public class BuildConfiguration implements BuildEvent {
 
     @Override
     public void serialize(
-        FileSystemProvider fsProvider, BuildConfiguration obj, CodedOutputStream codedOut)
+        FileSystemProvider fsProvider,
+        SerializationContext context,
+        BuildConfiguration obj,
+        CodedOutputStream codedOut)
         throws SerializationException, IOException {
-      BlazeDirectories.CODEC.serialize(fsProvider, obj.directories, codedOut);
+      BlazeDirectories.CODEC.serialize(fsProvider, context, obj.directories, codedOut);
       codedOut.writeInt32NoTag(obj.fragments.size());
       for (Fragment fragment : obj.fragments.values()) {
-        Fragment.CODEC.serialize(fsProvider, fragment, codedOut);
+        Fragment.CODEC.serialize(fsProvider, context, fragment, codedOut);
       }
-      BuildOptions.CODEC.serialize(obj.buildOptions, codedOut);
-      StringCodecs.asciiOptimized().serialize(obj.repositoryName, codedOut);
+      BuildOptions.CODEC.serialize(context, obj.buildOptions, codedOut);
+      StringCodecs.asciiOptimized().serialize(context, obj.repositoryName, codedOut);
     }
 
     @Override
-    public BuildConfiguration deserialize(FileSystemProvider fsProvider, CodedInputStream codedIn)
+    public BuildConfiguration deserialize(
+        FileSystemProvider fsProvider, DeserializationContext context, CodedInputStream codedIn)
         throws SerializationException, IOException {
-      BlazeDirectories blazeDirectories = BlazeDirectories.CODEC.deserialize(fsProvider, codedIn);
+      BlazeDirectories blazeDirectories =
+          BlazeDirectories.CODEC.deserialize(fsProvider, context, codedIn);
       int length = codedIn.readInt32();
       ImmutableSortedMap.Builder<Class<? extends Fragment>, Fragment> builder =
           new ImmutableSortedMap.Builder<>(lexicalFragmentSorter);
       for (int i = 0; i < length; ++i) {
-        Fragment fragment = Fragment.CODEC.deserialize(fsProvider, codedIn);
+        Fragment fragment = Fragment.CODEC.deserialize(fsProvider, context, codedIn);
         builder.put(fragment.getClass(), fragment);
       }
-      BuildOptions options = BuildOptions.CODEC.deserialize(codedIn);
-      String repositoryName = StringCodecs.asciiOptimized().deserialize(codedIn);
+      BuildOptions options = BuildOptions.CODEC.deserialize(context, codedIn);
+      String repositoryName = StringCodecs.asciiOptimized().deserialize(context, codedIn);
       return new BuildConfiguration(blazeDirectories, builder.build(), options, repositoryName);
     }
   }

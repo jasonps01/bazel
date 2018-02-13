@@ -18,7 +18,6 @@ import static java.nio.charset.StandardCharsets.ISO_8859_1;
 import static java.util.stream.Collectors.joining;
 
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
@@ -33,6 +32,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadCompatible;
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.rules.cpp.CcCommon.CoptsFilter;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.util.ShellEscaper;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -75,7 +75,7 @@ public class FakeCppCompileAction extends CppCompileAction {
       DotdFile dotdFile,
       ImmutableMap<String, String> localShellEnvironment,
       CppCompilationContext context,
-      Predicate<String> nocopts,
+      CoptsFilter nocopts,
       Iterable<IncludeScannable> lipoScannables,
       CppSemantics cppSemantics,
       CcToolchainProvider cppProvider,
@@ -145,8 +145,8 @@ public class FakeCppCompileAction extends CppCompileAction {
           actionExecutionContext.getVerboseFailures(),
           this);
     }
-    IncludeScanningContext scanningContext =
-        actionExecutionContext.getContext(IncludeScanningContext.class);
+    CppIncludeExtractionContext scanningContext =
+        actionExecutionContext.getContext(CppIncludeExtractionContext.class);
     Path execRoot = actionExecutionContext.getExecRoot();
 
     NestedSet<Artifact> discoveredInputs;
@@ -161,7 +161,7 @@ public class FakeCppCompileAction extends CppCompileAction {
               .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
               .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());
 
-      if (cppSemantics.needsIncludeValidation()) {
+      if (needsIncludeValidation) {
         discoveryBuilder.shouldValidateInclusions();
       }
 
@@ -207,14 +207,12 @@ public class FakeCppCompileAction extends CppCompileAction {
     // line to write to $TEST_TMPDIR instead.
     final String outputPrefix = "$TEST_TMPDIR/";
     String argv =
-        getArgv(outputFile.getExecPath())
+        getArguments()
             .stream()
             .map(
                 input -> {
                   String result = ShellEscaper.escapeString(input);
-                  // Once -c and -o options are added into action_config, the argument of
-                  // getArgv(outputFile.getExecPath()) won't be used anymore. There will always be
-                  // -c <tempOutputFile>, but here it has to be outputFile, so we replace it.
+                  // Replace -c <tempOutputFile> so it's -c <outputFile>.
                   if (input.equals(tempOutputFile.getPathString())) {
                     result =
                         outputPrefix + ShellEscaper.escapeString(outputFile.getExecPathString());

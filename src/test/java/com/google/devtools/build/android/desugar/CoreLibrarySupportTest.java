@@ -36,6 +36,8 @@ public class CoreLibrarySupportTest {
     assertThat(support.isRenamedCoreLibrary("java/time/X")).isTrue();
     assertThat(support.isRenamedCoreLibrary("java/time/y/X")).isTrue();
     assertThat(support.isRenamedCoreLibrary("java/io/X")).isFalse();
+    assertThat(support.isRenamedCoreLibrary("java/io/X$$CC")).isTrue();
+    assertThat(support.isRenamedCoreLibrary("java/io/X$$Lambda$17")).isTrue();
     assertThat(support.isRenamedCoreLibrary("com/google/X")).isFalse();
   }
 
@@ -50,6 +52,8 @@ public class CoreLibrarySupportTest {
     assertThat(support.isRenamedCoreLibrary("__/java/time/X")).isTrue();
     assertThat(support.isRenamedCoreLibrary("__/java/time/y/X")).isTrue();
     assertThat(support.isRenamedCoreLibrary("__/java/io/X")).isFalse();
+    assertThat(support.isRenamedCoreLibrary("__/java/io/X$$CC")).isTrue();
+    assertThat(support.isRenamedCoreLibrary("__/java/io/X$$Lambda$17")).isTrue();
     assertThat(support.isRenamedCoreLibrary("com/google/X")).isFalse();
   }
   @Test
@@ -68,6 +72,23 @@ public class CoreLibrarySupportTest {
             new CoreLibraryRewriter("__/"), null, ImmutableList.of(), ImmutableList.of());
     assertThat(support.renameCoreLibrary("__/java/time/X")).isEqualTo("j$/time/X");
     assertThat(support.renameCoreLibrary("com/google/X")).isEqualTo("com/google/X");
+  }
+
+  @Test
+  public void testIsEmulatedCoreClassOrInterface() throws Exception {
+    CoreLibrarySupport support =
+        new CoreLibrarySupport(
+            new CoreLibraryRewriter(""),
+            Thread.currentThread().getContextClassLoader(),
+            ImmutableList.of("java/util/concurrent/"),
+            ImmutableList.of("java/util/Map"));
+    assertThat(support.isEmulatedCoreClassOrInterface("java/util/Map")).isTrue();
+    assertThat(support.isEmulatedCoreClassOrInterface("java/util/Map$$Lambda$17")).isFalse();
+    assertThat(support.isEmulatedCoreClassOrInterface("java/util/Map$$CC")).isFalse();
+    assertThat(support.isEmulatedCoreClassOrInterface("java/util/HashMap")).isTrue();
+    assertThat(support.isEmulatedCoreClassOrInterface("java/util/concurrent/ConcurrentMap"))
+        .isFalse(); // false for renamed prefixes
+    assertThat(support.isEmulatedCoreClassOrInterface("com/google/Map")).isFalse();
   }
 
   @Test

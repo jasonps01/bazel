@@ -32,6 +32,8 @@ import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
+import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoMode;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.util.Pair;
@@ -45,41 +47,45 @@ import javax.annotation.Nullable;
 /** Information about a C++ compiler used by the <code>cc_*</code> rules. */
 @SkylarkModule(name = "CcToolchainInfo", doc = "Information about the C++ compiler being used.")
 @Immutable
+@AutoCodec
 public final class CcToolchainProvider extends ToolchainInfo {
   public static final String SKYLARK_NAME = "CcToolchainInfo";
 
   /** An empty toolchain to be returned in the error case (instead of null). */
   public static final CcToolchainProvider EMPTY_TOOLCHAIN_IS_ERROR =
       new CcToolchainProvider(
-          ImmutableMap.of(),
-          null,
-          null,
-          null,
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          null,
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          null,
-          NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
-          null,
-          PathFragment.EMPTY_FRAGMENT,
-          CppCompilationContext.EMPTY,
-          false,
-          false,
+          /* values= */ ImmutableMap.of(),
+          /* cppConfiguration= */ null,
+          /* toolchainInfo= */ null,
+          /* crosstoolTopPathFragment= */ null,
+          /* crosstool= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* crosstoolMiddleman= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* compile= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* strip= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* objCopy= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* as= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* ar= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* link= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* interfaceSoBuilder= */ null,
+          /* dwp= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* coverage= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* libcLink= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* staticRuntimeLinkInputs= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* staticRuntimeLinkMiddleman= */ null,
+          /* dynamicRuntimeLinkInputs= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+          /* dynamicRuntimeLinkMiddleman= */ null,
+          /* dynamicRuntimeSolibDir= */ PathFragment.EMPTY_FRAGMENT,
+          CcCompilationInfo.EMPTY,
+          /* supportsParamFiles= */ false,
+          /* supportsHeaderParsing= */ false,
           Variables.EMPTY,
-          ImmutableList.<Artifact>of(),
-          NestedSetBuilder.<Pair<String, String>>emptySet(Order.COMPILE_ORDER),
-          null,
-          ImmutableMap.<String, String>of(),
-          ImmutableList.<PathFragment>of(),
-          null);
+          /* builtinIncludeFiles= */ ImmutableList.<Artifact>of(),
+          /* coverageEnvironment= */ NestedSetBuilder.emptySet(Order.COMPILE_ORDER),
+          /* linkDynamicLibraryTool= */ null,
+          /* environment= */ ImmutableMap.<String, String>of(),
+          /* builtInIncludeDirectories= */ ImmutableList.<PathFragment>of(),
+          /* sysroot= */ null,
+          FdoMode.OFF);
 
   @Nullable private final CppConfiguration cppConfiguration;
   private final CppToolchainInfo toolchainInfo;
@@ -89,6 +95,8 @@ public final class CcToolchainProvider extends ToolchainInfo {
   private final NestedSet<Artifact> compile;
   private final NestedSet<Artifact> strip;
   private final NestedSet<Artifact> objCopy;
+  private final NestedSet<Artifact> as;
+  private final NestedSet<Artifact> ar;
   private final NestedSet<Artifact> link;
   private final Artifact interfaceSoBuilder;
   private final NestedSet<Artifact> dwp;
@@ -99,7 +107,7 @@ public final class CcToolchainProvider extends ToolchainInfo {
   private final NestedSet<Artifact> dynamicRuntimeLinkInputs;
   @Nullable private final Artifact dynamicRuntimeLinkMiddleman;
   private final PathFragment dynamicRuntimeSolibDir;
-  private final CppCompilationContext cppCompilationContext;
+  private final CcCompilationInfo ccCompilationInfo;
   private final boolean supportsParamFiles;
   private final boolean supportsHeaderParsing;
   private final Variables buildVariables;
@@ -109,9 +117,10 @@ public final class CcToolchainProvider extends ToolchainInfo {
   private final ImmutableMap<String, String> environment;
   private final ImmutableList<PathFragment> builtInIncludeDirectories;
   @Nullable private final PathFragment sysroot;
+  private final FdoMode fdoMode;
 
   public CcToolchainProvider(
-      ImmutableMap<String, Object> skylarkToolchain,
+      ImmutableMap<String, Object> values,
       @Nullable CppConfiguration cppConfiguration,
       CppToolchainInfo toolchainInfo,
       PathFragment crosstoolTopPathFragment,
@@ -120,6 +129,8 @@ public final class CcToolchainProvider extends ToolchainInfo {
       NestedSet<Artifact> compile,
       NestedSet<Artifact> strip,
       NestedSet<Artifact> objCopy,
+      NestedSet<Artifact> as,
+      NestedSet<Artifact> ar,
       NestedSet<Artifact> link,
       Artifact interfaceSoBuilder,
       NestedSet<Artifact> dwp,
@@ -130,7 +141,7 @@ public final class CcToolchainProvider extends ToolchainInfo {
       NestedSet<Artifact> dynamicRuntimeLinkInputs,
       @Nullable Artifact dynamicRuntimeLinkMiddleman,
       PathFragment dynamicRuntimeSolibDir,
-      CppCompilationContext cppCompilationContext,
+      CcCompilationInfo ccCompilationInfo,
       boolean supportsParamFiles,
       boolean supportsHeaderParsing,
       Variables buildVariables,
@@ -139,8 +150,9 @@ public final class CcToolchainProvider extends ToolchainInfo {
       Artifact linkDynamicLibraryTool,
       ImmutableMap<String, String> environment,
       ImmutableList<PathFragment> builtInIncludeDirectories,
-      @Nullable PathFragment sysroot) {
-    super(skylarkToolchain, Location.BUILTIN);
+      @Nullable PathFragment sysroot,
+      FdoMode fdoMode) {
+    super(values, Location.BUILTIN);
     this.cppConfiguration = cppConfiguration;
     this.toolchainInfo = toolchainInfo;
     this.crosstoolTopPathFragment = crosstoolTopPathFragment;
@@ -149,6 +161,8 @@ public final class CcToolchainProvider extends ToolchainInfo {
     this.compile = Preconditions.checkNotNull(compile);
     this.strip = Preconditions.checkNotNull(strip);
     this.objCopy = Preconditions.checkNotNull(objCopy);
+    this.as = Preconditions.checkNotNull(as);
+    this.ar = Preconditions.checkNotNull(ar);
     this.link = Preconditions.checkNotNull(link);
     this.interfaceSoBuilder = interfaceSoBuilder;
     this.dwp = Preconditions.checkNotNull(dwp);
@@ -159,7 +173,7 @@ public final class CcToolchainProvider extends ToolchainInfo {
     this.dynamicRuntimeLinkInputs = Preconditions.checkNotNull(dynamicRuntimeLinkInputs);
     this.dynamicRuntimeLinkMiddleman = dynamicRuntimeLinkMiddleman;
     this.dynamicRuntimeSolibDir = Preconditions.checkNotNull(dynamicRuntimeSolibDir);
-    this.cppCompilationContext = Preconditions.checkNotNull(cppCompilationContext);
+    this.ccCompilationInfo = Preconditions.checkNotNull(ccCompilationInfo);
     this.supportsParamFiles = supportsParamFiles;
     this.supportsHeaderParsing = supportsHeaderParsing;
     this.buildVariables = buildVariables;
@@ -169,6 +183,7 @@ public final class CcToolchainProvider extends ToolchainInfo {
     this.environment = environment;
     this.builtInIncludeDirectories = builtInIncludeDirectories;
     this.sysroot = sysroot;
+    this.fdoMode = fdoMode;
   }
 
   /** Returns c++ Make variables. */
@@ -292,6 +307,22 @@ public final class CcToolchainProvider extends ToolchainInfo {
   }
 
   /**
+   * Returns the files necessary for an 'as' invocation.  May be empty if the CROSSTOOL
+   * file does not define as_files.
+   */
+  public NestedSet<Artifact> getAs() {
+    return as;
+  }
+
+  /**
+   * Returns the files necessary for an 'ar' invocation.  May be empty if the CROSSTOOL
+   * file does not define ar_files.
+   */
+  public NestedSet<Artifact> getAr() {
+    return ar;
+  }
+
+  /**
    * Returns the files necessary for linking, including the files needed for libc.
    */
   public NestedSet<Artifact> getLink() {
@@ -350,11 +381,9 @@ public final class CcToolchainProvider extends ToolchainInfo {
     return dynamicRuntimeSolibDir;
   }
 
-  /**
-   * Returns the C++ compilation context for the toolchain.
-   */
-  public CppCompilationContext getCppCompilationContext() {
-    return cppCompilationContext;
+  /** Returns the {@code CcCompilationInfo} for the toolchain. */
+  public CcCompilationInfo getCcCompilationInfo() {
+    return ccCompilationInfo;
   }
 
   /**
@@ -601,17 +630,17 @@ public final class CcToolchainProvider extends ToolchainInfo {
   }
 
   @SkylarkCallable(
-    name = "unfiltered_compiler_options_do_not_use",
-    doc =
-        "Returns the default list of options which cannot be filtered by BUILD "
-            + "rules. These should be appended to the command line after filtering."
+      name = "unfiltered_compiler_options",
+      doc =
+          "Returns the default list of options which cannot be filtered by BUILD "
+              + "rules. These should be appended to the command line after filtering."
   )
   public ImmutableList<String> getUnfilteredCompilerOptionsWithSysroot(Iterable<String> features) {
-    return cppConfiguration.getUnfilteredCompilerOptionsDoNotUse(features, sysroot);
+    return toolchainInfo.getUnfilteredCompilerOptions(features, sysroot);
   }
 
   public ImmutableList<String> getUnfilteredCompilerOptions(Iterable<String> features) {
-    return cppConfiguration.getUnfilteredCompilerOptionsDoNotUse(features, /* sysroot= */ null);
+    return toolchainInfo.getUnfilteredCompilerOptions(features, /* sysroot= */ null);
   }
 
   @SkylarkCallable(
@@ -782,6 +811,10 @@ public final class CcToolchainProvider extends ToolchainInfo {
     return toolchainInfo.isLLVMCompiler();
   }
 
+  public FdoMode getFdoMode() {
+    return fdoMode;
+  }
+
   // Not all of CcToolchainProvider is exposed to Skylark, which makes implementing deep equality
   // impossible: if Java-only parts are considered, the behavior is surprising in Skylark, if they
   // are not, the behavior is surprising in Java. Thus, object identity it is.
@@ -795,3 +828,4 @@ public final class CcToolchainProvider extends ToolchainInfo {
     return System.identityHashCode(this);
   }
 }
+

@@ -24,14 +24,12 @@ import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.strings.StringCodecs;
 import com.google.devtools.build.lib.util.Fingerprint;
-import com.google.devtools.build.lib.vfs.FileSystemProvider;
 import com.google.devtools.build.skyframe.SkyFunctionName;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
@@ -44,11 +42,8 @@ import javax.annotation.Nullable;
 /** A Skyframe node representing a build configuration fragment. */
 @Immutable
 @ThreadSafe
-@AutoCodec(dependency = FileSystemProvider.class)
+@AutoCodec
 public class ConfigurationFragmentValue implements SkyValue {
-  public static final InjectingObjectCodec<ConfigurationFragmentValue, FileSystemProvider> CODEC =
-      new ConfigurationFragmentValue_AutoCodec();
-
   @Nullable
   private final BuildConfiguration.Fragment fragment;
 
@@ -76,8 +71,6 @@ public class ConfigurationFragmentValue implements SkyValue {
   /** {@link SkyKey} for {@link ConfigurationFragmentValue}. */
   public static final class ConfigurationFragmentKey implements SkyKey {
     private static Interner<ConfigurationFragmentKey> interner = BlazeInterners.newWeakInterner();
-
-    public static final ObjectCodec<ConfigurationFragmentKey> CODEC = new Codec();
 
     private final BuildOptions buildOptions;
     private final String checksum;
@@ -142,7 +135,7 @@ public class ConfigurationFragmentValue implements SkyValue {
       public void serialize(
           SerializationContext context, ConfigurationFragmentKey obj, CodedOutputStream codedOut)
           throws SerializationException, IOException {
-        BuildOptions.CODEC.serialize(context, obj.buildOptions, codedOut);
+        context.serialize(obj.buildOptions, codedOut);
         StringCodecs.asciiOptimized().serialize(context, obj.fragmentType.getName(), codedOut);
       }
 
@@ -154,7 +147,7 @@ public class ConfigurationFragmentValue implements SkyValue {
 
         try {
           return of(
-              BuildOptions.CODEC.deserialize(context, codedIn),
+              context.deserialize(codedIn),
               (Class<? extends Fragment>)
                   Class.forName(StringCodecs.asciiOptimized().deserialize(context, codedIn)));
         } catch (ClassNotFoundException e) {

@@ -43,7 +43,6 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
 import com.google.devtools.build.lib.vfs.PathFragment;
-import com.google.devtools.build.skyframe.LegacySkyKey;
 import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.build.skyframe.SkyFunctionException;
 import com.google.devtools.build.skyframe.SkyKey;
@@ -88,20 +87,14 @@ public class ActionExecutionFunction implements SkyFunction, CompletionReceiver 
     stateMap = Maps.newConcurrentMap();
   }
 
-  private static final Function<String, SkyKey> VAR_TO_SKYKEY =
-      new Function<String, SkyKey>() {
-        @Override
-        public SkyKey apply(String var) {
-          return LegacySkyKey.create(SkyFunctions.CLIENT_ENVIRONMENT_VARIABLE, var);
-        }
-      };
+  private static final Function<String, SkyKey> VAR_TO_SKYKEY = ClientEnvironmentFunction::key;
 
   @Override
   public SkyValue compute(SkyKey skyKey, Environment env) throws ActionExecutionFunctionException,
       InterruptedException {
     ActionLookupData actionLookupData = (ActionLookupData) skyKey.argument();
     ActionLookupValue actionLookupValue =
-        (ActionLookupValue) env.getValue(actionLookupData.getActionLookupNode());
+        (ActionLookupValue) env.getValue(actionLookupData.getActionLookupKey());
     int actionIndex = actionLookupData.getActionIndex();
     Action action = actionLookupValue.getAction(actionIndex);
     skyframeActionExecutor.noteActionEvaluationStarted(actionLookupData, action);

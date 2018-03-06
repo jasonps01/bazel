@@ -44,18 +44,17 @@ public final class SkylarkSemanticsCodec implements ObjectCodec<SkylarkSemantics
       throws SerializationException, IOException {
     // <== Add new options here in alphabetic order ==>
     codedOut.writeBoolNoTag(semantics.incompatibleBzlDisallowLoadAfterStatement());
-    codedOut.writeBoolNoTag(semantics.incompatibleCheckedArithmetic());
-    codedOut.writeBoolNoTag(semantics.incompatibleComprehensionVariablesDoNotLeak());
     codedOut.writeBoolNoTag(semantics.incompatibleDepsetIsNotIterable());
     codedOut.writeBoolNoTag(semantics.incompatibleDepsetUnion());
-    codedOut.writeBoolNoTag(semantics.incompatibleDictLiteralHasNoDuplicates());
     codedOut.writeBoolNoTag(semantics.incompatibleDisableGlobTracking());
+    codedOut.writeBoolNoTag(semantics.incompatibleDisableObjcProviderResources());
     codedOut.writeBoolNoTag(semantics.incompatibleDisallowDictPlus());
-    codedOut.writeBoolNoTag(semantics.incompatibleDisallowKeywordOnlyArgs());
     codedOut.writeBoolNoTag(semantics.incompatibleDisallowToplevelIfStatement());
     codedOut.writeBoolNoTag(semantics.incompatibleDisallowUncalledSetConstructor());
     codedOut.writeBoolNoTag(semantics.incompatibleLoadArgumentIsLabel());
     codedOut.writeBoolNoTag(semantics.incompatibleNewActionsApi());
+    codedOut.writeBoolNoTag(semantics.incompatibleRemoveNativeGitRepository());
+    codedOut.writeBoolNoTag(semantics.incompatibleRemoveNativeHttpArchive());
     codedOut.writeBoolNoTag(semantics.incompatibleShowAllPrintMessages());
     codedOut.writeBoolNoTag(semantics.incompatibleStringIsNotIterable());
     codedOut.writeBoolNoTag(semantics.internalSkylarkFlagTestCanary());
@@ -68,18 +67,17 @@ public final class SkylarkSemanticsCodec implements ObjectCodec<SkylarkSemantics
 
     // <== Add new options here in alphabetic order ==>
     builder.incompatibleBzlDisallowLoadAfterStatement(codedIn.readBool());
-    builder.incompatibleCheckedArithmetic(codedIn.readBool());
-    builder.incompatibleComprehensionVariablesDoNotLeak(codedIn.readBool());
     builder.incompatibleDepsetIsNotIterable(codedIn.readBool());
     builder.incompatibleDepsetUnion(codedIn.readBool());
-    builder.incompatibleDictLiteralHasNoDuplicates(codedIn.readBool());
     builder.incompatibleDisableGlobTracking(codedIn.readBool());
+    builder.incompatibleDisableObjcProviderResources(codedIn.readBool());
     builder.incompatibleDisallowDictPlus(codedIn.readBool());
-    builder.incompatibleDisallowKeywordOnlyArgs(codedIn.readBool());
     builder.incompatibleDisallowToplevelIfStatement(codedIn.readBool());
     builder.incompatibleDisallowUncalledSetConstructor(codedIn.readBool());
     builder.incompatibleLoadArgumentIsLabel(codedIn.readBool());
     builder.incompatibleNewActionsApi(codedIn.readBool());
+    builder.incompatibleRemoveNativeGitRepository(codedIn.readBool());
+    builder.incompatibleRemoveNativeHttpArchive(codedIn.readBool());
     builder.incompatibleShowAllPrintMessages(codedIn.readBool());
     builder.incompatibleStringIsNotIterable(codedIn.readBool());
     builder.internalSkylarkFlagTestCanary(codedIn.readBool());

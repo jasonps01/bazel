@@ -54,7 +54,7 @@ public class LinkBuildVariablesTest extends LinkBuildVariablesTestCase {
     scratch.file("x/a.cc");
 
     ConfiguredTarget target = getConfiguredTarget("//x:foo");
-    Variables variables = getLinkBuildVariables(target, LinkTargetType.DYNAMIC_LIBRARY);
+    Variables variables = getLinkBuildVariables(target, LinkTargetType.NODEPS_DYNAMIC_LIBRARY);
     VariableValue librariesToLinkSequence =
         variables.getVariable(CppLinkActionBuilder.LIBRARIES_TO_LINK_VARIABLE);
     assertThat(librariesToLinkSequence).isNotNull();
@@ -105,26 +105,6 @@ public class LinkBuildVariablesTest extends LinkBuildVariablesTestCase {
   }
 
   @Test
-  public void testLinkoptsFileIsExported() throws Exception {
-    AnalysisMock.get().ccSupport().setupCrosstool(mockToolsConfig);
-    useConfiguration();
-
-    scratch.file(
-        "x/BUILD",
-        "cc_binary(",
-        "    name = 'bin',",
-        "    srcs = ['bin.cc'],",
-        "    linkopts_file= 'bin.linkopts_file'",
-        ")");
-
-    ConfiguredTarget target = getConfiguredTarget("//x:bin");
-    Variables variables = getLinkBuildVariables(target, Link.LinkTargetType.EXECUTABLE);
-    String variableValue =
-        getVariableValue(variables, CppLinkActionBuilder.LINK_OPTS_FILE_VARIABLE);
-    assertThat(variableValue).matches("x/bin.linkopts_file");
-  }
-
-  @Test
   public void testInterfaceLibraryBuildingVariablesWhenGenerationPossible() throws Exception {
     // Make sure the interface shared object generation is enabled in the configuration
     // (which it is not by default for some windows toolchains)
@@ -137,7 +117,7 @@ public class LinkBuildVariablesTest extends LinkBuildVariablesTestCase {
     scratch.file("x/a.cc");
 
     ConfiguredTarget target = getConfiguredTarget("//x:foo");
-    Variables variables = getLinkBuildVariables(target, LinkTargetType.DYNAMIC_LIBRARY);
+    Variables variables = getLinkBuildVariables(target, LinkTargetType.NODEPS_DYNAMIC_LIBRARY);
 
     String interfaceLibraryBuilder =
         getVariableValue(variables, CppLinkActionBuilder.INTERFACE_LIBRARY_BUILDER_VARIABLE);
@@ -263,6 +243,6 @@ public class LinkBuildVariablesTest extends LinkBuildVariablesTestCase {
     ConfiguredTarget testTarget = getConfiguredTarget("//x:foo");
     Variables testVariables = getLinkBuildVariables(testTarget, LinkTargetType.EXECUTABLE);
 
-    assertThat(testVariables.isAvailable(CppModel.SYSROOT_VARIABLE_NAME)).isTrue();
+    assertThat(testVariables.isAvailable(CcCommon.SYSROOT_VARIABLE_NAME)).isTrue();
   }
 }

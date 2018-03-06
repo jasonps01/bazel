@@ -35,11 +35,12 @@ import com.google.devtools.build.lib.events.ExtendedEventHandler.Postable;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.AttributeMap.AcceptsLabelAttribute;
 import com.google.devtools.build.lib.packages.License.DistributionType;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
+import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.devtools.build.lib.syntax.SkylarkSemantics;
 import com.google.devtools.build.lib.util.SpellChecker;
-import com.google.devtools.build.lib.vfs.Canonicalizer;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
@@ -65,12 +66,11 @@ import javax.annotation.Nullable;
  * as such. Note, however, that some member variables exposed via the public interface are not
  * strictly immutable, so until their types are guaranteed immutable we're not applying the
  * {@code @Immutable} annotation here.
+ *
+ * <p>When changing this class, make sure to make corresponding changes to serialization!
  */
 @SuppressWarnings("JavaLangClash")
 public class Package {
-  public static final InjectingObjectCodec<Package, PackageCodecDependencies> CODEC =
-      new PackageCodec();
-
   /**
    * Common superclass for all name-conflict exceptions.
    */
@@ -221,7 +221,7 @@ public class Package {
   protected Package(PackageIdentifier packageId, String runfilesPrefix) {
     this.packageIdentifier = packageId;
     this.workspaceName = runfilesPrefix;
-    this.nameFragment = Canonicalizer.fragments().intern(packageId.getPackageFragment());
+    this.nameFragment = packageId.getPackageFragment();
     this.name = nameFragment.getPathString();
   }
 
@@ -719,7 +719,7 @@ public class Package {
    */
   public static class Builder {
 
-    public static interface Helper {
+    public interface Helper {
       /**
        * Returns a fresh {@link Package} instance that a {@link Builder} will internally mutate
        * during package loading. Called by {@link PackageFactory}.
@@ -728,10 +728,13 @@ public class Package {
 
       /**
        * Called after {@link com.google.devtools.build.lib.skyframe.PackageFunction} is completely
-       * done loading the given {@link Package}. {@code skylarkSemantics} are the semantics used to
-       * evaluate the build.
+       * done loading the given {@link Package}.
+       *
+       * @param pkg the loaded {@link Package}
+       * @param skylarkSemantics are the semantics used to load the package
+       * @param loadTimeMs the wall time, in ms, that it took to load the package
        */
-      void onLoadingComplete(Package pkg, SkylarkSemantics skylarkSemantics);
+      void onLoadingComplete(Package pkg, SkylarkSemantics skylarkSemantics, long loadTimeMs);
     }
 
     /** {@link Helper} that simply calls the {@link Package} constructor. */
@@ -747,7 +750,8 @@ public class Package {
       }
 
       @Override
-      public void onLoadingComplete(Package pkg, SkylarkSemantics skylarkSemantics) {
+      public void onLoadingComplete(
+          Package pkg, SkylarkSemantics skylarkSemantics, long loadTimeMs) {
       }
     }
 
@@ -1575,8 +1579,8 @@ public class Package {
   }
 
   /** Package codec implementation. */
-  private static final class PackageCodec
-      implements InjectingObjectCodec<Package, PackageCodecDependencies> {
+  @VisibleForTesting
+  static final class PackageCodec implements ObjectCodec<Package> {
     @Override
     public Class<Package> getEncodedClass() {
       return Package.class;
@@ -1584,24 +1588,22 @@ public class Package {
 
     @Override
     public void serialize(
-        PackageCodecDependencies codecDeps,
-        com.google.devtools.build.lib.skyframe.serialization.SerializationContext context,
+        SerializationContext context,
         Package input,
         CodedOutputStream codedOut)
         throws IOException, SerializationException {
-      codecDeps.getPackageSerializer().serialize(input, codedOut);
+      PackageCodecDependencies codecDeps = context.getDependency(PackageCodecDependencies.class);
+      codecDeps.getPackageSerializer().serialize(context, input, codedOut);
     }
 
     @Override
     public Package deserialize(
-        PackageCodecDependencies codecDeps,
-        com.google.devtools.build.lib.skyframe.serialization.DeserializationContext context,
+        DeserializationContext context,
         CodedInputStream codedIn)
         throws SerializationException, IOException {
+      PackageCodecDependencies codecDeps = context.getDependency(PackageCodecDependencies.class);
       try {
-        return codecDeps.getPackageDeserializer().deserialize(codedIn);
-      } catch (PackageDeserializationException e) {
-        throw new SerializationException("Failed to deserialize Package", e);
+        return codecDeps.getPackageDeserializer().deserialize(context, codedIn);
       } catch (InterruptedException e) {
         throw new IllegalStateException(
             "Unexpected InterruptedException during Package deserialization", e);

@@ -15,17 +15,15 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
-import com.google.devtools.build.lib.vfs.FileSystemProvider;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
@@ -53,11 +51,8 @@ import java.util.Map;
  *   <li>4. Backend link (once). This is the traditional link, and produces the final executable.
  * </ul>
  */
-@AutoCodec(dependency = FileSystemProvider.class)
+@AutoCodec
 public final class LtoBackendArtifacts {
-  public static final InjectingObjectCodec<LtoBackendArtifacts, FileSystemProvider> CODEC =
-      new LtoBackendArtifacts_AutoCodec();
-
   // A file containing mapping of symbol => bitcode file containing the symbol.
   private final Artifact index;
 
@@ -168,7 +163,7 @@ public final class LtoBackendArtifacts {
     return dwoFile;
   }
 
-  public void addIndexingOutputs(ImmutableList.Builder<Artifact> builder) {
+  public void addIndexingOutputs(ImmutableSet.Builder<Artifact> builder) {
     builder.add(imports);
     builder.add(index);
   }

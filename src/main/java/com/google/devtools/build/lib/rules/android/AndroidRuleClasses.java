@@ -64,6 +64,7 @@ import com.google.devtools.build.lib.rules.java.JavaConfiguration;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
 import com.google.devtools.build.lib.rules.java.ProguardHelper;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.Type;
@@ -206,6 +207,7 @@ public final class AndroidRuleClasses {
         (rule, attributes, configuration) -> configuration.getSdk());
   }
 
+  @AutoCodec
   public static final SplitTransition ANDROID_SPLIT_TRANSITION = new AndroidSplitTransition();
 
   private static final class AndroidSplitTransition implements SplitTransition, SkylarkValue {
@@ -570,6 +572,7 @@ public final class AndroidRuleClasses {
                   .exec()
                   .value(env.getToolsLabel(AndroidRuleClasses.MANIFEST_MERGE_TOOL_LABEL)))
           .advertiseSkylarkProvider(AndroidResourcesInfo.PROVIDER.id())
+          .advertiseSkylarkProvider(AndroidNativeLibsInfo.PROVIDER.id())
           .build();
     }
 
@@ -789,6 +792,11 @@ public final class AndroidRuleClasses {
                   .cfg(HostTransition.INSTANCE)
                   .exec()
                   .value(env.getToolsLabel("//tools/android:dexbuilder")))
+          .add(
+              attr("$dexbuilder_after_proguard", LABEL)
+                  .cfg(HostTransition.INSTANCE)
+                  .exec()
+                  .value(env.getToolsLabel("//tools/android:dexbuilder_after_proguard")))
           .add(
               attr("$dexsharder", LABEL)
                   .cfg(HostTransition.INSTANCE)
@@ -1021,9 +1029,15 @@ public final class AndroidRuleClasses {
                   .cfg(HostTransition.INSTANCE)
                   .exec()
                   .value(env.getToolsLabel("//tools/android:resource_extractor")))
+          /* <!-- #BLAZE_RULE(android_binary).ATTRIBUTE(instruments) -->
+          <p>The <code>android_binary</code> target to instrument.</p>
+          <p>If this attribute is set, this <code>android_binary</code> will be treated as a test
+          application for instrumentation tests. An <code>android_instrumentation_test</code>
+          target can then specify this target in its
+           <a href="${link android_instrumentation_test.test_app}">test_app</a> attribute.
+          <!-- #END_BLAZE_RULE.ATTRIBUTE --> */
           .add(
               attr("instruments", LABEL)
-                  .undocumented("blocked by android_instrumentation_test")
                   .allowedRuleClasses("android_binary")
                   .allowedFileTypes(NO_FILE))
           .add(

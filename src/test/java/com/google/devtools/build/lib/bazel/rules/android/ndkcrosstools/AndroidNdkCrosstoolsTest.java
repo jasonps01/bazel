@@ -85,7 +85,7 @@ public class AndroidNdkCrosstoolsTest {
         // The contents of the NDK are placed at "external/%repositoryName%/ndk".
         // The "external/%repositoryName%" part is removed using NdkPaths.stripRepositoryPrefix,
         // but to make it easier the "ndk/" part is added here.
-        ndkFiles.add("ndk/" + line);
+        ndkFiles.add("ndk/" + line.trim());
       }
       return ndkFiles.build();
     }
@@ -95,7 +95,7 @@ public class AndroidNdkCrosstoolsTest {
           ResourceFileLoader.loadResource(AndroidNdkCrosstoolsTest.class, ndkDirectoriesFilename);
       ImmutableSet.Builder<String> ndkDirectories = ImmutableSet.builder();
       for (String line : ndkFilesFileContent.split("\n")) {
-        ndkDirectories.add("ndk/" + line);
+        ndkDirectories.add("ndk/" + line.trim());
       }
       return ndkDirectories.build();
     }
@@ -131,7 +131,9 @@ public class AndroidNdkCrosstoolsTest {
 
   public AndroidNdkCrosstoolsTest(AndroidNdkCrosstoolsTestParams params) throws IOException {
     // NDK test data is based on the x86 64-bit Linux Android NDK.
-    NdkPaths ndkPaths = new NdkPaths(REPOSITORY_NAME, HOST_PLATFORM, params.apiLevel);
+    NdkPaths ndkPaths =
+        new NdkPaths(
+            REPOSITORY_NAME, HOST_PLATFORM, params.apiLevel, params.ndkRelease.majorRevision);
 
     ImmutableList.Builder<CrosstoolRelease> crosstools = ImmutableList.builder();
     ImmutableMap.Builder<String, String> stlFilegroupsBuilder = ImmutableMap.builder();

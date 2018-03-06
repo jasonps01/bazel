@@ -33,6 +33,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.annotation.Nullable;
 
 /**
  * An object that captures the temporary state we need to pass around while
@@ -94,6 +95,7 @@ public class JavaTargetAttributes {
     private final NestedSetBuilder<Artifact> compileTimeDependencyArtifacts =
         NestedSetBuilder.stableOrder();
     private Label targetLabel;
+    @Nullable private String injectingRuleKind;
 
     private final NestedSetBuilder<Artifact> excludedArtifacts =
         NestedSetBuilder.naiveLinkOrder();
@@ -181,6 +183,12 @@ public class JavaTargetAttributes {
       return this;
     }
 
+    public Builder setInjectingRuleKind(@Nullable String injectingRuleKind) {
+      Preconditions.checkArgument(!built);
+      this.injectingRuleKind = injectingRuleKind;
+      return this;
+    }
+
     /**
      * Sets the bootclasspath to be passed to the Java compiler.
      *
@@ -224,17 +232,13 @@ public class JavaTargetAttributes {
     }
 
     /**
-     * In tandem with strictJavaDeps, directJars represents a subset of the compile-time, classpath
+     * In tandem with strictJavaDeps, directJars represents a subset of the compile-time classpath
      * jars that were provided by direct dependencies. When strictJavaDeps is OFF, there is no need
      * to provide directJars, and no extra information is passed to javac. When strictJavaDeps is
      * set to WARN or ERROR, the compiler command line will include extra flags to indicate the
      * warning/error policy and to map the classpath jars to direct or transitive dependencies,
-     * using the information in directJars. The extra flags are formatted like this (same for
-     * --indirect_dependency): <pre>
-     * --direct_dependency
-     * foo/bar/lib.jar
-     * //java/com/google/foo:bar
-     * </pre>
+     * using the information in directJars. The compiler command line will include an extra flag to
+     * indicate which classpath jars are direct dependencies.
      */
     public Builder addDirectJars(NestedSet<Artifact> directJars) {
       Preconditions.checkArgument(!built);
@@ -367,6 +371,7 @@ public class JavaTargetAttributes {
           directJars.build(),
           compileTimeDependencyArtifacts.build(),
           targetLabel,
+          injectingRuleKind,
           excludedArtifacts,
           strictJavaDeps);
     }
@@ -437,6 +442,7 @@ public class JavaTargetAttributes {
   private final NestedSet<Artifact> directJars;
   private final NestedSet<Artifact> compileTimeDependencyArtifacts;
   private final Label targetLabel;
+  @Nullable private String injectingRuleKind;
 
   private final NestedSet<Artifact> excludedArtifacts;
   private final BuildConfiguration.StrictDepsMode strictJavaDeps;
@@ -462,6 +468,7 @@ public class JavaTargetAttributes {
       NestedSet<Artifact> directJars,
       NestedSet<Artifact> compileTimeDependencyArtifacts,
       Label targetLabel,
+      @Nullable String injectingRuleKind,
       NestedSetBuilder<Artifact> excludedArtifacts,
       BuildConfiguration.StrictDepsMode strictJavaDeps) {
     this.sourceFiles = ImmutableSet.copyOf(sourceFiles);
@@ -487,6 +494,7 @@ public class JavaTargetAttributes {
     this.additionalOutputs = ImmutableSet.copyOf(additionalOutputs);
     this.compileTimeDependencyArtifacts = compileTimeDependencyArtifacts;
     this.targetLabel = targetLabel;
+    this.injectingRuleKind = injectingRuleKind;
     this.excludedArtifacts = excludedArtifacts.build();
     this.strictJavaDeps = strictJavaDeps;
   }
@@ -622,6 +630,11 @@ public class JavaTargetAttributes {
 
   public Label getTargetLabel() {
     return targetLabel;
+  }
+
+  @Nullable
+  public String getInjectingRuleKind() {
+    return injectingRuleKind;
   }
 
   public BuildConfiguration.StrictDepsMode getStrictJavaDeps() {

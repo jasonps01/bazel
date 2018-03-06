@@ -15,15 +15,26 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.base.Function;
-import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.NativeInfo;
 import com.google.devtools.build.lib.packages.NativeProvider;
+import com.google.devtools.build.lib.rules.cpp.CcLinkParams.Builder;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsStore.CcLinkParamsStoreImpl;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
 
 /** A target that provides C linker parameters. */
 @Immutable
+@AutoCodec
+@SkylarkModule(
+  name = "cc_link_params_info",
+  title = "cc_link_params_info",
+  category = SkylarkModuleCategory.PROVIDER,
+  doc = "Link params provider"
+)
 public final class CcLinkParamsInfo extends NativeInfo {
   public static final NativeProvider<CcLinkParamsInfo> PROVIDER =
       new NativeProvider<CcLinkParamsInfo>(CcLinkParamsInfo.class, "link_params") {};
@@ -39,23 +50,31 @@ public final class CcLinkParamsInfo extends NativeInfo {
 
   private final CcLinkParamsStoreImpl store;
 
+  @AutoCodec.Instantiator
   public CcLinkParamsInfo(CcLinkParamsStore store) {
-    super(PROVIDER, ImmutableMap.<String, Object>of());
+    super(PROVIDER);
     this.store = new CcLinkParamsStoreImpl(store);
   }
 
+  @AutoCodec
+  @VisibleForSerialization
+  static class CcLinkParamsInfoCollection extends CcLinkParamsStore {
+    private final Iterable<CcLinkParamsInfo> providers;
+
+    CcLinkParamsInfoCollection(Iterable<CcLinkParamsInfo> providers) {
+      this.providers = providers;
+    }
+
+    @Override
+    protected void collect(Builder builder, boolean linkingStatically, boolean linkShared) {
+      for (CcLinkParamsInfo provider : providers) {
+        builder.add(provider.getCcLinkParamsStore());
+      }
+    }
+  }
+
   public static CcLinkParamsInfo merge(final Iterable<CcLinkParamsInfo> providers) {
-    CcLinkParamsStore ccLinkParamsStore =
-        new CcLinkParamsStore() {
-          @Override
-          protected void collect(
-              CcLinkParams.Builder builder, boolean linkingStatically, boolean linkShared) {
-            for (CcLinkParamsInfo provider : providers) {
-              builder.add(provider.getCcLinkParamsStore());
-            }
-          }
-        };
-    return new CcLinkParamsInfo(ccLinkParamsStore);
+    return new CcLinkParamsInfo(new CcLinkParamsInfoCollection(providers));
   }
 
   /** Returns the link params store. */

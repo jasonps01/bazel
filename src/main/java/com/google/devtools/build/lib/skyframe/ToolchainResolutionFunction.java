@@ -18,7 +18,6 @@ import static java.util.stream.Collectors.joining;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.devtools.build.lib.analysis.PlatformConfiguration;
 import com.google.devtools.build.lib.analysis.PlatformOptions;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.platform.ConstraintValueInfo;
@@ -28,9 +27,8 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.NoSuchThingException;
-import com.google.devtools.build.lib.skyframe.ConfiguredTargetFunction.ConfiguredValueCreationException;
 import com.google.devtools.build.lib.skyframe.RegisteredToolchainsFunction.InvalidToolchainLabelException;
-import com.google.devtools.build.lib.skyframe.ToolchainResolutionValue.ToolchainResolutionKey;
+import com.google.devtools.build.lib.skyframe.ToolchainUtil.ToolchainContextException;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.build.skyframe.SkyFunctionException;
@@ -38,6 +36,7 @@ import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 
@@ -47,12 +46,16 @@ public class ToolchainResolutionFunction implements SkyFunction {
   @Nullable
   @Override
   public SkyValue compute(SkyKey skyKey, Environment env)
-      throws SkyFunctionException, InterruptedException {
-    ToolchainResolutionKey key = (ToolchainResolutionKey) skyKey.argument();
+      throws ToolchainResolutionFunctionException, InterruptedException {
+    ToolchainResolutionValue.Key key = (ToolchainResolutionValue.Key) skyKey.argument();
 
-    BuildConfiguration configuration = key.configuration();
-    PlatformConfiguration platformConfiguration =
-        configuration.getFragment(PlatformConfiguration.class);
+    // This call could be combined with the call below, but this SkyFunction is evaluated so rarely
+    // it's not worth optimizing.
+    BuildConfigurationValue value = (BuildConfigurationValue) env.getValue(key.configurationKey());
+    if (env.valuesMissing()) {
+      return null;
+    }
+    BuildConfiguration configuration = value.getConfiguration();
 
     // Get all toolchains.
     RegisteredToolchainsValue toolchains;
@@ -60,7 +63,7 @@ public class ToolchainResolutionFunction implements SkyFunction {
       toolchains =
           (RegisteredToolchainsValue)
               env.getValueOrThrow(
-                  RegisteredToolchainsValue.key(key.configuration()),
+                  RegisteredToolchainsValue.key(key.configurationKey()),
                   InvalidToolchainLabelException.class,
                   EvalException.class);
       if (toolchains == null) {
@@ -74,13 +77,17 @@ public class ToolchainResolutionFunction implements SkyFunction {
 
     // Find the right one.
     boolean debug = configuration.getOptions().get(PlatformOptions.class).toolchainResolutionDebug;
-    ImmutableMap<PlatformInfo, Label> resolvedToolchainLabels =
+    ImmutableMap<ConfiguredTargetKey, Label> resolvedToolchainLabels =
         resolveConstraints(
             key.toolchainType(),
-            key.availableExecutionPlatforms(),
-            key.targetPlatform(),
+            key.availableExecutionPlatformKeys(),
+            key.targetPlatformKey(),
             toolchains.registeredToolchains(),
+            env,
             debug ? env.getListener() : null);
+    if (resolvedToolchainLabels == null) {
+      return null;
+    }
 
     if (resolvedToolchainLabels.isEmpty()) {
       throw new ToolchainResolutionFunctionException(
@@ -95,17 +102,39 @@ public class ToolchainResolutionFunction implements SkyFunction {
    * pairs that are compatible a) with each other, and b) with the toolchain type and target
    * platform.
    */
-  private static ImmutableMap<PlatformInfo, Label> resolveConstraints(
+  @Nullable
+  private static ImmutableMap<ConfiguredTargetKey, Label> resolveConstraints(
       Label toolchainType,
-      List<PlatformInfo> availableExecutionPlatforms,
-      PlatformInfo targetPlatform,
+      List<ConfiguredTargetKey> availableExecutionPlatformKeys,
+      ConfiguredTargetKey targetPlatformKey,
       ImmutableList<DeclaredToolchainInfo> toolchains,
-      @Nullable EventHandler eventHandler) {
+      Environment env,
+      @Nullable EventHandler eventHandler)
+      throws ToolchainResolutionFunctionException, InterruptedException {
 
-    // Platforms may exist multiple times in availableExecutionPlatforms. The Set lets this code
+    // Load the PlatformInfo needed to check constraints.
+    Map<ConfiguredTargetKey, PlatformInfo> platforms;
+    try {
+      platforms =
+          ToolchainUtil.getPlatformInfo(
+              new ImmutableList.Builder<ConfiguredTargetKey>()
+                  .add(targetPlatformKey)
+                  .addAll(availableExecutionPlatformKeys)
+                  .build(),
+              env);
+      if (platforms == null) {
+        return null;
+      }
+    } catch (ToolchainContextException e) {
+      throw new ToolchainResolutionFunctionException(e);
+    }
+
+    PlatformInfo targetPlatform = platforms.get(targetPlatformKey);
+
+    // Platforms may exist multiple times in availableExecutionPlatformKeys. The Set lets this code
     // check whether a platform has already been seen during processing.
-    Set<PlatformInfo> platformsSeen = new HashSet<>();
-    ImmutableMap.Builder<PlatformInfo, Label> builder = ImmutableMap.builder();
+    Set<ConfiguredTargetKey> platformKeysSeen = new HashSet<>();
+    ImmutableMap.Builder<ConfiguredTargetKey, Label> builder = ImmutableMap.builder();
 
     debugMessage(eventHandler, "Looking for toolchain of type %s...", toolchainType);
     for (DeclaredToolchainInfo toolchain : toolchains) {
@@ -126,31 +155,33 @@ public class ToolchainResolutionFunction implements SkyFunction {
       }
 
       // Find the matching execution platforms.
-      for (PlatformInfo executionPlatform : availableExecutionPlatforms) {
+      for (ConfiguredTargetKey executionPlatformKey : availableExecutionPlatformKeys) {
+        PlatformInfo executionPlatform = platforms.get(executionPlatformKey);
         if (!checkConstraints(
             eventHandler, toolchain.execConstraints(), "execution", executionPlatform)) {
           continue;
         }
 
         // Only add the toolchains if this is a new platform.
-        if (!platformsSeen.contains(executionPlatform)) {
-          builder.put(executionPlatform, toolchain.toolchainLabel());
-          platformsSeen.add(executionPlatform);
+        if (!platformKeysSeen.contains(executionPlatformKey)) {
+          builder.put(executionPlatformKey, toolchain.toolchainLabel());
+          platformKeysSeen.add(executionPlatformKey);
         }
       }
     }
 
-    ImmutableMap<PlatformInfo, Label> resolvedToolchainLabels = builder.build();
+    ImmutableMap<ConfiguredTargetKey, Label> resolvedToolchainLabels = builder.build();
     if (resolvedToolchainLabels.isEmpty()) {
       debugMessage(eventHandler, "  No toolchains found");
     } else {
       debugMessage(
           eventHandler,
-          "  Selected execution platforms and toolchains: {%s}",
+          "  For toolchain type %s, possible execution platforms and toolchains: {%s}",
+          toolchainType,
           resolvedToolchainLabels
               .entrySet()
               .stream()
-              .map(e -> String.format("%s -> %s", e.getKey().label(), e.getValue()))
+              .map(e -> String.format("%s -> %s", e.getKey().getLabel(), e.getValue()))
               .collect(joining(", ")));
     }
 
@@ -224,7 +255,7 @@ public class ToolchainResolutionFunction implements SkyFunction {
       super(e, Transience.PERSISTENT);
     }
 
-    public ToolchainResolutionFunctionException(ConfiguredValueCreationException e) {
+    public ToolchainResolutionFunctionException(ToolchainContextException e) {
       super(e, Transience.PERSISTENT);
     }
 

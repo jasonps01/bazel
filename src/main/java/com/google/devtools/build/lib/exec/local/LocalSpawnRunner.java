@@ -76,7 +76,6 @@ public class LocalSpawnRunner implements SpawnRunner {
   private final boolean useProcessWrapper;
   private final String processWrapper;
 
-  private final String productName;
   private final LocalEnvProvider localEnvProvider;
 
   // TODO(b/62588075): Move this logic to ProcessWrapperUtil?
@@ -90,7 +89,6 @@ public class LocalSpawnRunner implements SpawnRunner {
       ResourceManager resourceManager,
       boolean useProcessWrapper,
       OS localOs,
-      String productName,
       LocalEnvProvider localEnvProvider) {
     this.execRoot = execRoot;
     this.processWrapper = getProcessWrapper(execRoot, localOs).getPathString();
@@ -98,7 +96,6 @@ public class LocalSpawnRunner implements SpawnRunner {
     this.hostName = NetUtil.getCachedShortHostName();
     this.resourceManager = resourceManager;
     this.useProcessWrapper = useProcessWrapper;
-    this.productName = productName;
     this.localEnvProvider = localEnvProvider;
   }
 
@@ -106,7 +103,6 @@ public class LocalSpawnRunner implements SpawnRunner {
       Path execRoot,
       LocalExecutionOptions localExecutionOptions,
       ResourceManager resourceManager,
-      String productName,
       LocalEnvProvider localEnvProvider) {
     this(
         execRoot,
@@ -114,8 +110,12 @@ public class LocalSpawnRunner implements SpawnRunner {
         resourceManager,
         OS.getCurrent() != OS.WINDOWS && getProcessWrapper(execRoot, OS.getCurrent()).exists(),
         OS.getCurrent(),
-        productName,
         localEnvProvider);
+  }
+
+  @Override
+  public String getName() {
+    return "local";
   }
 
   @Override
@@ -123,10 +123,10 @@ public class LocalSpawnRunner implements SpawnRunner {
       Spawn spawn,
       SpawnExecutionPolicy policy) throws IOException, InterruptedException {
     ActionExecutionMetadata owner = spawn.getResourceOwner();
-    policy.report(ProgressStatus.SCHEDULING, "local");
+    policy.report(ProgressStatus.SCHEDULING, getName());
     try (ResourceHandle handle =
         resourceManager.acquireResources(owner, spawn.getLocalResources())) {
-      policy.report(ProgressStatus.EXECUTING, "local");
+      policy.report(ProgressStatus.EXECUTING, getName());
       policy.lockOutputFiles();
       return new SubprocessHandler(spawn, policy).run();
     }
@@ -232,6 +232,7 @@ public class LocalSpawnRunner implements SpawnRunner {
             ("Action type " + actionType + " is not allowed to run locally due to regex filter: "
                 + localExecutionOptions.allowedLocalAction + "\n").getBytes(UTF_8));
         return new SpawnResult.Builder()
+            .setRunnerName(getName())
             .setStatus(Status.EXECUTION_DENIED)
             .setExitCode(LOCAL_EXEC_ERROR)
             .setExecutorHostname(hostName)
@@ -255,6 +256,9 @@ public class LocalSpawnRunner implements SpawnRunner {
         OutputStream stdErr;
         Path commandTmpDir = tmpDir.getRelative("work");
         commandTmpDir.createDirectory();
+        Map<String, String> environment =
+            localEnvProvider.rewriteLocalEnv(
+                spawn.getEnvironment(), execRoot, commandTmpDir.getPathString());
         if (useProcessWrapper) {
           // If the process wrapper is enabled, we use its timeout feature, which first interrupts
           // the subprocess and only kills it after a grace period so that the subprocess can output
@@ -277,12 +281,7 @@ public class LocalSpawnRunner implements SpawnRunner {
           cmd =
               new Command(
                   cmdLine.toArray(new String[0]),
-                  localEnvProvider.rewriteLocalEnv(
-                      spawn.getEnvironment(),
-                      execRoot,
-                      LocalSpawnRunner.this.localExecutionOptions.localTmpRoot,
-                      commandTmpDir.getPathString(),
-                      productName),
+                  environment,
                   execRoot.getPathFile());
         } else {
           stdOut = outErr.getOutputStream();
@@ -290,12 +289,7 @@ public class LocalSpawnRunner implements SpawnRunner {
           cmd =
               new Command(
                   spawn.getArguments().toArray(new String[0]),
-                  localEnvProvider.rewriteLocalEnv(
-                      spawn.getEnvironment(),
-                      execRoot,
-                      LocalSpawnRunner.this.localExecutionOptions.localTmpRoot,
-                      commandTmpDir.getPathString(),
-                      productName),
+                  environment,
                   execRoot.getPathFile(),
                   policy.getTimeout());
         }
@@ -322,6 +316,7 @@ public class LocalSpawnRunner implements SpawnRunner {
               .write(("Action failed to execute: " + msg + "\n").getBytes(UTF_8));
           outErr.getErrorStream().flush();
           return new SpawnResult.Builder()
+              .setRunnerName(getName())
               .setStatus(Status.EXECUTION_FAILED)
               .setExitCode(LOCAL_EXEC_ERROR)
               .setExecutorHostname(hostName)
@@ -343,6 +338,7 @@ public class LocalSpawnRunner implements SpawnRunner {
                 : (exitCode == 0 ? Status.SUCCESS : Status.NON_ZERO_EXIT);
         SpawnResult.Builder spawnResultBuilder =
             new SpawnResult.Builder()
+                .setRunnerName(getName())
                 .setStatus(status)
                 .setExitCode(exitCode)
                 .setExecutorHostname(hostName)

@@ -22,14 +22,12 @@ import com.google.devtools.build.lib.analysis.config.FragmentClassSet;
 import com.google.devtools.build.lib.concurrent.BlazeInterners;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.skyframe.serialization.strings.StringCodecs;
-import com.google.devtools.build.lib.vfs.FileSystemProvider;
 import com.google.devtools.build.skyframe.SkyFunctionName;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
@@ -43,12 +41,9 @@ import java.util.Set;
 /** A Skyframe value representing a {@link BuildConfiguration}. */
 // TODO(bazel-team): mark this immutable when BuildConfiguration is immutable.
 // @Immutable
-@AutoCodec(dependency = FileSystemProvider.class)
+@AutoCodec
 @ThreadSafe
 public class BuildConfigurationValue implements SkyValue {
-  public static final InjectingObjectCodec<BuildConfigurationValue, FileSystemProvider> CODEC =
-      new BuildConfigurationValue_AutoCodec();
-
   private static final Interner<Key> keyInterner = BlazeInterners.newWeakInterner();
 
   private final BuildConfiguration configuration;
@@ -83,8 +78,6 @@ public class BuildConfigurationValue implements SkyValue {
   /** {@link SkyKey} for {@link BuildConfigurationValue}. */
   @VisibleForSerialization
   public static final class Key implements SkyKey, Serializable {
-    public static final ObjectCodec<Key> CODEC = new Codec();
-
     private final FragmentClassSet fragments;
     private final BuildOptions buildOptions;
     // If hashCode really is -1, we'll recompute it from scratch each time. Oh well.
@@ -138,7 +131,7 @@ public class BuildConfigurationValue implements SkyValue {
       @Override
       public void serialize(SerializationContext context, Key obj, CodedOutputStream codedOut)
           throws SerializationException, IOException {
-        BuildOptions.CODEC.serialize(context, obj.buildOptions, codedOut);
+        context.serialize(obj.buildOptions, codedOut);
         codedOut.writeInt32NoTag(obj.fragments.fragmentClasses().size());
         for (Class<? extends BuildConfiguration.Fragment> fragment :
             obj.fragments.fragmentClasses()) {
@@ -150,7 +143,7 @@ public class BuildConfigurationValue implements SkyValue {
       @SuppressWarnings("unchecked") // Class<? extends...> cast
       public Key deserialize(DeserializationContext context, CodedInputStream codedIn)
           throws SerializationException, IOException {
-        BuildOptions buildOptions = BuildOptions.CODEC.deserialize(context, codedIn);
+        BuildOptions buildOptions = context.deserialize(codedIn);
         int fragmentsSize = codedIn.readInt32();
         ImmutableSortedSet.Builder<Class<? extends BuildConfiguration.Fragment>> fragmentsBuilder =
             ImmutableSortedSet.orderedBy(BuildConfiguration.lexicalFragmentSorter);

@@ -19,7 +19,9 @@ import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.devtools.build.lib.actions.ActionKeyContext;
+import com.google.devtools.build.lib.actions.Actions;
+import com.google.devtools.build.lib.actions.Actions.GeneratingActions;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.AliasProvider;
 import com.google.devtools.build.lib.analysis.AspectResolver;
 import com.google.devtools.build.lib.analysis.CachingAnalysisEnvironment;
@@ -274,7 +276,6 @@ public final class AspectFunction implements SkyFunction {
     if (baseConfiguredTargetValue.getConfiguredTarget().getProvider(AliasProvider.class) != null) {
       return createAliasAspect(
           env,
-          view.getActionKeyContext(),
           associatedConfiguredTargetAndTarget.getTarget(),
           aspect,
           key,
@@ -357,7 +358,7 @@ public final class AspectFunction implements SkyFunction {
                     aspect.getDescriptor().getDescription(),
                     associatedConfiguredTargetAndTarget.getTarget().toString()),
                 requiredToolchains,
-                aspectConfiguration);
+                key.getAspectConfigurationKey());
       } catch (ToolchainContextException e) {
         // TODO(katre): better error handling
         throw new AspectCreationException(e.getMessage());
@@ -393,7 +394,6 @@ public final class AspectFunction implements SkyFunction {
 
       return createAspect(
           env,
-          view.getActionKeyContext(),
           key,
           aspectPath,
           aspect,
@@ -477,7 +477,6 @@ public final class AspectFunction implements SkyFunction {
 
   private SkyValue createAliasAspect(
       Environment env,
-      ActionKeyContext actionKeyContext,
       Target originalTarget,
       Aspect aspect,
       AspectKey originalKey,
@@ -512,8 +511,7 @@ public final class AspectFunction implements SkyFunction {
         originalTarget.getLabel(),
         originalTarget.getLocation(),
         ConfiguredAspect.forAlias(real.getConfiguredAspect()),
-        actionKeyContext,
-        ImmutableList.of(),
+        GeneratingActions.EMPTY,
         transitivePackagesForPackageRootResolution,
         removeActionsAfterEvaluation.get());
   }
@@ -521,7 +519,6 @@ public final class AspectFunction implements SkyFunction {
   @Nullable
   private AspectValue createAspect(
       Environment env,
-      ActionKeyContext actionKeyContext,
       AspectKey key,
       ImmutableList<Aspect> aspectPath,
       Aspect aspect,
@@ -586,14 +583,23 @@ public final class AspectFunction implements SkyFunction {
     analysisEnvironment.disable(associatedTarget.getTarget());
     Preconditions.checkNotNull(configuredAspect);
 
+    GeneratingActions generatingActions;
+    // Check for conflicting actions within this aspect (indicates a bug in the implementation).
+    try {
+      generatingActions =
+          Actions.filterSharedActionsAndThrowActionConflict(
+              analysisEnvironment.getActionKeyContext(),
+              analysisEnvironment.getRegisteredActions());
+    } catch (ActionConflictException e) {
+      throw new AspectFunctionException(e);
+    }
     return new AspectValue(
         key,
         aspect,
         associatedTarget.getTarget().getLabel(),
         associatedTarget.getTarget().getLocation(),
         configuredAspect,
-        actionKeyContext,
-        ImmutableList.copyOf(analysisEnvironment.getRegisteredActions()),
+        generatingActions,
         transitivePackagesForPackageRootResolution == null
             ? null
             : transitivePackagesForPackageRootResolution.build(),
@@ -660,7 +666,7 @@ public final class AspectFunction implements SkyFunction {
       super(e, Transience.PERSISTENT);
     }
 
-    public AspectFunctionException(InconsistentAspectOrderException cause) {
+    public AspectFunctionException(ActionConflictException cause) {
       super(cause, Transience.PERSISTENT);
     }
   }

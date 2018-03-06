@@ -33,7 +33,6 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsStore;
-import com.google.devtools.build.lib.rules.cpp.CppCompilationContext;
 import com.google.devtools.build.lib.rules.cpp.LinkerInput;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
 import java.util.LinkedHashSet;
@@ -84,7 +83,6 @@ public class JavaImport implements RuleConfiguredTargetFactory {
     JavaCompilationArtifacts javaArtifacts = collectJavaArtifacts(jars, interfaceJars);
     common.setJavaCompilationArtifacts(javaArtifacts);
 
-    CppCompilationContext transitiveCppDeps = common.collectTransitiveCppDeps();
     NestedSet<LinkerInput> transitiveJavaNativeLibraries =
         common.collectTransitiveJavaNativeLibraries();
     boolean neverLink = JavaCommon.isNeverLink(ruleContext);
@@ -184,7 +182,6 @@ public class JavaImport implements RuleConfiguredTargetFactory {
         .add(
             JavaNativeLibraryProvider.class,
             new JavaNativeLibraryProvider(transitiveJavaNativeLibraries))
-        .add(CppCompilationContext.class, transitiveCppDeps)
         .add(JavaSourceInfoProvider.class, javaSourceInfoProvider)
         .add(ProguardSpecProvider.class, new ProguardSpecProvider(proguardSpecs))
         .addOutputGroup(JavaSemantics.SOURCE_JARS_OUTPUT_GROUP, transitiveJavaSourceJars)
@@ -242,13 +239,16 @@ public class JavaImport implements RuleConfiguredTargetFactory {
     ImmutableList.Builder<Artifact> interfaceJarsBuilder = ImmutableList.builder();
     boolean useIjar = ruleContext.getFragment(JavaConfiguration.class).getUseIjars();
     for (Artifact jar : jars) {
-      Artifact interfaceJar = useIjar
-          ? JavaCompilationHelper.createIjarAction(
-              ruleContext,
-              JavaCompilationHelper.getJavaToolchainProvider(ruleContext),
-              jar,
-              true)
-          : jar;
+      Artifact interfaceJar =
+          useIjar
+              ? JavaCompilationHelper.createIjarAction(
+                  ruleContext,
+                  JavaCompilationHelper.getJavaToolchainProvider(ruleContext),
+                  jar,
+                  ruleContext.getLabel(),
+                  /* injectingRuleKind */ null,
+                  true)
+              : jar;
       interfaceJarsBuilder.add(interfaceJar);
       compilationToRuntimeJarMap.put(interfaceJar, jar);
     }

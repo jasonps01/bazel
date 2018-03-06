@@ -57,20 +57,18 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.packages.RuleErrorConsumer;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationInfo.Builder;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams.Linkstamp;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Tool;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
-import com.google.devtools.build.lib.rules.cpp.CppCompilationContext.Builder;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.shell.ShellUtils;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.vfs.FileSystemProvider;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LipoMode;
 import java.util.ArrayList;
@@ -115,25 +113,22 @@ public class CppHelper {
    * Merges the STL and toolchain contexts into context builder. The STL is automatically determined
    * using the ":stl" attribute.
    */
-  public static void mergeToolchainDependentContext(RuleContext ruleContext,
-      CcToolchainProvider toolchain, Builder contextBuilder) {
+  public static void mergeToolchainDependentCcCompilationInfo(
+      RuleContext ruleContext, CcToolchainProvider toolchain, Builder ccCompilationInfoBuilder) {
     if (ruleContext.getRule().getAttributeDefinition(":stl") != null) {
       TransitiveInfoCollection stl = ruleContext.getPrerequisite(":stl", Mode.TARGET);
       if (stl != null) {
-        // TODO(bazel-team): Clean this up.
-        contextBuilder.addSystemIncludeDir(
-            stl.getLabel().getPackageIdentifier().getPathUnderExecRoot().getRelative("gcc3"));
-        CppCompilationContext provider = stl.getProvider(CppCompilationContext.class);
+        CcCompilationInfo provider = stl.get(CcCompilationInfo.PROVIDER);
         if (provider == null) {
           ruleContext.ruleError("Unable to merge the STL '" + stl.getLabel()
               + "' and toolchain contexts");
           return;
         }
-        contextBuilder.mergeDependentContext(provider);
+        ccCompilationInfoBuilder.mergeDependentCcCompilationInfo(provider);
       }
     }
     if (toolchain != null) {
-      contextBuilder.mergeDependentContext(toolchain.getCppCompilationContext());
+      ccCompilationInfoBuilder.mergeDependentCcCompilationInfo(toolchain.getCcCompilationInfo());
     }
   }
 
@@ -575,12 +570,9 @@ public class CppHelper {
    * A header that has been grepped for #include statements. Includes the original header as well as
    * a stripped version of that header that contains only #include statements.
    */
-  @AutoCodec(dependency = FileSystemProvider.class)
+  @AutoCodec
   @AutoValue
   abstract static class PregreppedHeader {
-    public static final InjectingObjectCodec<PregreppedHeader, FileSystemProvider> CODEC =
-        new CppHelper_PregreppedHeader_AutoCodec();
-
     @AutoCodec.Instantiator
     static PregreppedHeader create(Artifact originalHeader, Artifact greppedHeader) {
       return new AutoValue_CppHelper_PregreppedHeader(originalHeader, greppedHeader);
@@ -680,8 +672,8 @@ public class CppHelper {
   }
 
   /**
-   * Emits a warning on the rule if there are identical linkstamp artifacts with different
-   * compilation contexts.
+   * Emits a warning on the rule if there are identical linkstamp artifacts with different {@code
+   * CcCompilationInfo}s.
    */
   public static void checkLinkstampsUnique(RuleErrorConsumer listener, CcLinkParams linkParams) {
     Map<Artifact, NestedSet<Artifact>> result = new LinkedHashMap<>();
@@ -946,10 +938,11 @@ public class CppHelper {
             featureConfiguration.getToolForAction(CppCompileAction.STRIP_ACTION_NAME));
     Variables variables =
         new Variables.Builder(toolchain.getBuildVariables())
-            .addStringVariable(CppModel.OUTPUT_FILE_VARIABLE_NAME, output.getExecPathString())
+            .addStringVariable(
+                CcCompilationHelper.OUTPUT_FILE_VARIABLE_NAME, output.getExecPathString())
             .addStringSequenceVariable(
-                CppModel.STRIPOPTS_VARIABLE_NAME, cppConfiguration.getStripOpts())
-            .addStringVariable(CppModel.INPUT_FILE_VARIABLE_NAME, input.getExecPathString())
+                CcCommon.STRIPOPTS_VARIABLE_NAME, cppConfiguration.getStripOpts())
+            .addStringVariable(CcCommon.INPUT_FILE_VARIABLE_NAME, input.getExecPathString())
             .build();
     ImmutableList<String> commandLine =
         ImmutableList.copyOf(
@@ -976,7 +969,10 @@ public class CppHelper {
   public static void maybeAddStaticLinkMarkerProvider(RuleConfiguredTargetBuilder builder,
       RuleContext ruleContext) {
     boolean staticallyLinked = false;
-    if (ruleContext.getFragment(CppConfiguration.class).hasStaticLinkOption()) {
+    CppConfiguration cppConfiguration = ruleContext.getFragment(CppConfiguration.class);
+    if (ruleContext.getFeatures().contains("fully_static_link")) {
+      staticallyLinked = true;
+    } else if (cppConfiguration.hasStaticLinkOption()) {
       staticallyLinked = true;
     } else if (ruleContext.attributes().has("linkopts", Type.STRING_LIST)
         && ruleContext.attributes().get("linkopts", Type.STRING_LIST).contains("-static")) {

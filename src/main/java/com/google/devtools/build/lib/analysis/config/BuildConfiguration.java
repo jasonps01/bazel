@@ -37,7 +37,6 @@ import com.google.devtools.build.lib.actions.ArtifactRoot;
 import com.google.devtools.build.lib.actions.BuildConfigurationInterface;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
-import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.config.transitions.ComposingPatchTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
@@ -54,7 +53,6 @@ import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
@@ -66,7 +64,6 @@ import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.util.RegexFilter;
-import com.google.devtools.build.lib.vfs.FileSystemProvider;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.common.options.Converter;
@@ -122,9 +119,6 @@ import javax.annotation.Nullable;
           + "depend on it and not targets that it depends on."
 )
 public class BuildConfiguration implements BuildConfigurationInterface {
-  public static final InjectingObjectCodec<BuildConfiguration, FileSystemProvider> CODEC =
-      new BuildConfigurationCodec();
-
   /**
    * Sorts fragments by class name. This produces a stable order which, e.g., facilitates consistent
    * output from buildMnemonic.
@@ -142,11 +136,7 @@ public class BuildConfiguration implements BuildConfigurationInterface {
    * declare {@link ImmutableList} signatures on their interfaces vs. {@link List}). This is because
    * fragment instances may be shared across configurations.
    */
-  @AutoCodec(strategy = AutoCodec.Strategy.POLYMORPHIC, dependency = FileSystemProvider.class)
   public abstract static class Fragment {
-    public static final InjectingObjectCodec<Fragment, FileSystemProvider> CODEC =
-        new BuildConfiguration_Fragment_AutoCodec();
-
     /**
      * Validates the options for this Fragment. Issues warnings for the
      * use of deprecated options, and warnings or errors for any option settings
@@ -204,12 +194,6 @@ public class BuildConfiguration implements BuildConfigurationInterface {
      */
     public Map<String, Object> lateBoundOptionDefaults() {
       return ImmutableMap.of();
-    }
-
-    /** Return set of features enabled by this configuration. */
-    public ImmutableSet<String> configurationEnabledFeatures(
-        RuleContext ruleContext, ImmutableSet<String> disabledFeatures) {
-      return ImmutableSet.of();
     }
 
     /**
@@ -388,53 +372,6 @@ public class BuildConfiguration implements BuildConfigurationInterface {
     }
   }
 
-  /** TODO(bazel-team): document this */
-  public static class RunsPerTestConverter extends PerLabelOptions.PerLabelOptionsConverter {
-    @Override
-    public PerLabelOptions convert(String input) throws OptionsParsingException {
-      try {
-        return parseAsInteger(input);
-      } catch (NumberFormatException ignored) {
-        return parseAsRegex(input);
-      }
-    }
-
-    private PerLabelOptions parseAsInteger(String input)
-        throws NumberFormatException, OptionsParsingException {
-      int numericValue = Integer.parseInt(input);
-      if (numericValue <= 0) {
-        throw new OptionsParsingException("'" + input + "' should be >= 1");
-      } else {
-        RegexFilter catchAll = new RegexFilter(Collections.singletonList(".*"),
-            Collections.<String>emptyList());
-        return new PerLabelOptions(catchAll, Collections.singletonList(input));
-      }
-    }
-
-    private PerLabelOptions parseAsRegex(String input) throws OptionsParsingException {
-      PerLabelOptions testRegexps = super.convert(input);
-      if (testRegexps.getOptions().size() != 1) {
-        throw new OptionsParsingException(
-            "'" + input + "' has multiple runs for a single pattern");
-      }
-      String runsPerTest = Iterables.getOnlyElement(testRegexps.getOptions());
-      try {
-        int numericRunsPerTest = Integer.parseInt(runsPerTest);
-        if (numericRunsPerTest <= 0) {
-          throw new OptionsParsingException("'" + input + "' has a value < 1");
-        }
-      } catch (NumberFormatException e) {
-        throw new OptionsParsingException("'" + input + "' has a non-numeric value", e);
-      }
-      return testRegexps;
-    }
-
-    @Override
-    public String getTypeDescription() {
-      return "a positive integer or test_regex@runs. This flag may be passed more than once";
-    }
-  }
-
   /**
    * Values for the --strict_*_deps option
    */
@@ -476,8 +413,6 @@ public class BuildConfiguration implements BuildConfigurationInterface {
    */
   @AutoCodec(strategy = AutoCodec.Strategy.PUBLIC_FIELDS)
   public static class Options extends FragmentOptions implements Cloneable {
-    public static final ObjectCodec<Options> CODEC = new BuildConfiguration_Options_AutoCodec();
-
     @Option(
       name = "experimental_separate_genfiles_directory",
       defaultValue = "true",
@@ -755,23 +690,6 @@ public class BuildConfiguration implements BuildConfigurationInterface {
               + "'//tools/test:coverage_report_generator'."
     )
     public Label coverageReportGenerator;
-
-    @Option(
-      name = "experimental_use_llvm_covmap",
-      defaultValue = "false",
-      category = "experimental",
-      documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
-      effectTags = {
-          OptionEffectTag.CHANGES_INPUTS,
-          OptionEffectTag.AFFECTS_OUTPUTS,
-          OptionEffectTag.LOADING_AND_ANALYSIS
-      },
-      metadataTags = { OptionMetadataTag.EXPERIMENTAL },
-      help =
-          "If specified, Bazel will generate llvm-cov coverage map information rather than "
-              + "gcov when collect_code_coverage is enabled."
-    )
-    public boolean useLLVMCoverageMapFormat;
 
     @Option(
       name = "build_runfile_manifests",
@@ -1960,10 +1878,6 @@ public class BuildConfiguration implements BuildConfigurationInterface {
     return options.experimentalJavaCoverage;
   }
 
-  public boolean isLLVMCoverageMapFormatEnabled() {
-    return options.useLLVMCoverageMapFormat;
-  }
-
   /** If false, AnalysisEnvironment doesn't register any actions created by the ConfiguredTarget. */
   public boolean isActionsEnabled() {
     return actionsEnabled;
@@ -2182,8 +2096,7 @@ public class BuildConfiguration implements BuildConfigurationInterface {
     return GenericBuildEvent.protoChaining(this).setConfiguration(builder.build()).build();
   }
 
-  private static class BuildConfigurationCodec
-      implements InjectingObjectCodec<BuildConfiguration, FileSystemProvider> {
+  private static class BuildConfigurationCodec implements ObjectCodec<BuildConfiguration> {
     @Override
     public Class<BuildConfiguration> getEncodedClass() {
       return BuildConfiguration.class;
@@ -2191,34 +2104,31 @@ public class BuildConfiguration implements BuildConfigurationInterface {
 
     @Override
     public void serialize(
-        FileSystemProvider fsProvider,
         SerializationContext context,
         BuildConfiguration obj,
         CodedOutputStream codedOut)
         throws SerializationException, IOException {
-      BlazeDirectories.CODEC.serialize(fsProvider, context, obj.directories, codedOut);
+      context.serialize(obj.directories, codedOut);
       codedOut.writeInt32NoTag(obj.fragments.size());
       for (Fragment fragment : obj.fragments.values()) {
-        Fragment.CODEC.serialize(fsProvider, context, fragment, codedOut);
+        context.serialize(fragment, codedOut);
       }
-      BuildOptions.CODEC.serialize(context, obj.buildOptions, codedOut);
+      context.serialize(obj.buildOptions, codedOut);
       StringCodecs.asciiOptimized().serialize(context, obj.repositoryName, codedOut);
     }
 
     @Override
-    public BuildConfiguration deserialize(
-        FileSystemProvider fsProvider, DeserializationContext context, CodedInputStream codedIn)
+    public BuildConfiguration deserialize(DeserializationContext context, CodedInputStream codedIn)
         throws SerializationException, IOException {
-      BlazeDirectories blazeDirectories =
-          BlazeDirectories.CODEC.deserialize(fsProvider, context, codedIn);
+      BlazeDirectories blazeDirectories = context.deserialize(codedIn);
       int length = codedIn.readInt32();
       ImmutableSortedMap.Builder<Class<? extends Fragment>, Fragment> builder =
           new ImmutableSortedMap.Builder<>(lexicalFragmentSorter);
       for (int i = 0; i < length; ++i) {
-        Fragment fragment = Fragment.CODEC.deserialize(fsProvider, context, codedIn);
+        Fragment fragment = context.deserialize(codedIn);
         builder.put(fragment.getClass(), fragment);
       }
-      BuildOptions options = BuildOptions.CODEC.deserialize(context, codedIn);
+      BuildOptions options = context.deserialize(codedIn);
       String repositoryName = StringCodecs.asciiOptimized().deserialize(context, codedIn);
       return new BuildConfiguration(blazeDirectories, builder.build(), options, repositoryName);
     }

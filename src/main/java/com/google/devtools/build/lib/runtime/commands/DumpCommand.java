@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.runtime.commands;
 
 import static java.util.stream.Collectors.toList;
 
+import com.google.devtools.build.lib.analysis.AnalysisProtos.ActionGraphContainer;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.packages.Attribute;
@@ -33,6 +34,7 @@ import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor.RuleStat;
 import com.google.devtools.build.lib.util.ExitCode;
+import com.google.devtools.common.options.Converters.CommaSeparatedOptionListConverter;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
@@ -40,6 +42,7 @@ import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsProvider;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.ArrayList;
@@ -100,6 +103,29 @@ public class DumpCommand implements BlazeCommand {
       help = "Dump action cache content."
     )
     public boolean dumpActionCache;
+
+    @Option(
+      name = "action_graph",
+      defaultValue = "null",
+      category = "verbosity",
+      documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
+      effectTags = {OptionEffectTag.BAZEL_MONITORING},
+      help = "Dump action graph to the specified path."
+    )
+    public String dumpActionGraph;
+
+    @Option(
+      name = "action_graph:targets",
+      converter = CommaSeparatedOptionListConverter.class,
+      defaultValue = "...",
+      category = "verbosity",
+      documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
+      effectTags = {OptionEffectTag.BAZEL_MONITORING},
+      help =
+          "Comma separated list of targets to include in action graph dump. "
+              + "Defaults to all attributes. This option does only apply to --action_graph."
+    )
+    public List<String> actionGraphTargets;
 
     @Option(
       name = "rule_classes",
@@ -175,6 +201,7 @@ public class DumpCommand implements BlazeCommand {
         dumpOptions.dumpPackages
             || dumpOptions.dumpVfs
             || dumpOptions.dumpActionCache
+            || dumpOptions.dumpActionGraph != null
             || dumpOptions.dumpRuleClasses
             || dumpOptions.dumpRules
             || dumpOptions.skylarkMemory != null
@@ -217,6 +244,21 @@ public class DumpCommand implements BlazeCommand {
         out.println();
       }
 
+      if (dumpOptions.dumpActionGraph != null) {
+        try {
+          success &=
+              dumpActionGraph(
+                  env.getSkyframeExecutor(),
+                  dumpOptions.dumpActionGraph,
+                  dumpOptions.actionGraphTargets,
+                  out);
+        } catch (IOException e) {
+          env.getReporter()
+              .error(
+                  null, "Could not dump action graph to '" + dumpOptions.dumpActionGraph + "'", e);
+        }
+      }
+
       if (dumpOptions.dumpRuleClasses) {
         dumpRuleClasses(runtime, out);
         out.println();
@@ -257,6 +299,18 @@ public class DumpCommand implements BlazeCommand {
       env.getReporter().handle(Event.error("Cannot dump action cache: " + e.getMessage()));
       return false;
     }
+    return true;
+  }
+
+  private boolean dumpActionGraph(
+      SkyframeExecutor executor, String path, List<String> actionGraphTargets, PrintStream out)
+      throws IOException {
+    out.println("Dumping action graph to '" + path + "'");
+    ActionGraphContainer actionGraphContainer =
+        executor.getActionGraphContainer(actionGraphTargets);
+    FileOutputStream protoOutputStream = new FileOutputStream(path);
+    actionGraphContainer.writeTo(protoOutputStream);
+    protoOutputStream.close();
     return true;
   }
 

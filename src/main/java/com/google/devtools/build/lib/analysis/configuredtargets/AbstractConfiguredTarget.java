@@ -23,7 +23,6 @@ import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
-import com.google.devtools.build.lib.analysis.TargetContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.VisibilityProvider;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
@@ -35,7 +34,6 @@ import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.PackageSpecification.PackageGroupContents;
 import com.google.devtools.build.lib.packages.Provider;
-import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.syntax.ClassObject;
 import com.google.devtools.build.lib.syntax.EvalException;
@@ -51,7 +49,7 @@ import javax.annotation.Nullable;
  */
 public abstract class AbstractConfiguredTarget
     implements ConfiguredTarget, VisibilityProvider, ClassObject {
-  private final Target target;
+  private final Label label;
   private final BuildConfiguration configuration;
 
   private final NestedSet<PackageGroupContents> visibility;
@@ -63,27 +61,20 @@ public abstract class AbstractConfiguredTarget
   private static final String DATA_RUNFILES_FIELD = "data_runfiles";
   private static final String DEFAULT_RUNFILES_FIELD = "default_runfiles";
 
-  public AbstractConfiguredTarget(Target target,
-                           BuildConfiguration configuration) {
-    this.target = target;
-    this.configuration = configuration;
-    this.visibility = NestedSetBuilder.emptySet(Order.STABLE_ORDER);
+  public AbstractConfiguredTarget(Label label, BuildConfiguration configuration) {
+    this(label, configuration, NestedSetBuilder.emptySet(Order.STABLE_ORDER));
   }
 
-  public AbstractConfiguredTarget(TargetContext targetContext) {
-    this.target = targetContext.getTarget();
-    this.configuration = targetContext.getConfiguration();
-    this.visibility = targetContext.getVisibility();
+  protected AbstractConfiguredTarget(
+      Label label, BuildConfiguration configuration, NestedSet<PackageGroupContents> visibility) {
+    this.label = label;
+    this.configuration = configuration;
+    this.visibility = visibility;
   }
 
   @Override
   public final NestedSet<PackageGroupContents> getVisibility() {
     return visibility;
-  }
-
-  @Override
-  public Target getTarget() {
-    return target;
   }
 
   @Override
@@ -93,12 +84,12 @@ public abstract class AbstractConfiguredTarget
 
   @Override
   public Label getLabel() {
-    return getTarget().getLabel();
+    return label;
   }
 
   @Override
   public String toString() {
-    return "ConfiguredTarget(" + getTarget().getLabel() + ", " + getConfiguration() + ")";
+    return "ConfiguredTarget(" + getLabel() + ", " + getConfiguration() + ")";
   }
 
   @Override
@@ -133,12 +124,13 @@ public abstract class AbstractConfiguredTarget
     if (declaredProvider != null) {
       return declaredProvider;
     }
-    throw new EvalException(loc, Printer.format(
-        "%r%s doesn't contain declared provider '%s'",
-        this,
-        getTarget().getAssociatedRule() == null ? ""
-            : " (rule '" + getTarget().getAssociatedRule().getRuleClass() + "')",
-        constructor.getPrintableName()));
+    throw new EvalException(
+        loc,
+        Printer.format(
+            "%r%s doesn't contain declared provider '%s'",
+            this,
+            getRuleClassString().isEmpty() ? "" : " (rule '" + getRuleClassString() + "')",
+            constructor.getPrintableName()));
   }
 
   @Override
@@ -201,6 +193,10 @@ public abstract class AbstractConfiguredTarget
   @Nullable
   protected abstract Info rawGetSkylarkProvider(Provider.Key providerKey);
 
+  public String getRuleClassString() {
+    return "";
+  }
+
   /**
    * Returns a value provided by this target. Only meant to use from Skylark.
    */
@@ -230,6 +226,6 @@ public abstract class AbstractConfiguredTarget
   // Exceptions are currently EnvironmentGroupConfiguredTarget and PackageGroupConfiguredTarget.
   @Override
   public void repr(SkylarkPrinter printer) {
-    printer.append("<unknown target " + getTarget().getLabel() + ">");
+    printer.append("<unknown target " + getLabel() + ">");
   }
 }

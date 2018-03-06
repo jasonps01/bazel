@@ -15,7 +15,7 @@
 package com.google.devtools.build.lib.skyframe.serialization;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.devtools.build.lib.testutil.MoreAsserts.expectThrows;
+import static com.google.devtools.build.lib.testutil.MoreAsserts.assertThrows;
 import static org.junit.Assert.fail;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
@@ -26,6 +26,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
@@ -62,6 +63,9 @@ public class ObjectCodecsTest {
         throws SerializationException, IOException {
       return codedIn.readInt32();
     }
+
+    /** Disables auto-registration. */
+    private static class IntegerCodecRegisterer implements CodecRegisterer<IntegerCodec> {}
   }
 
   private static final String KNOWN_CLASSIFIER = "KNOWN_CLASSIFIER";
@@ -79,10 +83,10 @@ public class ObjectCodecsTest {
   @Before
   public final void setup() {
     spyObjectCodec = spy(new IntegerCodec());
-    this.underTest = new ObjectCodecs(
-        ObjectCodecRegistry.newBuilder()
-            .add(KNOWN_CLASSIFIER, spyObjectCodec)
-            .build());
+    this.underTest =
+        new ObjectCodecs(
+            ObjectCodecRegistry.newBuilder().add(KNOWN_CLASSIFIER, spyObjectCodec).build(),
+            ImmutableMap.of());
   }
 
   @Test
@@ -224,10 +228,12 @@ public class ObjectCodecsTest {
 
   @Test
   public void testSerializeFailsWhenNoCustomCodecAndFallbackDisabled() throws Exception {
-    ObjectCodecs underTest = new ObjectCodecs(
-        ObjectCodecRegistry.newBuilder().setAllowDefaultCodec(false).build());
+    ObjectCodecs underTest =
+        new ObjectCodecs(
+            ObjectCodecRegistry.newBuilder().setAllowDefaultCodec(false).build(),
+            ImmutableMap.of());
     SerializationException.NoCodecException expected =
-        expectThrows(
+        assertThrows(
             SerializationException.NoCodecException.class, () -> underTest.serialize("X", "Y"));
     assertThat(expected)
         .hasMessageThat()
@@ -237,10 +243,12 @@ public class ObjectCodecsTest {
   @Test
   public void testDeserializeFailsWhenNoCustomCodecAndFallbackDisabled() throws Exception {
     ByteString serialized = ByteString.copyFromUtf8("doesn't matter");
-    ObjectCodecs underTest = new ObjectCodecs(
-        ObjectCodecRegistry.newBuilder().setAllowDefaultCodec(false).build());
+    ObjectCodecs underTest =
+        new ObjectCodecs(
+            ObjectCodecRegistry.newBuilder().setAllowDefaultCodec(false).build(),
+            ImmutableMap.of());
     SerializationException.NoCodecException expected =
-        expectThrows(
+        assertThrows(
             SerializationException.NoCodecException.class,
             () -> underTest.deserialize(ByteString.copyFromUtf8("X"), serialized));
 
@@ -266,5 +274,12 @@ public class ObjectCodecsTest {
     assertThat(underTest.deserialize(KNOWN_CLASSIFIER_BYTES, codedIn)).isEqualTo(value1);
     assertThat(underTest.deserialize(KNOWN_CLASSIFIER_BYTES, codedIn)).isEqualTo(value2);
     assertThat(underTest.deserialize(KNOWN_CLASSIFIER_BYTES, codedIn)).isEqualTo(value3);
+  }
+
+  @Test
+  public void testSerializeDeserialize() throws Exception {
+    ObjectCodecs underTest = new ObjectCodecs(AutoRegistry.get(), ImmutableMap.of());
+    assertThat((String) underTest.deserialize(underTest.serialize("hello"))).isEqualTo("hello");
+    assertThat(underTest.deserialize(underTest.serialize(null))).isNull();
   }
 }

@@ -211,8 +211,8 @@ public class MethodLibrary {
     objectType = StringModule.class,
     returnType = String.class,
     doc =
-        "Returns a copy of the string where trailing characters that appear in <code>chars</code>"
-            + "are removed."
+        "Returns a copy of the string where leading or trailing characters that appear in "
+            + "<code>chars</code> are removed."
             + "<pre class=\"language-python\">"
             + "\"aabcbcbaa\".strip(\"ab\") == \"cbc\""
             + "</pre>",
@@ -1547,24 +1547,6 @@ public class MethodLibrary {
     }
   };
 
-  @SkylarkSignature(name = "get", objectType = SkylarkDict.class,
-      doc = "Returns the value for <code>key</code> if <code>key</code> is in the dictionary, "
-          + "else <code>default</code>. If <code>default</code> is not given, it defaults to "
-          + "<code>None</code>, so that this method never throws an error.",
-      parameters = {
-        @Param(name = "self", doc = "This dict."),
-        @Param(name = "key", doc = "The key to look for."),
-        @Param(name = "default", defaultValue = "None",
-            doc = "The default value to use (instead of None) if the key is not found.")})
-  private static final BuiltinFunction get = new BuiltinFunction("get") {
-    public Object invoke(SkylarkDict<?, ?> self, Object key, Object defaultValue) {
-      if (self.containsKey(key)) {
-        return self.get(key);
-      }
-      return defaultValue;
-    }
-  };
-
   @SkylarkSignature(
     name = "tuple",
     returnType = Tuple.class,
@@ -2113,12 +2095,15 @@ public class MethodLibrary {
     name = "print",
     returnType = Runtime.NoneType.class,
     doc =
-        "Prints <code>args</code> as output. It will be prefixed with the string <code>"
-            + "\"DEBUG\"</code> and the location (file and line number) of this call. It can be "
-            + "used for debugging."
+        "Prints <code>args</code> as debug output. It will be prefixed with the string <code>"
+            + "\"DEBUG\"</code> and the location (file and line number) of this call. The "
+            + "exact way in which the arguments are converted to strings is unspecified and may "
+            + "change at any time. In particular, it may be different from (and more detailed "
+            + "than) the formatting done by <a href='#str'><code>str()</code></a> and <a "
+            + "href='#repr'><code>repr()</code></a>."
             + "<p>Using <code>print</code> in production code is discouraged due to the spam it "
             + "creates for users. For deprecations, prefer a hard error using <a href=\"#fail\">"
-            + "fail()</a> when possible.",
+            + "<code>fail()</code></a> whenever possible.",
     parameters = {
       @Param(
         name = "sep",
@@ -2139,7 +2124,7 @@ public class MethodLibrary {
         public Runtime.NoneType invoke(
             String sep, SkylarkList<?> starargs, Location loc, Environment env)
             throws EvalException {
-          String msg = starargs.stream().map(Printer::str).collect(joining(sep));
+          String msg = starargs.stream().map(Printer::debugPrint).collect(joining(sep));
           // As part of the integration test "skylark_flag_test.sh", if the
           // "--internal_skylark_flag_test_canary" flag is enabled, append an extra marker string to
           // the output.

@@ -29,7 +29,9 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
+import com.google.devtools.build.lib.actions.CommandLine;
 import com.google.devtools.build.lib.actions.FailAction;
+import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FileProvider;
@@ -40,10 +42,8 @@ import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
-import com.google.devtools.build.lib.analysis.actions.CommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
-import com.google.devtools.build.lib.analysis.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction.Builder;
@@ -386,8 +386,8 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
             derivedJarFunction,
             proguardOutputMap);
 
-    NestedSet<Artifact> nativeLibsZips =
-        AndroidCommon.collectTransitiveNativeLibsZips(ruleContext).build();
+    NestedSet<Artifact> nativeLibsAar =
+        AndroidCommon.collectTransitiveNativeLibs(ruleContext).build();
 
     DexPostprocessingOutput dexPostprocessingOutput =
         androidSemantics.postprocessClassesDexZip(
@@ -461,7 +461,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
         .setClassesDex(finalClassesDex)
         .addInputZip(resourceApk.getArtifact())
         .setJavaResourceZip(dexingOutput.javaResourceJar, resourceExtractor)
-        .addInputZips(nativeLibsZips)
+        .addInputZips(nativeLibsAar)
         .setNativeLibs(nativeLibs)
         .setUnsignedApk(unsignedApk)
         .setSignedApk(zipAlignedApk)
@@ -559,7 +559,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
           resourceApk,
           mobileInstallResourceApks,
           resourceExtractor,
-          nativeLibsZips,
+          nativeLibsAar,
           signingKey,
           additionalMergedManifests,
           applicationManifest);
@@ -1072,6 +1072,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
         // No need to shuffle, just run proguarded Jar through dexbuilder
         DexArchiveAspect.createDexArchiveAction(
             ruleContext,
+            "$dexbuilder_after_proguard",
             proguardedJar,
             DexArchiveAspect.topLevelDexbuilderDexopts(dexopts),
             dexArchives.get(0));
@@ -1140,12 +1141,10 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
     if (override == TriState.NO) {
       return false;
     }
-    if (isBinaryProguarded) {
-      // Require explicit opt-in for proguarded binaries, but no need to check dexopts since we'll
-      // be able to create dexbuilder actions with the appropriate flags as part of this rule.
-      return override == TriState.YES;
-    }
     if (override == TriState.YES || config.useIncrementalDexing()) {
+      if (isBinaryProguarded) {
+        return override == TriState.YES || config.incrementalDexingAfterProguardByDefault();
+      }
       Iterable<String> blacklistedDexopts =
           DexArchiveAspect.blacklistedDexopts(ruleContext, dexopts);
       if (Iterables.isEmpty(blacklistedDexopts)) {
@@ -1403,6 +1402,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
       Artifact dexArchive =
           DexArchiveAspect.createDexArchiveAction(
               ruleContext,
+              "$dexbuilder",
               derivedJarFunction.apply(jar),
               incrementalDexopts,
               ruleContext.getDerivedArtifact(
@@ -1497,6 +1497,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
         checkState(!shuffleOutputs.get(i).equals(shards.get(i)));
         DexArchiveAspect.createDexArchiveAction(
             ruleContext,
+            "$dexbuilder_after_proguard",
             shuffleOutputs.get(i),
             DexArchiveAspect.topLevelDexbuilderDexopts(dexopts),
             shards.get(i));

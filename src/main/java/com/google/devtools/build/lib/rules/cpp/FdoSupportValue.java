@@ -13,11 +13,14 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.cpp;
 
+import com.google.common.collect.Interner;
+import com.google.devtools.build.lib.concurrent.BlazeInterners;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoMode;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LipoMode;
-import com.google.devtools.build.skyframe.LegacySkyKey;
 import com.google.devtools.build.skyframe.SkyFunctionName;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
@@ -36,21 +39,28 @@ import java.util.Objects;
 public class FdoSupportValue implements SkyValue {
   public static final SkyFunctionName SKYFUNCTION = SkyFunctionName.create("FDO_SUPPORT");
 
-  /**
-   * {@link SkyKey} for {@link FdoSupportValue}.
-   */
+  /** {@link SkyKey} for {@link FdoSupportValue}. */
   @Immutable
-  public static class Key {
+  @AutoCodec
+  public static class Key implements SkyKey {
+    private static final Interner<Key> interner = BlazeInterners.newWeakInterner();
+
     private final LipoMode lipoMode;
     private final Path fdoZip;
     private final PathFragment fdoInstrument;
-    private final boolean llvmFdo;
+    private final FdoMode fdoMode;
 
-    private Key(LipoMode lipoMode, Path fdoZip, PathFragment fdoInstrument, boolean llvmFdo) {
+    private Key(LipoMode lipoMode, Path fdoZip, PathFragment fdoInstrument, FdoMode fdoMode) {
       this.lipoMode = lipoMode;
       this.fdoZip = fdoZip;
       this.fdoInstrument = fdoInstrument;
-      this.llvmFdo = llvmFdo;
+      this.fdoMode = fdoMode;
+    }
+
+    @AutoCodec.Instantiator
+    @AutoCodec.VisibleForSerialization
+    static Key of(LipoMode lipoMode, Path fdoZip, PathFragment fdoInstrument, FdoMode fdoMode) {
+      return interner.intern(new Key(lipoMode, fdoZip, fdoInstrument, fdoMode));
     }
 
     public LipoMode getLipoMode() {
@@ -65,8 +75,8 @@ public class FdoSupportValue implements SkyValue {
       return fdoInstrument;
     }
 
-    public boolean getLLVMFdo() {
-      return llvmFdo;
+    public FdoMode getFdoMode() {
+      return fdoMode;
     }
 
     @Override
@@ -82,13 +92,18 @@ public class FdoSupportValue implements SkyValue {
       Key that = (Key) o;
       return Objects.equals(this.lipoMode, that.lipoMode)
           && Objects.equals(this.fdoZip, that.fdoZip)
-          && Objects.equals(this.llvmFdo, that.llvmFdo)
+          && Objects.equals(this.fdoMode, that.fdoMode)
           && Objects.equals(this.fdoInstrument, that.fdoInstrument);
     }
 
     @Override
     public int hashCode() {
       return Objects.hash(lipoMode, fdoZip, fdoInstrument);
+    }
+
+    @Override
+    public SkyFunctionName functionName() {
+      return SKYFUNCTION;
     }
   }
 
@@ -103,7 +118,7 @@ public class FdoSupportValue implements SkyValue {
   }
 
   public static SkyKey key(
-      LipoMode lipoMode, Path fdoZip, PathFragment fdoInstrument, boolean llvmFdo) {
-    return LegacySkyKey.create(SKYFUNCTION, new Key(lipoMode, fdoZip, fdoInstrument, llvmFdo));
+      LipoMode lipoMode, Path fdoZip, PathFragment fdoInstrument, FdoMode fdoMode) {
+    return Key.of(lipoMode, fdoZip, fdoInstrument, fdoMode);
   }
 }

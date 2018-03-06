@@ -1,8 +1,8 @@
 package(default_visibility = ["//visibility:public"])
 
-# TODO(lberki): Remove this once cc_toolchain_alias is in a Bazel release
-load("//tools/cpp:alias_rules.bzl", "cc_toolchain_alias")
+licenses(["notice"])  # Apache 2.0
 
+# TODO(lberki): Remove this once cc_toolchain_alias is in a Bazel release
 cc_toolchain_alias(name = "current_cc_toolchain")
 
 cc_library(
@@ -106,12 +106,12 @@ cc_toolchain(
 
 cc_toolchain(
     name = "cc-compiler-darwin",
-    all_files = ":empty",
-    compiler_files = ":empty",
+    all_files = ":osx_wrapper",
+    compiler_files = ":osx_wrapper",
     cpu = "darwin",
     dwp_files = ":empty",
     dynamic_runtime_libs = [":empty"],
-    linker_files = ":empty",
+    linker_files = ":osx_wrapper",
     objcopy_files = ":empty",
     static_runtime_libs = [":empty"],
     strip_files = ":empty",
@@ -197,12 +197,21 @@ filegroup(
 filegroup(
     name = "interface_library_builder",
     srcs = ["build_interface_so"],
-    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "osx_wrapper",
+    srcs = ["osx_cc_wrapper.sh"],
 )
 
 filegroup(
     name = "link_dynamic_library",
     srcs = ["link_dynamic_library.sh"],
+)
+
+filegroup(
+    name = "lib_cc_configure",
+    srcs = ["lib_cc_configure.bzl"],
 )
 
 cc_toolchain_type(name = "toolchain_type")
@@ -212,12 +221,6 @@ cc_toolchain_type(name = "toolchain_type")
 # TODO(b/64754003): Remove once platforms are used in c++ by default.
 toolchain(
     name = "dummy_cc_toolchain",
-    toolchain = "dummy_cc_toolchain_impl",
-    toolchain_type = ":toolchain_type",
-)
-
-toolchain(
-    name = "dummy_cc_toolchain_type",
     toolchain = "dummy_cc_toolchain_impl",
     toolchain_type = ":toolchain_type",
 )

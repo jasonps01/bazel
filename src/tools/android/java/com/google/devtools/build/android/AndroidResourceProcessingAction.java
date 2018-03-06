@@ -13,6 +13,8 @@
 // limitations under the License.
 package com.google.devtools.build.android;
 
+import static java.util.stream.Collectors.toList;
+
 import com.android.builder.core.VariantType;
 import com.android.ide.common.internal.AaptCruncher;
 import com.android.ide.common.internal.LoggedErrorException;
@@ -44,15 +46,19 @@ import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.ShellQuotedParamsFilePreProcessor;
 import com.google.devtools.common.options.TriState;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import javax.xml.parsers.ParserConfigurationException;
 import org.xml.sax.SAXException;
@@ -257,22 +263,6 @@ public class AndroidResourceProcessingAction {
     public List<String> densities;
 
     @Option(
-      name = "densitiesForManifest",
-      defaultValue = "",
-      converter = CommaSeparatedOptionListConverter.class,
-      category = "config",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      deprecationWarning = "use '--densities' instead.",
-      effectTags = {OptionEffectTag.UNKNOWN},
-      help =
-          "Densities to specify in the manifest. If 'densities' is specified, that value will be"
-              + " used instead and this flag will be ignored. However, if resources were filtered"
-              + " in analysis, this flag can be used to specify densities in the manifest without"
-              + " repeating the filtering process."
-    )
-    public List<String> densitiesForManifest;
-
-    @Option(
       name = "packageForR",
       defaultValue = "null",
       category = "config",
@@ -382,6 +372,7 @@ public class AndroidResourceProcessingAction {
       final Path densityManifest = tmp.resolve("manifest-filtered/AndroidManifest.xml");
       final Path processedManifest = tmp.resolve("manifest-processed/AndroidManifest.xml");
       final Path dummyManifest = tmp.resolve("manifest-aapt-dummy/AndroidManifest.xml");
+      final Path publicXmlOut = tmp.resolve("public-resources/public.xml");
 
       Path generatedSources = null;
       if (options.srcJarOutput != null || options.rOutput != null || options.symbolsOut != null) {
@@ -412,18 +403,13 @@ public class AndroidResourceProcessingAction {
 
       logger.fine(String.format("Merging finished at %sms", timer.elapsed(TimeUnit.MILLISECONDS)));
 
-
-      // TODO(b/72995408): Remove the densitiesForManifest option once it is no longer being passed.
-      final List<String> densities =
-          options.densities.isEmpty() ? options.densitiesForManifest : options.densities;
-
       final DensityFilteredAndroidData filteredData =
           mergedData.filter(
               // Even if filtering was done in analysis, we still need to filter by density again
               // in execution since Fileset contents are not available in analysis.
               new DensitySpecificResourceFilter(
-                  densities, filteredResources, mergedResources),
-              new DensitySpecificManifestProcessor(densities, densityManifest));
+                  options.densities, filteredResources, mergedResources),
+              new DensitySpecificManifestProcessor(options.densities, densityManifest));
 
       logger.fine(
           String.format(
@@ -463,27 +449,26 @@ public class AndroidResourceProcessingAction {
         System.exit(1);
       }
 
-      resourceProcessor.processResources(
-          tmp,
-          aaptConfigOptions.aapt,
-          aaptConfigOptions.androidJar,
-          aaptConfigOptions.buildToolsVersion,
-          options.packageType,
-          aaptConfigOptions.debug,
-          options.packageForR,
-          new FlagAaptOptions(aaptConfigOptions),
-          aaptConfigOptions.resourceConfigs,
-          aaptConfigOptions.splits,
-          processedData,
-          data,
-          generatedSources,
-          options.packagePath,
-          options.proguardOutput,
-          options.mainDexProguardOutput,
-          options.resourcesOutput != null
-              ? processedData.getResourceDir().resolve("values").resolve("public.xml")
-              : null,
-          options.dataBindingInfoOut);
+      MergedAndroidData processedAndroidData =
+          resourceProcessor.processResources(
+              tmp,
+              aaptConfigOptions.aapt,
+              aaptConfigOptions.androidJar,
+              aaptConfigOptions.buildToolsVersion,
+              options.packageType,
+              aaptConfigOptions.debug,
+              options.packageForR,
+              new FlagAaptOptions(aaptConfigOptions),
+              aaptConfigOptions.resourceConfigs,
+              aaptConfigOptions.splits,
+              processedData,
+              data,
+              generatedSources,
+              options.packagePath,
+              options.proguardOutput,
+              options.mainDexProguardOutput,
+              options.resourcesOutput != null ? publicXmlOut : null,
+              options.dataBindingInfoOut);
       logger.fine(String.format("aapt finished at %sms", timer.elapsed(TimeUnit.MILLISECONDS)));
 
       if (options.srcJarOutput != null) {
@@ -495,7 +480,24 @@ public class AndroidResourceProcessingAction {
             generatedSources, options.rOutput, VariantType.LIBRARY == options.packageType);
       }
       if (options.resourcesOutput != null) {
-        ResourcesZip.from(processedData.getResourceDir(), processedData.getAssetDir())
+        if (Files.exists(publicXmlOut)) {
+          try (BufferedReader reader =
+              Files.newBufferedReader(publicXmlOut, StandardCharsets.UTF_8)) {
+            Path publicXml =
+                processedAndroidData.getResourceDir().resolve("values").resolve("public.xml");
+            Files.createDirectories(publicXml.getParent());
+
+            Pattern xmlComment = Pattern.compile("<!--.*-->");
+            Files.write(
+                publicXml,
+                // Remove aapt debugging comment lines to fix hermaticity with generated files.
+                reader.lines().filter(l -> !xmlComment.matcher(l).find()).collect(toList()),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING);
+          }
+        }
+
+        ResourcesZip.from(processedAndroidData.getResourceDir(), processedAndroidData.getAssetDir())
             .writeTo(options.resourcesOutput, false /* compress */);
       }
       logger.fine(

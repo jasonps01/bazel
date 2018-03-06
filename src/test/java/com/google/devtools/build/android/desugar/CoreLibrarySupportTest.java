@@ -32,7 +32,12 @@ public class CoreLibrarySupportTest {
   public void testIsRenamedCoreLibrary() throws Exception {
     CoreLibrarySupport support =
         new CoreLibrarySupport(
-            new CoreLibraryRewriter(""), null, ImmutableList.of("java/time/"), ImmutableList.of());
+            new CoreLibraryRewriter(""),
+            null,
+            ImmutableList.of("java/time/"),
+            ImmutableList.of(),
+            ImmutableList.of(),
+            ImmutableList.of());
     assertThat(support.isRenamedCoreLibrary("java/time/X")).isTrue();
     assertThat(support.isRenamedCoreLibrary("java/time/y/X")).isTrue();
     assertThat(support.isRenamedCoreLibrary("java/io/X")).isFalse();
@@ -48,6 +53,8 @@ public class CoreLibrarySupportTest {
             new CoreLibraryRewriter("__/"),
             null,
             ImmutableList.of("java/time/"),
+            ImmutableList.of(),
+            ImmutableList.of(),
             ImmutableList.of());
     assertThat(support.isRenamedCoreLibrary("__/java/time/X")).isTrue();
     assertThat(support.isRenamedCoreLibrary("__/java/time/y/X")).isTrue();
@@ -56,11 +63,17 @@ public class CoreLibrarySupportTest {
     assertThat(support.isRenamedCoreLibrary("__/java/io/X$$Lambda$17")).isTrue();
     assertThat(support.isRenamedCoreLibrary("com/google/X")).isFalse();
   }
+
   @Test
   public void testRenameCoreLibrary() throws Exception {
     CoreLibrarySupport support =
         new CoreLibrarySupport(
-            new CoreLibraryRewriter(""), null, ImmutableList.of(), ImmutableList.of());
+            new CoreLibraryRewriter(""),
+            null,
+            ImmutableList.of(),
+            ImmutableList.of(),
+            ImmutableList.of(),
+            ImmutableList.of());
     assertThat(support.renameCoreLibrary("java/time/X")).isEqualTo("j$/time/X");
     assertThat(support.renameCoreLibrary("com/google/X")).isEqualTo("com/google/X");
   }
@@ -69,9 +82,30 @@ public class CoreLibrarySupportTest {
   public void testRenameCoreLibrary_prefixedLoader() throws Exception {
     CoreLibrarySupport support =
         new CoreLibrarySupport(
-            new CoreLibraryRewriter("__/"), null, ImmutableList.of(), ImmutableList.of());
+            new CoreLibraryRewriter("__/"),
+            null,
+            ImmutableList.of(),
+            ImmutableList.of(),
+            ImmutableList.of(),
+            ImmutableList.of());
     assertThat(support.renameCoreLibrary("__/java/time/X")).isEqualTo("j$/time/X");
     assertThat(support.renameCoreLibrary("com/google/X")).isEqualTo("com/google/X");
+  }
+
+  @Test
+  public void testMoveTarget() throws Exception {
+    CoreLibrarySupport support =
+        new CoreLibrarySupport(
+            new CoreLibraryRewriter("__/"),
+            null,
+            ImmutableList.of("java/util/Helper"),
+            ImmutableList.of(),
+            ImmutableList.of("java/util/Existing#match -> java/util/Helper"),
+            ImmutableList.of());
+    assertThat(support.getMoveTarget("__/java/util/Existing", "match")).isEqualTo("j$/util/Helper");
+    assertThat(support.getMoveTarget("java/util/Existing", "match")).isEqualTo("j$/util/Helper");
+    assertThat(support.getMoveTarget("__/java/util/Existing", "matchesnot")).isNull();
+    assertThat(support.getMoveTarget("__/java/util/ExistingOther", "match")).isNull();
   }
 
   @Test
@@ -81,7 +115,9 @@ public class CoreLibrarySupportTest {
             new CoreLibraryRewriter(""),
             Thread.currentThread().getContextClassLoader(),
             ImmutableList.of("java/util/concurrent/"),
-            ImmutableList.of("java/util/Map"));
+            ImmutableList.of("java/util/Map"),
+            ImmutableList.of(),
+            ImmutableList.of());
     assertThat(support.isEmulatedCoreClassOrInterface("java/util/Map")).isTrue();
     assertThat(support.isEmulatedCoreClassOrInterface("java/util/Map$$Lambda$17")).isFalse();
     assertThat(support.isEmulatedCoreClassOrInterface("java/util/Map$$CC")).isFalse();
@@ -92,37 +128,17 @@ public class CoreLibrarySupportTest {
   }
 
   @Test
-  public void testIsEmulatedCoreLibraryInvocation() throws Exception {
+  public void testGetCoreInterfaceRewritingTarget_emulatedDefaultMethod() throws Exception {
     CoreLibrarySupport support =
         new CoreLibrarySupport(
             new CoreLibraryRewriter(""),
             Thread.currentThread().getContextClassLoader(),
             ImmutableList.of(),
-            ImmutableList.of("java/util/Collection"));
-    assertThat(
-            support.isEmulatedCoreLibraryInvocation(
-                Opcodes.INVOKEINTERFACE,
-                "java/util/Collection",
-                "removeIf",
-                "(Ljava/util/function/Predicate;)Z",
-                true))
-        .isTrue(); // true for default method
-    assertThat(
-            support.isEmulatedCoreLibraryInvocation(
-                Opcodes.INVOKEINTERFACE, "java/util/Collection", "size", "()I", true))
-        .isFalse(); // false for abstract method
-  }
-
-  @Test
-  public void testGetEmulatedCoreLibraryInvocationTarget_defaultMethod() throws Exception {
-    CoreLibrarySupport support =
-        new CoreLibrarySupport(
-            new CoreLibraryRewriter(""),
-            Thread.currentThread().getContextClassLoader(),
+            ImmutableList.of("java/util/Collection"),
             ImmutableList.of(),
-            ImmutableList.of("java/util/Collection"));
+            ImmutableList.of());
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEINTERFACE,
                 "java/util/Collection",
                 "removeIf",
@@ -130,7 +146,7 @@ public class CoreLibrarySupportTest {
                 true))
         .isEqualTo(Collection.class);
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEVIRTUAL,
                 "java/util/ArrayList",
                 "removeIf",
@@ -138,9 +154,9 @@ public class CoreLibrarySupportTest {
                 false))
         .isEqualTo(Collection.class);
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEINTERFACE,
-                "com/google/common/collect/ImmutableList",
+                "com/google/HypotheticalListInterface",
                 "removeIf",
                 "(Ljava/util/function/Predicate;)Z",
                 true))
@@ -148,15 +164,17 @@ public class CoreLibrarySupportTest {
   }
 
   @Test
-  public void testGetEmulatedCoreLibraryInvocationTarget_abstractMethod() throws Exception {
+  public void testGetCoreInterfaceRewritingTarget_abstractMethod() throws Exception {
     CoreLibrarySupport support =
         new CoreLibrarySupport(
             new CoreLibraryRewriter(""),
             Thread.currentThread().getContextClassLoader(),
             ImmutableList.of(),
-            ImmutableList.of("java/util/Collection"));
+            ImmutableList.of("java/util/Collection"),
+            ImmutableList.of(),
+            ImmutableList.of());
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEINTERFACE,
                 "java/util/Collection",
                 "size",
@@ -164,7 +182,7 @@ public class CoreLibrarySupportTest {
                 true))
         .isNull();
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEVIRTUAL,
                 "java/util/ArrayList",
                 "size",
@@ -174,15 +192,17 @@ public class CoreLibrarySupportTest {
   }
 
   @Test
-  public void testGetEmulatedCoreLibraryInvocationTarget_defaultOverride() throws Exception {
+  public void testGetCoreInterfaceRewritingTarget_emulatedDefaultOverride() throws Exception {
     CoreLibrarySupport support =
         new CoreLibrarySupport(
             new CoreLibraryRewriter(""),
             Thread.currentThread().getContextClassLoader(),
             ImmutableList.of(),
-            ImmutableList.of("java/util/Map"));
+            ImmutableList.of("java/util/Map"),
+            ImmutableList.of(),
+            ImmutableList.of());
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEINTERFACE,
                 "java/util/Map",
                 "putIfAbsent",
@@ -190,7 +210,7 @@ public class CoreLibrarySupportTest {
                 true))
         .isEqualTo(Map.class);
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEINTERFACE,
                 "java/util/concurrent/ConcurrentMap",
                 "putIfAbsent",
@@ -198,7 +218,7 @@ public class CoreLibrarySupportTest {
                 true))
         .isNull(); // putIfAbsent is default in Map but abstract in ConcurrentMap
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEINTERFACE,
                 "java/util/concurrent/ConcurrentMap",
                 "getOrDefault",
@@ -208,15 +228,17 @@ public class CoreLibrarySupportTest {
   }
 
   @Test
-  public void testGetEmulatedCoreLibraryInvocationTarget_staticInterfaceMethod() throws Exception {
+  public void testGetCoreInterfaceRewritingTarget_staticInterfaceMethod() throws Exception {
     CoreLibrarySupport support =
         new CoreLibrarySupport(
             new CoreLibraryRewriter(""),
             Thread.currentThread().getContextClassLoader(),
             ImmutableList.of(),
-            ImmutableList.of("java/util/Comparator"));
+            ImmutableList.of("java/util/Comparator"),
+            ImmutableList.of(),
+            ImmutableList.of());
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKESTATIC,
                 "java/util/Comparator",
                 "reverseOrder",
@@ -225,16 +247,91 @@ public class CoreLibrarySupportTest {
         .isEqualTo(Comparator.class);
   }
 
+  /**
+   * Tests that call sites of renamed core libraries are treated like call sites in regular
+   * {@link InterfaceDesugaring}.
+   */
   @Test
-  public void testGetEmulatedCoreLibraryInvocationTarget_ignoreRenamed() throws Exception {
+  public void testGetCoreInterfaceRewritingTarget_renamed() throws Exception {
+    CoreLibrarySupport support =
+        new CoreLibrarySupport(
+            new CoreLibraryRewriter(""),
+            Thread.currentThread().getContextClassLoader(),
+            ImmutableList.of("java/util/"),
+            ImmutableList.of(),
+            ImmutableList.of(),
+            ImmutableList.of());
+
+    // regular invocations of default methods: ignored
+    assertThat(
+            support.getCoreInterfaceRewritingTarget(
+                Opcodes.INVOKEINTERFACE,
+                "java/util/Collection",
+                "removeIf",
+                "(Ljava/util/function/Predicate;)Z",
+                true))
+        .isNull();
+    assertThat(
+            support.getCoreInterfaceRewritingTarget(
+                Opcodes.INVOKEVIRTUAL,
+                "java/util/ArrayList",
+                "removeIf",
+                "(Ljava/util/function/Predicate;)Z",
+                false))
+        .isNull();
+
+    // abstract methods: ignored
+    assertThat(
+            support.getCoreInterfaceRewritingTarget(
+                Opcodes.INVOKEINTERFACE,
+                "java/util/Collection",
+                "size",
+                "()I",
+                true))
+        .isNull();
+
+    // static interface method
+    assertThat(
+            support.getCoreInterfaceRewritingTarget(
+                Opcodes.INVOKESTATIC,
+                "java/util/Comparator",
+                "reverseOrder",
+                "()Ljava/util/Comparator;",
+                true))
+        .isEqualTo(Comparator.class);
+
+    // invokespecial for default methods: find nearest definition
+    assertThat(
+            support.getCoreInterfaceRewritingTarget(
+                Opcodes.INVOKESPECIAL,
+                "java/util/List",
+                "removeIf",
+                "(Ljava/util/function/Predicate;)Z",
+                true))
+        .isEqualTo(Collection.class);
+    // invokespecial on a class: ignore (even if there's an inherited default method)
+    assertThat(
+            support.getCoreInterfaceRewritingTarget(
+                Opcodes.INVOKESPECIAL,
+                "java/util/ArrayList",
+                "removeIf",
+                "(Ljava/util/function/Predicate;)Z",
+                false))
+        .isNull();
+  }
+
+  @Test
+  public void testGetCoreInterfaceRewritingTarget_ignoreRenamedInvokeInterface() throws Exception {
     CoreLibrarySupport support =
         new CoreLibrarySupport(
             new CoreLibraryRewriter(""),
             Thread.currentThread().getContextClassLoader(),
             ImmutableList.of("java/util/concurrent/"),  // should return null for these
-            ImmutableList.of("java/util/Map"));
+            ImmutableList.of("java/util/Map"),
+            ImmutableList.of(),
+            ImmutableList.of());
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEINTERFACE,
                 "java/util/Map",
                 "getOrDefault",
@@ -242,12 +339,63 @@ public class CoreLibrarySupportTest {
                 true))
         .isEqualTo(Map.class);
     assertThat(
-            support.getEmulatedCoreLibraryInvocationTarget(
+            support.getCoreInterfaceRewritingTarget(
                 Opcodes.INVOKEINTERFACE,
                 "java/util/concurrent/ConcurrentMap",
                 "getOrDefault",
                 "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
                 true))
         .isNull();
+  }
+
+  @Test
+  public void testGetCoreInterfaceRewritingTarget_excludedMethodIgnored() throws Exception {
+    CoreLibrarySupport support =
+        new CoreLibrarySupport(
+            new CoreLibraryRewriter(""),
+            Thread.currentThread().getContextClassLoader(),
+            ImmutableList.of(),
+            ImmutableList.of("java/util/Collection"),
+            ImmutableList.of(),
+            ImmutableList.of("java/util/Collection#removeIf"));
+    assertThat(
+            support.getCoreInterfaceRewritingTarget(
+                Opcodes.INVOKEINTERFACE,
+                "java/util/List",
+                "removeIf",
+                "(Ljava/util/function/Predicate;)Z",
+                true))
+        .isNull();
+    assertThat(
+            support.getCoreInterfaceRewritingTarget(
+                Opcodes.INVOKEVIRTUAL,
+                "java/util/ArrayList",
+                "removeIf",
+                "(Ljava/util/function/Predicate;)Z",
+                false))
+        .isNull();
+  }
+
+  @Test
+  public void testEmulatedMethod_nullExceptions() throws Exception {
+    CoreLibrarySupport.EmulatedMethod m =
+        CoreLibrarySupport.EmulatedMethod.create(1, Number.class, "a", "()V", null);
+    assertThat(m.access()).isEqualTo(1);
+    assertThat(m.owner()).isEqualTo(Number.class);
+    assertThat(m.name()).isEqualTo("a");
+    assertThat(m.descriptor()).isEqualTo("()V");
+    assertThat(m.exceptions()).isEmpty();
+  }
+
+  @Test
+  public void testEmulatedMethod_givenExceptions() throws Exception {
+    CoreLibrarySupport.EmulatedMethod m =
+        CoreLibrarySupport.EmulatedMethod.create(
+            1, Number.class, "a", "()V", new String[] {"b", "c"});
+    assertThat(m.access()).isEqualTo(1);
+    assertThat(m.owner()).isEqualTo(Number.class);
+    assertThat(m.name()).isEqualTo("a");
+    assertThat(m.descriptor()).isEqualTo("()V");
+    assertThat(m.exceptions()).containsExactly("b", "c").inOrder();
   }
 }

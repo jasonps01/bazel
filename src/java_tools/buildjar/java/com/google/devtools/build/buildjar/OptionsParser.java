@@ -16,7 +16,6 @@ package com.google.devtools.build.buildjar;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Iterables;
 import java.io.File;
@@ -27,7 +26,6 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -42,13 +40,12 @@ import javax.annotation.Nullable;
  * command-line flags and options files and provides them via getters.
  */
 public final class OptionsParser {
-  private static final Splitter SPACE_SPLITTER = Splitter.on(' ');
   private final List<String> javacOpts = new ArrayList<>();
 
-  private final Map<String, JarOwner> jarsToTargets = new HashMap<>();
   private final Set<String> directJars = new HashSet<>();
 
   private String strictJavaDeps;
+  private String fixDepsTool;
 
   private String outputDepsProtoFile;
   private final Set<String> depsArtifacts = new HashSet<>();
@@ -81,10 +78,8 @@ public final class OptionsParser {
 
   private boolean compressJar;
 
-  private String ruleKind;
   private String targetLabel;
-  
-  private boolean testOnly;
+  private String injectingRuleKind;
 
   /**
    * Constructs an {@code OptionsParser} from a list of command args. Sets the same JavacRunner for
@@ -112,10 +107,6 @@ public final class OptionsParser {
           readJavacopts(javacOpts, argQueue);
           sourcePathFromJavacOpts();
           break;
-        case "--dependencies":
-          collectDependencies(classPath, jarsToTargets, argQueue, arg, "--");
-          foundNewDependencyArgument = true;
-          break;
         case "--direct_dependencies":
           collectFlagArguments(directJars, argQueue, "--");
           foundNewDependencyArgument = true;
@@ -124,23 +115,24 @@ public final class OptionsParser {
           {
             // TODO(b/72379900): Remove this
             String jar = getArgument(argQueue, arg);
-            JarOwner owner = parseJarOwnerLegacy(getArgument(argQueue, arg));
+            getArgument(argQueue, arg);
             directJars.add(jar);
-            jarsToTargets.put(jar, owner);
             foundLegacyDependencyArgument = true;
             break;
           }
         case "--indirect_dependency":
           {
             // TODO(b/72379900): Remove this
-            String jar = getArgument(argQueue, arg);
-            JarOwner owner = parseJarOwnerLegacy(getArgument(argQueue, arg));
-            jarsToTargets.put(jar, owner);
+            getArgument(argQueue, arg);
+            getArgument(argQueue, arg);
             foundLegacyDependencyArgument = true;
             break;
           }
         case "--strict_java_deps":
           strictJavaDeps = getArgument(argQueue, arg);
+          break;
+        case "--experimental_fix_deps_tool":
+          fixDepsTool = getArgument(argQueue, arg);
           break;
         case "--output_deps_proto":
           outputDepsProtoFile = getArgument(argQueue, arg);
@@ -170,9 +162,7 @@ public final class OptionsParser {
           collectFlagArguments(sourceJars, argQueue, "-");
           break;
         case "--classpath":
-          // TODO(b/72379900): Remove this
           collectFlagArguments(classPath, argQueue, "-");
-          foundLegacyDependencyArgument = true;
           break;
         case "--sourcepath":
           // TODO(#970): Consider whether we want to use --sourcepath for resolving of #970.
@@ -213,14 +203,11 @@ public final class OptionsParser {
         case "--compress_jar":
           compressJar = true;
           break;
-        case "--rule_kind":
-          ruleKind = getArgument(argQueue, arg);
-          break;
         case "--target_label":
           targetLabel = getArgument(argQueue, arg);
           break;
-        case "--testonly":
-          testOnly = true;
+        case "--injecting_rule_kind":
+          injectingRuleKind = getArgument(argQueue, arg);
           break;
         default:
           throw new InvalidCommandLineException("unknown option : '" + arg + "'");
@@ -231,8 +218,8 @@ public final class OptionsParser {
       throw new InvalidCommandLineException(
           "Found both new-style and old-style dependency arguments: "
               + "Cannot use arguments from both "
-              + "(--dependencies, --direct_dependencies) and "
-              + "(--direct_dependency, --indirect_dependency, --classpath) "
+              + "(--direct_dependencies) and "
+              + "(--direct_dependency, --indirect_dependency) "
               + "at the same time.");
     }
   }
@@ -247,58 +234,6 @@ public final class OptionsParser {
         it.remove();
       }
     }
-  }
-
-  private static void collectDependencies(
-      Collection<String> classPath,
-      Map<String, JarOwner> jarsToTargets,
-      Deque<String> args,
-      String arg,
-      String terminatorPrefix)
-      throws InvalidCommandLineException {
-    while (true) {
-      String nextArg = args.pollFirst();
-      if (nextArg == null) {
-        break;
-      }
-      if (nextArg.startsWith(terminatorPrefix)) {
-        args.addFirst(nextArg);
-        break;
-      }
-      String jar = nextArg;
-      JarOwner jarOwner;
-      try {
-        jarOwner = parseJarOwner(args.remove());
-      } catch (NoSuchElementException e) {
-        throw new InvalidCommandLineException(arg + ": missing argument");
-      }
-      classPath.add(jar);
-      jarsToTargets.put(jar, jarOwner);
-    }
-  }
-
-  private static JarOwner parseJarOwner(String line) {
-    int separatorIndex = line.indexOf(';');
-    final JarOwner owner;
-    if (separatorIndex == -1) {
-      owner = JarOwner.create(line);
-    } else {
-      owner =
-          JarOwner.create(line.substring(0, separatorIndex), line.substring(separatorIndex + 1));
-    }
-    return owner;
-  }
-
-  private JarOwner parseJarOwnerLegacy(String line) {
-    List<String> ownerStringParts = SPACE_SPLITTER.splitToList(line);
-    JarOwner owner;
-    Preconditions.checkState(ownerStringParts.size() == 1 || ownerStringParts.size() == 2);
-    if (ownerStringParts.size() == 1) {
-      owner = JarOwner.create(ownerStringParts.get(0));
-    } else {
-      owner = JarOwner.create(ownerStringParts.get(0), ownerStringParts.get(1));
-    }
-    return owner;
   }
 
   /**
@@ -424,12 +359,12 @@ public final class OptionsParser {
     return directJars;
   }
 
-  public Map<String, JarOwner> jarsToTargets() {
-    return jarsToTargets;
-  }
-
   public String getStrictJavaDeps() {
     return strictJavaDeps;
+  }
+
+  public String getFixDepsTool() {
+    return fixDepsTool;
   }
 
   public String getOutputDepsProtoFile() {
@@ -517,15 +452,11 @@ public final class OptionsParser {
     return compressJar;
   }
 
-  public String getRuleKind() {
-    return ruleKind;
-  }
-
   public String getTargetLabel() {
     return targetLabel;
   }
-  
-  public boolean testOnly() {
-    return testOnly;
+
+  public String getInjectingRuleKind() {
+    return injectingRuleKind;
   }
 }

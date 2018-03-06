@@ -249,7 +249,8 @@ toolchain {
   compiler_flag: "/Gy"
   # Use string pooling.
   compiler_flag: "/GF"
-  # Catch both asynchronous (structured) and synchronous (C++) exceptions.
+  # Catch C++ exceptions only and tell the compiler to assume that functions declared
+  # as extern "C" never throw a C++ exception.
   compiler_flag: "/EHsc"
 
   # Globally disabled warnings.
@@ -282,6 +283,7 @@ toolchain {
       action: "preprocess-assemble"
       action: "c++-link-executable"
       action: "c++-link-dynamic-library"
+      action: "c++-link-nodeps-dynamic-library"
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
       action: "c++-link-pic-static-library"
@@ -424,7 +426,6 @@ toolchain {
     implies: 'input_param_flags'
     implies: 'legacy_link_flags'
     implies: 'linker_subsystem_flag'
-    implies: 'linkopts_file'
     implies: 'linker_param_file'
     implies: 'msvc_env'
     implies: 'use_linker'
@@ -444,7 +445,6 @@ toolchain {
     implies: 'input_param_flags'
     implies: 'legacy_link_flags'
     implies: 'linker_subsystem_flag'
-    implies: 'linkopts_file'
     implies: 'linker_param_file'
     implies: 'msvc_env'
     implies: 'use_linker'
@@ -452,6 +452,27 @@ toolchain {
     implies: 'has_configured_linker_path'
     implies: 'def_file'
   }
+
+  action_config {
+      config_name: 'c++-link-nodeps-dynamic-library'
+      action_name: 'c++-link-nodeps-dynamic-library'
+      tool {
+        tool_path: '%{msvc_link_path}'
+      }
+      implies: 'nologo'
+      implies: 'shared_flag'
+      implies: 'linkstamps'
+      implies: 'output_execpath_flags'
+      implies: 'input_param_flags'
+      implies: 'legacy_link_flags'
+      implies: 'linker_subsystem_flag'
+      implies: 'linker_param_file'
+      implies: 'msvc_env'
+      implies: 'use_linker'
+      implies: 'no_stripping'
+      implies: 'has_configured_linker_path'
+      implies: 'def_file'
+    }
 
   action_config {
     config_name: 'c++-link-static-library'
@@ -462,7 +483,6 @@ toolchain {
     implies: 'nologo'
     implies: 'archiver_flags'
     implies: 'input_param_flags'
-    implies: 'linkopts_file'
     implies: 'linker_param_file'
     implies: 'msvc_env'
   }
@@ -476,7 +496,6 @@ toolchain {
     implies: 'nologo'
     implies: 'archiver_flags'
     implies: 'input_param_flags'
-    implies: 'linkopts_file'
     implies: 'linker_param_file'
     implies: 'msvc_env'
   }
@@ -492,7 +511,6 @@ toolchain {
     implies: 'nologo'
     implies: 'archiver_flags'
     implies: 'input_param_flags'
-    implies: 'linkopts_file'
     implies: 'linker_param_file'
     implies: 'msvc_env'
   }
@@ -506,7 +524,6 @@ toolchain {
     implies: 'nologo'
     implies: 'archiver_flags'
     implies: 'input_param_flags'
-    implies: 'linkopts_file'
     implies: 'linker_param_file'
     implies: 'msvc_env'
   }
@@ -518,7 +535,6 @@ toolchain {
       tool_path: '%{msvc_lib_path}'
     }
     implies: 'nologo'
-    implies: 'linkopts_file'
     implies: 'linker_param_file'
     implies: 'msvc_env'
   }
@@ -556,6 +572,7 @@ toolchain {
       action: "preprocess-assemble"
       action: "c++-link-executable"
       action: "c++-link-dynamic-library"
+      action: "c++-link-nodeps-dynamic-library"
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
       action: "c++-link-pic-static-library"
@@ -588,6 +605,7 @@ toolchain {
     env_set {
       action: "c++-link-executable"
       action: "c++-link-dynamic-library"
+      action: "c++-link-nodeps-dynamic-library"
       env_entry {
         key: "USE_LINKER"
         value: "1"
@@ -668,6 +686,7 @@ toolchain {
     name: 'shared_flag'
     flag_set {
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: '/DLL'
       }
@@ -679,6 +698,7 @@ toolchain {
     flag_set {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       expand_if_all_available: 'linkstamp_paths'
       flag_group {
         iterate_over: 'linkstamp_paths'
@@ -693,6 +713,7 @@ toolchain {
       expand_if_all_available: 'output_execpath'
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: '/OUT:%{output_execpath}'
       }
@@ -718,6 +739,7 @@ toolchain {
     flag_set {
       expand_if_all_available: 'interface_library_output_path'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: "/IMPLIB:%{interface_library_output_path}"
       }
@@ -726,6 +748,7 @@ toolchain {
       expand_if_all_available: 'libopts'
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         iterate_over: 'libopts'
         flag: '%{libopts}'
@@ -735,6 +758,7 @@ toolchain {
       expand_if_all_available: 'libraries_to_link'
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       action: 'c++-link-static-library'
       action: 'c++-link-alwayslink-static-library'
       action: 'c++-link-pic-static-library'
@@ -830,6 +854,7 @@ toolchain {
     flag_set {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: '/SUBSYSTEM:CONSOLE'
       }
@@ -847,25 +872,10 @@ toolchain {
       expand_if_all_available: 'legacy_link_flags'
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         iterate_over: 'legacy_link_flags'
         flag: '%{legacy_link_flags}'
-      }
-    }
-  }
-
-  feature {
-    name: 'linkopts_file'
-    flag_set {
-      expand_if_all_available: 'linkopts_file'
-      action: 'c++-link-executable'
-      action: 'c++-link-dynamic-library'
-      action: 'c++-link-static-library'
-      action: 'c++-link-alwayslink-static-library'
-      action: 'c++-link-pic-static-library'
-      action: 'c++-link-alwayslink-pic-static-library'
-      flag_group {
-        flag: '@%{linkopts_file}'
       }
     }
   }
@@ -876,6 +886,7 @@ toolchain {
       expand_if_all_available: 'linker_param_file'
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       action: 'c++-link-static-library'
       action: 'c++-link-alwayslink-static-library'
       action: 'c++-link-pic-static-library'
@@ -902,6 +913,7 @@ toolchain {
     flag_set {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: "/DEFAULTLIB:libcmt.lib"
       }
@@ -922,6 +934,7 @@ toolchain {
     flag_set {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: "/DEFAULTLIB:msvcrt.lib"
       }
@@ -942,6 +955,7 @@ toolchain {
     flag_set {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: "/DEFAULTLIB:libcmtd.lib"
       }
@@ -961,6 +975,7 @@ toolchain {
     flag_set {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: "/DEFAULTLIB:msvcrtd.lib"
       }
@@ -982,6 +997,7 @@ toolchain {
     flag_set {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: "%{dbg_mode_debug}"
         flag: "/INCREMENTAL:NO"
@@ -1004,6 +1020,7 @@ toolchain {
     flag_set {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: "%{fastbuild_mode_debug}"
         flag: "/INCREMENTAL:NO"
@@ -1056,6 +1073,7 @@ toolchain {
       action: 'c++-module-codegen'
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         iterate_over: 'sysroot'
         flag: '--sysroot=%{sysroot}'
@@ -1087,6 +1105,7 @@ toolchain {
       expand_if_all_available: 'def_file_path'
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
+      action: "c++-link-nodeps-dynamic-library"
       flag_group {
         flag: "/DEF:%{def_file_path}"
         # We can specify a different DLL name in DEF file, /ignore:4070 suppresses

@@ -25,7 +25,6 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.StripMode;
-import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.util.OptionsUtils;
@@ -47,8 +46,6 @@ import javax.annotation.Nullable;
 /** Command-line options for C++. */
 @AutoCodec(strategy = AutoCodec.Strategy.PUBLIC_FIELDS)
 public class CppOptions extends FragmentOptions {
-  public static final ObjectCodec<CppOptions> CODEC = new CppOptions_AutoCodec();
-
   /**
    * Converts a comma-separated list of compilation mode settings to a properly typed List.
    */
@@ -258,6 +255,18 @@ public class CppOptions extends FragmentOptions {
             + "in mostly static mode."
   )
   public DynamicMode dynamicMode;
+
+  @Option(
+      name = "experimental_drop_fully_static_linking_mode",
+      defaultValue = "false",
+      category = "semantics",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.AFFECTS_OUTPUTS},
+      help =
+          "If enabled, bazel will not scan linkopts for -static. Rules have to define their fully"
+              + " static linking mode through 'link_fully_static_binary' feature."
+  )
+  public boolean dropFullyStaticLinkingMode;
 
   @Option(
     name = "experimental_link_compile_output_separately",
@@ -870,6 +879,23 @@ public class CppOptions extends FragmentOptions {
           + "dependency on the C++ toolchain for rules that use them."
   )
   public boolean enableMakeVariables;
+
+  @Option(
+    name = "experimental_use_llvm_covmap",
+    defaultValue = "false",
+    category = "experimental",
+    documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+    effectTags = {
+      OptionEffectTag.CHANGES_INPUTS,
+      OptionEffectTag.AFFECTS_OUTPUTS,
+      OptionEffectTag.LOADING_AND_ANALYSIS
+    },
+    metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+    help =
+        "If specified, Bazel will generate llvm-cov coverage map information rather than "
+            + "gcov when collect_code_coverage is enabled."
+  )
+  public boolean useLLVMCoverageMapFormat;
 
   @Override
   public FragmentOptions getHost() {

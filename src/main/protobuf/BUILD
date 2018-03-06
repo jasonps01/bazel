@@ -14,6 +14,7 @@ exports_files(
 
 FILES = [
     "action_cache",
+    "analysis",
     "android_deploy_info",
     "bazel_flags",
     "build",
@@ -127,6 +128,25 @@ cc_proto_library(
     deps = [":execution_statistics_proto"],
 )
 
+proto_library(
+    name = "remote_execution_log_proto",
+    srcs = ["remote_execution_log.proto"],
+    deps = [
+        "@googleapis//:google_devtools_remoteexecution_v1test_remote_execution_proto",
+        "@googleapis//:google_rpc_status_proto",
+    ],
+)
+
+java_proto_library(
+    name = "remote_execution_log_java_proto",
+    deps = [":remote_execution_log_proto"],
+)
+
+java_library_srcs(
+    name = "remote_execution_log_java_proto_srcs",
+    deps = [":remote_execution_log_java_proto"],
+)
+
 filegroup(
     name = "srcs",
     srcs = glob(["**"]),
@@ -139,5 +159,6 @@ filegroup(
         ":command_server_java_grpc_srcs",
         ":option_filters_java_proto_srcs",
         ":profile_java_proto_srcs",
+        ":remote_execution_log_java_proto_srcs",
     ],
 )

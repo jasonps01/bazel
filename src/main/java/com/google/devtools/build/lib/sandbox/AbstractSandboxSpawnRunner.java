@@ -28,7 +28,6 @@ import com.google.devtools.build.lib.actions.SpawnResult.Status;
 import com.google.devtools.build.lib.actions.UserExecException;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
 import com.google.devtools.build.lib.exec.SpawnRunner;
-import com.google.devtools.build.lib.exec.local.LocalExecutionOptions;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.shell.AbnormalTerminationException;
 import com.google.devtools.build.lib.shell.Command;
@@ -43,7 +42,6 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
-import javax.annotation.Nullable;
 
 /** Abstract common ancestor for sandbox spawn runners implementing the common parts. */
 abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
@@ -55,14 +53,12 @@ abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
 
   private final Path sandboxBase;
   private final SandboxOptions sandboxOptions;
-  private final String localTmpRoot;
   private final boolean verboseFailures;
   private final ImmutableSet<Path> inaccessiblePaths;
 
   public AbstractSandboxSpawnRunner(CommandEnvironment cmdEnv, Path sandboxBase) {
     this.sandboxBase = sandboxBase;
     this.sandboxOptions = cmdEnv.getOptions().getOptions(SandboxOptions.class);
-    this.localTmpRoot = cmdEnv.getOptions().getOptions(LocalExecutionOptions.class).localTmpRoot;
     this.verboseFailures = cmdEnv.getOptions().getOptions(ExecutionOptions.class).verboseFailures;
     this.inaccessiblePaths =
         sandboxOptions.getInaccessiblePaths(cmdEnv.getRuntime().getFileSystem());
@@ -169,6 +165,7 @@ abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
       outErr.getErrorStream().write(("Action failed to execute: " + msg + "\n").getBytes(UTF_8));
       outErr.getErrorStream().flush();
       return new SpawnResult.Builder()
+          .setRunnerName(getName())
           .setStatus(Status.EXECUTION_FAILED)
           .setExitCode(LOCAL_EXEC_ERROR)
           .setFailureMessage(failureMessage)
@@ -189,6 +186,7 @@ abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
 
     SpawnResult.Builder spawnResultBuilder =
         new SpawnResult.Builder()
+            .setRunnerName(getName())
             .setStatus(status)
             .setExitCode(exitCode)
             .setWallTime(wallTime)
@@ -296,11 +294,4 @@ abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
   protected SandboxOptions getSandboxOptions() {
     return sandboxOptions;
   }
-
-  @Nullable
-  protected final String getLocalTmpRoot() {
-    return localTmpRoot;
-  }
-
-  protected abstract String getName();
 }

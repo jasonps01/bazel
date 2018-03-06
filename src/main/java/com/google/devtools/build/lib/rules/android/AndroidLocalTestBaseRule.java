@@ -16,7 +16,6 @@ package com.google.devtools.build.lib.rules.android;
 import static com.google.devtools.build.lib.packages.Attribute.attr;
 import static com.google.devtools.build.lib.packages.BuildType.LABEL;
 import static com.google.devtools.build.lib.packages.BuildType.LABEL_KEYED_STRING_DICT;
-import static com.google.devtools.build.lib.packages.BuildType.LABEL_LIST;
 import static com.google.devtools.build.lib.rules.android.AndroidRuleClasses.getAndroidSdkLabel;
 import static com.google.devtools.build.lib.syntax.Type.STRING;
 import static com.google.devtools.build.lib.syntax.Type.STRING_DICT;
@@ -38,7 +37,8 @@ public class AndroidLocalTestBaseRule implements RuleDefinition {
   @Override
   public RuleClass build(Builder builder, RuleDefinitionEnvironment environment) {
     return builder
-        .requiresConfigurationFragments(JavaConfiguration.class)
+        .requiresConfigurationFragments(
+            JavaConfiguration.class, AndroidLocalTestConfiguration.class)
 
         // Update documentation for inherited attributes
 
@@ -50,7 +50,7 @@ public class AndroidLocalTestBaseRule implements RuleDefinition {
         <p>
         The list of allowed rules in <code>deps</code> are <code>android_library</code>,
         <code>aar_import</code>, <code>java_import</code>, <code>java_library</code>,
-        <code>java_lite_proto_library</code>, and <code>proto_library</code>.
+        and <code>java_lite_proto_library</code>.
         <!-- #END_BLAZE_RULE.ATTRIBUTE --> */
 
         /* <!-- #BLAZE_RULE($android_local_test_base).ATTRIBUTE(srcs) -->
@@ -135,15 +135,6 @@ public class AndroidLocalTestBaseRule implements RuleDefinition {
         you will likely need to use <code>test_class</code> as well.
         <!-- #END_BLAZE_RULE.ATTRIBUTE --> */
         .add(attr("custom_package", STRING))
-        .add(
-            attr("resource_files", LABEL_LIST)
-                .allowedFileTypes(FileTypeSet.ANY_FILE)
-                .undocumented("soon to be unsupported behavior"))
-        .add(attr("assets_dir", STRING).undocumented("soon to be unsupported behavior"))
-        .add(
-            attr("assets", LABEL_LIST)
-                .allowedFileTypes(FileTypeSet.ANY_FILE)
-                .undocumented("soon to be unsupported behavior"))
         .build();
   }
 

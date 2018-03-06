@@ -53,6 +53,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.Attribute.LabelLateBoundDefault;
 import com.google.devtools.build.lib.rules.android.AarImportBaseRule;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration;
+import com.google.devtools.build.lib.rules.android.AndroidDeviceBrokerInfo;
 import com.google.devtools.build.lib.rules.android.AndroidDeviceRule;
 import com.google.devtools.build.lib.rules.android.AndroidDeviceScriptFixtureRule;
 import com.google.devtools.build.lib.rules.android.AndroidHostServiceFixtureRule;
@@ -60,13 +61,14 @@ import com.google.devtools.build.lib.rules.android.AndroidInstrumentationInfo;
 import com.google.devtools.build.lib.rules.android.AndroidInstrumentationTestRule;
 import com.google.devtools.build.lib.rules.android.AndroidLibraryBaseRule;
 import com.google.devtools.build.lib.rules.android.AndroidLocalTestBaseRule;
+import com.google.devtools.build.lib.rules.android.AndroidLocalTestConfiguration;
+import com.google.devtools.build.lib.rules.android.AndroidNativeLibsInfo;
 import com.google.devtools.build.lib.rules.android.AndroidNeverlinkAspect;
 import com.google.devtools.build.lib.rules.android.AndroidResourcesInfo;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses.AndroidToolsDefaultsJarRule;
 import com.google.devtools.build.lib.rules.android.AndroidSkylarkCommon;
 import com.google.devtools.build.lib.rules.android.ApkInfo;
-import com.google.devtools.build.lib.rules.android.DeviceBrokerInfo;
 import com.google.devtools.build.lib.rules.android.DexArchiveAspect;
 import com.google.devtools.build.lib.rules.config.ConfigRules;
 import com.google.devtools.build.lib.rules.core.CoreRules;
@@ -118,10 +120,6 @@ public class BazelRuleClassProvider {
           builder.addConfigurationFragment(new BazelConfiguration.Loader());
           builder.addConfigurationOptions(BazelConfiguration.Options.class);
           builder.addConfigurationOptions(BuildConfiguration.Options.class);
-          builder.addWorkspaceFileSuffix(
-              "register_toolchains('@bazel_tools//tools/cpp:dummy_cc_toolchain')\n");
-          builder.addWorkspaceFileSuffix(
-              "register_toolchains('@bazel_tools//tools/cpp:dummy_cc_toolchain_type')\n");
         }
 
         @Override
@@ -188,6 +186,9 @@ public class BazelRuleClassProvider {
           String toolsRepository = checkNotNull(builder.getToolsRepository());
 
           builder.addConfig(AndroidConfiguration.Options.class, new AndroidConfiguration.Loader());
+          builder.addConfig(
+              AndroidLocalTestConfiguration.Options.class,
+              new AndroidLocalTestConfiguration.Loader());
 
           AndroidNeverlinkAspect androidNeverlinkAspect = new AndroidNeverlinkAspect();
           DexArchiveAspect dexArchiveAspect = new DexArchiveAspect(toolsRepository);
@@ -218,9 +219,11 @@ public class BazelRuleClassProvider {
           builder.addSkylarkAccessibleTopLevels(
               AndroidInstrumentationInfo.PROVIDER.getName(), AndroidInstrumentationInfo.PROVIDER);
           builder.addSkylarkAccessibleTopLevels(
-              DeviceBrokerInfo.PROVIDER.getName(), DeviceBrokerInfo.PROVIDER);
+              AndroidDeviceBrokerInfo.PROVIDER.getName(), AndroidDeviceBrokerInfo.PROVIDER);
           builder.addSkylarkAccessibleTopLevels(
               AndroidResourcesInfo.PROVIDER.getName(), AndroidResourcesInfo.PROVIDER);
+          builder.addSkylarkAccessibleTopLevels(
+              AndroidNativeLibsInfo.PROVIDER.getName(), AndroidNativeLibsInfo.PROVIDER);
 
           try {
             builder.addWorkspaceFilePrefix(

@@ -25,7 +25,6 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaClasspathMode;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaOptimizationMode;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.OneVersionEnforcementLevel;
-import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
@@ -41,8 +40,6 @@ import java.util.Set;
 /** Command-line options for building Java targets */
 @AutoCodec(strategy = AutoCodec.Strategy.PUBLIC_FIELDS)
 public class JavaOptions extends FragmentOptions {
-  public static final ObjectCodec<JavaOptions> CODEC = new JavaOptions_AutoCodec();
-
   /** Converter for the --java_classpath option. */
   public static class JavaClasspathModeConverter extends EnumConverter<JavaClasspathMode> {
     public JavaClasspathModeConverter() {
@@ -242,6 +239,15 @@ public class JavaOptions extends FragmentOptions {
     oldName = "strict_android_deps"
   )
   public StrictDepsMode strictJavaDeps;
+
+  @Option(
+    name = "experimental_fix_deps_tool",
+    defaultValue = "add_dep",
+    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+    effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS},
+    help = "Specifies which tool should be used to resolve missing dependencies."
+  )
+  public String fixDepsTool;
 
   // TODO(bazel-team): This flag should ideally default to true (and eventually removed). We have
   // been accidentally supplying JUnit and Hamcrest deps to java_test targets indirectly via the
@@ -561,6 +567,7 @@ public class JavaOptions extends FragmentOptions {
     host.javaClasspath = javaClasspath;
 
     host.strictJavaDeps = strictJavaDeps;
+    host.fixDepsTool = fixDepsTool;
 
     host.enforceOneVersion = enforceOneVersion;
     // java_test targets can be used as a host tool, Ex: as a validating tool on a genrule.

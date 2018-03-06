@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.skyframe.serialization;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
@@ -26,13 +27,40 @@ import java.io.IOException;
 public class ObjectCodecs {
 
   private final ObjectCodecRegistry codecRegistry;
+  // TODO(shahan): when per-invocation state is needed, for example, memoization, these may
+  // need to be constructed each time.
+  private final SerializationContext serializationContext;
+  private final DeserializationContext deserializationContext;
 
   /**
-   * Creates an instance using the supplied {@link ObjectCodecRegistry} for looking up
-   * {@link ObjectCodec}s.
+   * Creates an instance using the supplied {@link ObjectCodecRegistry} for looking up {@link
+   * ObjectCodec}s.
    */
-  ObjectCodecs(ObjectCodecRegistry codecRegistry) {
+  public ObjectCodecs(
+      ObjectCodecRegistry codecRegistry, ImmutableMap<Class<?>, Object> dependencies) {
     this.codecRegistry = codecRegistry;
+    serializationContext = new SerializationContext(codecRegistry, dependencies);
+    deserializationContext = new DeserializationContext(codecRegistry, dependencies);
+  }
+
+  public ByteString serialize(Object subject) throws SerializationException {
+    ByteString.Output resultOut = ByteString.newOutput();
+    CodedOutputStream codedOut = CodedOutputStream.newInstance(resultOut);
+    try {
+      serializationContext.serialize(subject, codedOut);
+      codedOut.flush();
+      return resultOut.toByteString();
+    } catch (IOException e) {
+      throw new SerializationException("Failed to serialize " + subject, e);
+    }
+  }
+
+  public void serialize(Object subject, CodedOutputStream codedOut) throws SerializationException {
+    try {
+      serializationContext.serialize(subject, codedOut);
+    } catch (IOException e) {
+      throw new SerializationException("Failed to serialize " + subject, e);
+    }
   }
 
   /**
@@ -71,6 +99,18 @@ public class ObjectCodecs {
     }
   }
 
+  public Object deserialize(ByteString data) throws SerializationException {
+    return deserialize(data.newCodedInput());
+  }
+
+  public Object deserialize(CodedInputStream codedIn) throws SerializationException {
+    try {
+      return deserializationContext.deserialize(codedIn);
+    } catch (IOException e) {
+      throw new SerializationException("Failed to deserialize data", e);
+    }
+  }
+
   /**
    * Deserialize {@code data} using the serialization strategy determined by {@code classifier}.
    * {@code classifier} should be the utf-8 encoded {@link ByteString} representation of the {@link
@@ -94,7 +134,7 @@ public class ObjectCodecs {
     // in some situations, bypassing a copy.
     codedIn.enableAliasing(true);
     try {
-      Object result = codec.deserialize(DeserializationContext.create(), codedIn);
+      Object result = codec.deserialize(deserializationContext, codedIn);
       if (result == null) {
         throw new NullPointerException(
             "ObjectCodec " + codec + " for " + classifier.toStringUtf8() + " returned null");
@@ -106,12 +146,11 @@ public class ObjectCodecs {
     }
   }
 
-  private static <T> void doSerialize(
+  private <T> void doSerialize(
       String classifier, ObjectCodec<T> codec, Object subject, CodedOutputStream codedOut)
       throws SerializationException, IOException {
     try {
-      codec.serialize(
-          SerializationContext.create(), codec.getEncodedClass().cast(subject), codedOut);
+      codec.serialize(serializationContext, codec.getEncodedClass().cast(subject), codedOut);
     } catch (ClassCastException e) {
       throw new SerializationException(
           "Codec "

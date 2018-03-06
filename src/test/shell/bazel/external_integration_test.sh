@@ -123,6 +123,7 @@ EOF
   cd ${WORKSPACE_DIR}
   if [[ $write_workspace = 0 ]]; then
     cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = 'endangered',
     url = 'http://127.0.0.1:$nc_port/$repo2_name',
@@ -181,6 +182,7 @@ function test_http_archive_zip() {
   # Test with the extension
   serve_file $repo2_zip
   cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = 'endangered',
     url = 'http://127.0.0.1:$nc_port/bleh',
@@ -206,6 +208,7 @@ function test_http_archive_tar_xz() {
 
 function test_http_archive_no_server() {
   cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(name = 'endangered', url = 'http://bad.example/repo.zip',
     sha256 = '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9826')
 EOF
@@ -242,6 +245,7 @@ function test_http_archive_mismatched_sha256() {
 
   cd ${WORKSPACE_DIR}
   cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = 'endangered',
     url = 'http://127.0.0.1:$nc_port/repo.zip',
@@ -469,6 +473,7 @@ function test_empty_file() {
   serve_file x.tar.gz
 
   cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 new_http_archive(
     name = "x",
     url = "http://127.0.0.1:$nc_port/x.tar.gz",
@@ -853,6 +858,7 @@ local_repository(
 )
 EOF
   cat > remote_ws <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = "repo",
     url = "http://127.0.0.1:$fileserver_port/repo.zip",
@@ -883,6 +889,7 @@ function test_sha256_weird() {
   cd -
 
   cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = "repo",
     sha256 = "a random string",
@@ -904,6 +911,7 @@ function test_sha256_incorrect() {
   cd -
 
   cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = "repo",
     sha256 = "61a6f762aaf60652cbf332879b8dcc2cfd81be2129a061da957d039eae77f0b0",
@@ -929,6 +937,7 @@ function test_same_name() {
   mkdir main
   cd main
   cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 new_http_archive(
   name="ext",
   strip_prefix="ext",
@@ -1096,7 +1105,7 @@ EOF
 }
 
 function test_repository_cache_relative_path() {
-  # Verify that --experimental_repository_cache works for query and caches soly
+  # Verify that --repository_cache works for query and caches soly
   # based on the predicted hash, for a repository-cache location given as path
   # relative to the WORKSPACE
   WRKDIR=$(mktemp -d "${TEST_TMPDIR}/testXXXXXX")
@@ -1135,7 +1144,7 @@ http_archive(
 )
 EOF
   # Use the external repository once to make sure it is cached.
-  bazel build --experimental_repository_cache="../cache" '@ext//:bar' \
+  bazel build --repository_cache="../cache" '@ext//:bar' \
       || fail "expected sucess"
 
   # Now "go offline" and clean local resources.
@@ -1145,7 +1154,7 @@ EOF
 
   # The value should still be available from the repository cache
   bazel query 'deps("@ext//:bar")' \
-        --experimental_repository_cache="../cache" > "${TEST_log}" \
+        --repository_cache="../cache" > "${TEST_log}" \
       || fail "Expected success"
   expect_log '@ext//:foo'
 
@@ -1163,8 +1172,73 @@ http_archive(
 )
 EOF
   bazel query 'deps("@ext//:bar")' \
-        --experimental_repository_cache="../cache" > "${TEST_log}" \
+        --repository_cache="../cache" > "${TEST_log}" \
       || fail "Expected success"
+  expect_log '@ext//:foo'
+}
+
+test_default_cache()
+{
+  # Verify that the default cache works for query and caches soly
+  # based on the predicted hash, for a repository-cache location given as path
+  # relative to the WORKSPACE
+  WRKDIR=$(mktemp -d "${TEST_TMPDIR}/testXXXXXX")
+  cd "${WRKDIR}"
+  mkdir ext
+  cat > ext/BUILD <<'EOF'
+genrule(
+  name="foo",
+  outs=["foo.txt"],
+  cmd="echo Hello World > $@",
+)
+genrule(
+  name="bar",
+  outs=["bar.txt"],
+  srcs=[":foo"],
+  cmd="cp $< $@",
+)
+EOF
+  zip ext.zip ext/*
+  rm -rf ext
+  sha256=$(sha256sum ext.zip | head -c 64)
+
+  rm -rf main
+  mkdir main
+  cd main
+  cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_archive(
+  name="ext",
+  strip_prefix="ext",
+  urls=["file://${WRKDIR}/ext.zip"],
+  sha256="${sha256}",
+)
+EOF
+  # Use the external repository once to make sure it is cached.
+  bazel build '@ext//:bar' || fail "expected sucess"
+
+  # Now "go offline" and clean local resources.
+  rm -f "${WRKDIR}/ext.zip"
+  bazel clean --expunge
+
+  # The value should still be available from the repository cache
+  bazel query 'deps("@ext//:bar")' > "${TEST_log}" || fail "Expected success"
+  expect_log '@ext//:foo'
+
+  # Clean again.
+  bazel clean --expunge
+  # Even with a different source URL, the cache sould be consulted.
+
+  cat > WORKSPACE <<EOF
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_archive(
+  name="ext",
+  strip_prefix="ext",
+  urls=["http://doesnotexist.example.com/invalidpath/othername.zip"],
+  sha256="${sha256}",
+)
+EOF
+  bazel query 'deps("@ext//:bar")' > "${TEST_log}" || fail "Expected success"
   expect_log '@ext//:foo'
 }
 

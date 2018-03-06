@@ -116,6 +116,13 @@ public class Main {
         String result = checker.computeResultOutput();
         checkState(!result.isEmpty(), "The result should NOT be empty.");
         exitCode = DEPS_ERROR_EXIT_CODE;
+        System.err.println(
+            "ERROR: The dependencies for the jars "
+                + options.inputJars
+                + " are not complete. bootclasspath = "
+                + options.bootclasspath
+                + ", classpath = "
+                + options.classpath);
         System.err.println(result);
         asCharSink(options.output.toFile(), StandardCharsets.UTF_8).write(result);
       }
@@ -132,8 +139,6 @@ public class Main {
     Options options = optionsParser.getOptions(Options.class);
 
     checkArgument(!options.inputJars.isEmpty(), "--input is required");
-    checkArgument(
-        !options.classpath.isEmpty(), "--classpath_entry is required, at least the bootclasspath");
     checkArgument(!options.bootclasspath.isEmpty(), "--bootclasspath_entry is required");
     return options;
   }

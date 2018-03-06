@@ -31,6 +31,7 @@ import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ExecutionRequirements;
+import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredAspectFactory;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
@@ -40,7 +41,6 @@ import com.google.devtools.build.lib.analysis.WrappingProvider;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.Builder;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
-import com.google.devtools.build.lib.analysis.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.HostTransition;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
@@ -65,8 +65,6 @@ import com.google.devtools.build.lib.rules.java.proto.JavaProtoLibraryAspectProv
 import com.google.devtools.build.lib.rules.proto.ProtoLangToolchainProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
-import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
-import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -74,11 +72,8 @@ import java.util.Map;
 import java.util.Set;
 
 /** Aspect to {@link DexArchiveProvider build .dex Archives} from Jars. */
-@AutoCodec
 public final class DexArchiveAspect extends NativeAspectClass implements ConfiguredAspectFactory {
   public static final String NAME = "DexArchiveAspect";
-
-  public static final ObjectCodec<DexArchiveAspect> CODEC = new DexArchiveAspect_AutoCodec();
 
   /**
    * Function that returns a {@link Rule}'s {@code incremental_dexing} attribute for use by this
@@ -421,23 +416,13 @@ public final class DexArchiveAspect extends NativeAspectClass implements Configu
   }
 
   /**
-   * Creates a dex archive using an executable prerequisite called {@code "$dexbuilder"}. Rules
-   * calling this method must declare the appropriate prerequisite, similar to how {@link
-   * #getDefinition} does it for {@link DexArchiveAspect} under a different name.
+   * Creates a dexbuilder action with the given input, output, and flags. Flags must have been
+   * filtered and normalized to a set that the dexbuilder tool can understand.
    *
    * @return the artifact given as {@code result}, which can simplify calling code
    */
   // Package-private method for use in AndroidBinary
   static Artifact createDexArchiveAction(
-      RuleContext ruleContext, Artifact jar, Set<String> tokenizedDexopts, Artifact result) {
-    return createDexArchiveAction(ruleContext, "$dexbuilder", jar, tokenizedDexopts, result);
-  }
-
-  /**
-   * Creates a dexbuilder action with the given input, output, and flags. Flags must have been
-   * filtered and normalized to a set that the dexbuilder tool can understand.
-   */
-  private static Artifact createDexArchiveAction(
       RuleContext ruleContext,
       String dexbuilderPrereq,
       Artifact jar,

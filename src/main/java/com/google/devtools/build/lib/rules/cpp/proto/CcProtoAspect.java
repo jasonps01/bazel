@@ -194,7 +194,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
           initializeLinkingHelper(featureConfiguration)
               .link(
                   compilationInfo.getCcCompilationOutputs(),
-                  compilationInfo.getCppCompilationContext());
+                  compilationInfo.getCcCompilationInfo());
 
       ccLibraryProviders =
           new TransitiveInfoProviderMapBuilder()
@@ -273,7 +273,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
       // TODO(dougk): Configure output artifact with action_config
       // once proto compile action is configurable from the crosstool.
       if (!ccToolchain(ruleContext).supportsDynamicLinker()) {
-        helper.setCreateDynamicLibrary(false);
+        helper.setShouldCreateDynamicLibrary(false);
       }
       return helper;
     }
@@ -341,6 +341,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
           supportData.getDirectProtoSources(),
           supportData.getTransitiveImports(),
           supportData.getProtosInDirectDeps(),
+          supportData.getTransitiveProtoPathFlags(),
           ruleContext.getLabel(),
           outputs,
           "C++",

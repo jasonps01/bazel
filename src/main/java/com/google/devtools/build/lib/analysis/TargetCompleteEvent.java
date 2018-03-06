@@ -14,6 +14,8 @@
 
 package com.google.devtools.build.lib.analysis;
 
+import static com.google.devtools.build.lib.buildeventstream.TestFileNameConstants.BASELINE_COVERAGE;
+
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -35,7 +37,6 @@ import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.Out
 import com.google.devtools.build.lib.buildeventstream.BuildEventWithConfiguration;
 import com.google.devtools.build.lib.buildeventstream.BuildEventWithOrderConstraint;
 import com.google.devtools.build.lib.buildeventstream.GenericBuildEvent;
-import com.google.devtools.build.lib.buildeventstream.TestFileNameConstants;
 import com.google.devtools.build.lib.causes.Cause;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -43,11 +44,15 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetView;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.AttributeMap;
+import com.google.devtools.build.lib.packages.ConfiguredAttributeMapper;
+import com.google.devtools.build.lib.packages.Rule;
+import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TestSize;
 import com.google.devtools.build.lib.rules.AliasConfiguredTarget;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.skyframe.SkyValue;
 import java.util.Collection;
+import java.util.function.Function;
 
 /** This event is fired as soon as a target is either built or fails. */
 public final class TargetCompleteEvent
@@ -56,6 +61,7 @@ public final class TargetCompleteEvent
         EventReportingArtifacts,
         BuildEventWithConfiguration {
   private final ConfiguredTarget target;
+  private final Target actualTarget;
   private final NestedSet<Cause> rootCauses;
   private final ImmutableList<BuildEventId> postedAfter;
   private final Iterable<ArtifactsInOutputGroup> outputs;
@@ -64,10 +70,12 @@ public final class TargetCompleteEvent
 
   private TargetCompleteEvent(
       ConfiguredTarget target,
+      Target actualTarget,
       NestedSet<Cause> rootCauses,
       Iterable<ArtifactsInOutputGroup> outputs,
       boolean isTest) {
     this.target = target;
+    this.actualTarget = actualTarget;
     this.rootCauses =
         (rootCauses == null) ? NestedSetBuilder.<Cause>emptySet(Order.STABLE_ORDER) : rootCauses;
 
@@ -100,35 +108,33 @@ public final class TargetCompleteEvent
 
   /** Construct a successful target completion event. */
   public static TargetCompleteEvent successfulBuild(
-      ConfiguredTarget ct, NestedSet<ArtifactsInOutputGroup> outputs) {
-    return new TargetCompleteEvent(ct, null, outputs, false);
+      ConfiguredTarget ct, Target target, NestedSet<ArtifactsInOutputGroup> outputs) {
+    return new TargetCompleteEvent(ct, target, null, outputs, false);
   }
 
   /** Construct a successful target completion event for a target that will be tested. */
-  public static TargetCompleteEvent successfulBuildSchedulingTest(ConfiguredTarget ct) {
-    return new TargetCompleteEvent(ct, null, ImmutableList.<ArtifactsInOutputGroup>of(), true);
+  public static TargetCompleteEvent successfulBuildSchedulingTest(
+      ConfiguredTarget ct, Target target) {
+    return new TargetCompleteEvent(
+        ct, target, null, ImmutableList.<ArtifactsInOutputGroup>of(), true);
   }
-
 
   /**
    * Construct a target completion event for a failed target, with the given non-empty root causes.
    */
-  public static TargetCompleteEvent createFailed(ConfiguredTarget ct, NestedSet<Cause> rootCauses) {
+  public static TargetCompleteEvent createFailed(
+      ConfiguredTarget ct, Target target, NestedSet<Cause> rootCauses) {
     Preconditions.checkArgument(!Iterables.isEmpty(rootCauses));
     return new TargetCompleteEvent(
-        ct, rootCauses, ImmutableList.<ArtifactsInOutputGroup>of(), false);
+        ct, target, rootCauses, ImmutableList.<ArtifactsInOutputGroup>of(), false);
   }
 
-  /**
-   * Returns the target associated with the event.
-   */
+  /** Returns the target associated with the event. */
   public ConfiguredTarget getTarget() {
     return target;
   }
 
-  /**
-   * Determines whether the target has failed or succeeded.
-   */
+  /** Determines whether the target has failed or succeeded. */
   public boolean failed() {
     return !rootCauses.isEmpty();
   }
@@ -160,7 +166,7 @@ public final class TargetCompleteEvent
       // For tests, announce all the test actions that will minimally happen (except for
       // interruption). If after the result of a test action another attempt is necessary,
       // it will be announced with the action that made the new attempt necessary.
-      Label label = target.getTarget().getLabel();
+      Label label = target.getLabel();
       TestProvider.TestParams params = target.getProvider(TestProvider.class).getTestParams();
       for (int run = 0; run < Math.max(params.getRuns(), 1); run++) {
         for (int shard = 0; shard < Math.max(params.getShards(), 1); shard++) {
@@ -179,8 +185,16 @@ public final class TargetCompleteEvent
       BuildEventStreamProtos.TargetComplete.Builder builder,
       BuildEventConverters converters,
       Iterable<Artifact> artifacts) {
+    addImportantOutputs(builder, Artifact::getRootRelativePathString, converters, artifacts);
+  }
+
+  private static void addImportantOutputs(
+      BuildEventStreamProtos.TargetComplete.Builder builder,
+      Function<Artifact, String> artifactNameFunction,
+      BuildEventConverters converters,
+      Iterable<Artifact> artifacts) {
     for (Artifact artifact : artifacts) {
-      String name = artifact.getRootRelativePathString();
+      String name = artifactNameFunction.apply(artifact);
       String uri = converters.pathConverter().apply(artifact.getPath());
       builder.addImportantOutput(File.newBuilder().setName(name).setUri(uri).build());
     }
@@ -192,14 +206,14 @@ public final class TargetCompleteEvent
         BuildEventStreamProtos.TargetComplete.newBuilder();
 
     builder.setSuccess(!failed());
-    builder.setTargetKind(target.getTarget().getTargetKind());
+    builder.setTargetKind(actualTarget.getTargetKind());
     builder.addAllTag(getTags());
     builder.addAllOutputGroup(getOutputFilesByGroup(converters.artifactGroupNamer()));
 
     if (isTest) {
       builder.setTestSize(
           TargetConfiguredEvent.bepTestSize(
-              TestSize.getTestSize(target.getTarget().getAssociatedRule())));
+              TestSize.getTestSize(actualTarget.getAssociatedRule())));
     }
 
     // TODO(aehlig): remove direct reporting of artifacts as soon as clients no longer
@@ -210,7 +224,8 @@ public final class TargetCompleteEvent
       }
     }
     if (baselineCoverageArtifacts != null) {
-      addImportantOutputs(builder, converters, baselineCoverageArtifacts);
+      addImportantOutputs(
+          builder, (artifact -> BASELINE_COVERAGE), converters, baselineCoverageArtifacts);
     }
 
     BuildEventStreamProtos.TargetComplete complete = builder.build();
@@ -250,7 +265,9 @@ public final class TargetCompleteEvent
     if (!(target instanceof RuleConfiguredTarget)) {
       return ImmutableList.<String>of();
     }
-    AttributeMap attributes = ((RuleConfiguredTarget) target).getAttributeMapper();
+    AttributeMap attributes =
+        ConfiguredAttributeMapper.of(
+            (Rule) actualTarget, ((RuleConfiguredTarget) target).getConfigConditions());
     // Every rule (implicitly) has a "tags" attribute.
     return attributes.get("tags", Type.STRING_LIST);
   }
@@ -268,7 +285,7 @@ public final class TargetCompleteEvent
     if (baselineCoverageArtifacts != null) {
       groups.add(
           OutputGroup.newBuilder()
-              .setName(TestFileNameConstants.BASELINE_COVERAGE)
+              .setName(BASELINE_COVERAGE)
               .addFileSets(
                   namer.apply(
                       (new NestedSetView<Artifact>(baselineCoverageArtifacts).identifier())))

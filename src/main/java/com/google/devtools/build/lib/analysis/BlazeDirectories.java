@@ -18,10 +18,8 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.hash.HashCode;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.util.StringCanonicalizer;
-import com.google.devtools.build.lib.vfs.FileSystemProvider;
 import com.google.devtools.build.lib.vfs.Path;
 import java.util.Objects;
 
@@ -44,12 +42,9 @@ import java.util.Objects;
  *
  * <p>Do not put shortcuts to specific files here!
  */
-@AutoCodec(dependency = FileSystemProvider.class)
+@AutoCodec
 @Immutable
 public final class BlazeDirectories {
-  public static final InjectingObjectCodec<BlazeDirectories, FileSystemProvider> CODEC =
-      new BlazeDirectories_AutoCodec();
-
   // Include directory name, relative to execRoot/blaze-out/configuration.
   public static final String RELATIVE_INCLUDE_DIR = StringCanonicalizer.intern("include");
   @VisibleForTesting static final String DEFAULT_EXEC_ROOT = "default-exec-root";

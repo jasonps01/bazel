@@ -21,7 +21,6 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.devtools.build.buildjar.JarOwner;
 import com.google.devtools.build.buildjar.javac.JavacOptions;
 import com.google.devtools.build.buildjar.javac.plugins.dependency.DependencyModule;
 import com.google.devtools.build.buildjar.javac.plugins.dependency.DependencyModule.StrictJavaDeps;
@@ -32,6 +31,7 @@ import com.google.turbine.options.TurbineOptionsParser;
 import com.sun.tools.javac.util.Context;
 import java.io.BufferedOutputStream;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -46,9 +46,14 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
+import java.util.jar.Attributes;
+import java.util.jar.JarFile;
+import java.util.jar.Manifest;
 import java.util.zip.ZipOutputStream;
+import javax.tools.Diagnostic;
+import javax.tools.JavaFileObject;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -63,6 +68,13 @@ import org.objectweb.asm.Opcodes;
  * real header compilation implementation.
  */
 public class JavacTurbine implements AutoCloseable {
+
+  // These attributes are used by JavaBuilder, Turbine, and ijar.
+  // They must all be kept in sync.
+  static final String MANIFEST_DIR = "META-INF/";
+  static final String MANIFEST_NAME = JarFile.MANIFEST_NAME;
+  static final Attributes.Name TARGET_LABEL = new Attributes.Name("Target-Label");
+  static final Attributes.Name INJECTING_RULE_KIND = new Attributes.Name("Injecting-Rule-Kind");
 
   public static void main(String[] args) throws IOException {
     System.exit(compile(TurbineOptionsParser.parse(Arrays.asList(args))).exitCode());
@@ -192,9 +204,7 @@ public class JavacTurbine implements AutoCloseable {
     if (sources.isEmpty()) {
       // accept compilations with an empty source list for compatibility with JavaBuilder
       emitClassJar(
-          Paths.get(turbineOptions.outputFile()),
-          /* files= */ ImmutableMap.of(),
-          /* transitive= */ ImmutableMap.of());
+          turbineOptions, /* files= */ ImmutableMap.of(), /* transitive= */ ImmutableMap.of());
       dependencyModule.emitDependencyInformation(
           /*classpath=*/ ImmutableList.of(), /*successful=*/ true);
       return Result.OK_WITH_REDUCED_CLASSPATH;
@@ -224,8 +234,7 @@ public class JavacTurbine implements AutoCloseable {
       }
     }
 
-    if (compileResult == null
-        || (!compileResult.success() && hasRecognizedError(compileResult.output()))) {
+    if (compileResult == null || shouldFallBack(compileResult)) {
       // fall back to transitive classpath
       actualClasspath = originalClasspath;
       requestBuilder.setClassPath(actualClasspath);
@@ -238,11 +247,12 @@ public class JavacTurbine implements AutoCloseable {
 
     if (result.ok()) {
       emitClassJar(
-          Paths.get(turbineOptions.outputFile()),
-          compileResult.files(),
-          transitive.collectTransitiveDependencies());
+          turbineOptions, compileResult.files(), transitive.collectTransitiveDependencies());
       dependencyModule.emitDependencyInformation(actualClasspath, compileResult.success());
     } else {
+      for (Diagnostic<? extends JavaFileObject> diagnostic : compileResult.diagnostics()) {
+        out.println(diagnostic.getMessage(Locale.getDefault()));
+      }
       out.print(compileResult.output());
     }
     return result;
@@ -260,17 +270,10 @@ public class JavacTurbine implements AutoCloseable {
             .setPlatformJars(platformJars)
             .setStrictJavaDeps(strictDepsMode.toString());
     ImmutableSet.Builder<Path> directJars = ImmutableSet.builder();
-    ImmutableMap.Builder<Path, JarOwner> jarsToTargets = ImmutableMap.builder();
-    for (Map.Entry<String, String> entry : turbineOptions.directJarsToTargets().entrySet()) {
-      Path path = Paths.get(entry.getKey());
-      directJars.add(path);
-      jarsToTargets.put(path, parseJarOwner(entry.getKey()));
-    }
-    for (Map.Entry<String, String> entry : turbineOptions.indirectJarsToTargets().entrySet()) {
-      jarsToTargets.put(Paths.get(entry.getKey()), parseJarOwner(entry.getValue()));
+    for (String path : turbineOptions.directJars()) {
+      directJars.add(Paths.get(path));
     }
     dependencyModuleBuilder.setDirectJars(directJars.build());
-    dependencyModuleBuilder.setJarsToTargets(jarsToTargets.build());
     if (turbineOptions.outputDeps().isPresent()) {
       dependencyModuleBuilder.setOutputDepsProtoFile(Paths.get(turbineOptions.outputDeps().get()));
     }
@@ -278,22 +281,11 @@ public class JavacTurbine implements AutoCloseable {
     return dependencyModuleBuilder.build();
   }
 
-  private static JarOwner parseJarOwner(String line) {
-    int separatorIndex = line.indexOf(';');
-    final JarOwner owner;
-    if (separatorIndex == -1) {
-      owner = JarOwner.create(line);
-    } else {
-      owner =
-          JarOwner.create(line.substring(0, separatorIndex), line.substring(separatorIndex + 1));
-    }
-    return owner;
-  }
-
   /** Write the class output from a successful compilation to the output jar. */
   private static void emitClassJar(
-      Path outputJar, Map<String, byte[]> files, Map<String, byte[]> transitive)
+      TurbineOptions turbineOptions, Map<String, byte[]> files, Map<String, byte[]> transitive)
       throws IOException {
+    Path outputJar = Paths.get(turbineOptions.outputFile());
     try (OutputStream fos = Files.newOutputStream(outputJar);
         ZipOutputStream zipOut =
             new ZipOutputStream(new BufferedOutputStream(fos, ZIPFILE_BUFFER_SIZE))) {
@@ -313,7 +305,31 @@ public class JavacTurbine implements AutoCloseable {
         }
         ZipUtil.storeEntry(name, bytes, zipOut);
       }
+
+      if (turbineOptions.targetLabel().isPresent()) {
+        ZipUtil.storeEntry(MANIFEST_DIR, new byte[] {}, zipOut);
+        ZipUtil.storeEntry(MANIFEST_NAME, manifestContent(turbineOptions), zipOut);
+      }
     }
+  }
+
+  private static byte[] manifestContent(TurbineOptions turbineOptions) throws IOException {
+    Manifest manifest = new Manifest();
+    Attributes attributes = manifest.getMainAttributes();
+    attributes.put(Attributes.Name.MANIFEST_VERSION, "1.0");
+    Attributes.Name createdBy = new Attributes.Name("Created-By");
+    if (attributes.getValue(createdBy) == null) {
+      attributes.put(createdBy, "bazel");
+    }
+    if (turbineOptions.targetLabel().isPresent()) {
+      attributes.put(TARGET_LABEL, turbineOptions.targetLabel().get());
+    }
+    if (turbineOptions.injectingRuleKind().isPresent()) {
+      attributes.put(INJECTING_RULE_KIND, turbineOptions.injectingRuleKind().get());
+    }
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    manifest.write(out);
+    return out.toByteArray();
   }
 
   /**
@@ -418,21 +434,33 @@ public class JavacTurbine implements AutoCloseable {
     return fs;
   }
 
-  private static final Pattern MISSING_PACKAGE =
-      Pattern.compile("error: package ([\\p{javaJavaIdentifierPart}\\.]+) does not exist");
-
   /**
    * The compilation failed with an error that may indicate that the reduced class path was too
    * aggressive.
    *
    * <p>WARNING: keep in sync with ReducedClasspathJavaLibraryBuilder.
    */
-  // TODO(cushon): use a diagnostic listener and match known codes instead
-  private static boolean hasRecognizedError(String javacOutput) {
-    return javacOutput.contains("error: cannot access")
-        || javacOutput.contains("error: cannot find symbol")
-        || javacOutput.contains("com.sun.tools.javac.code.Symbol$CompletionFailure")
-        || MISSING_PACKAGE.matcher(javacOutput).find();
+  private static boolean shouldFallBack(JavacTurbineCompileResult result) {
+    if (result.success()) {
+      return false;
+    }
+    for (Diagnostic<? extends JavaFileObject> diagnostic : result.diagnostics()) {
+      String code = diagnostic.getCode();
+      if (code.contains("doesnt.exist")
+          || code.contains("cant.resolve")
+          || code.contains("cant.access")) {
+        return true;
+      }
+      // handle -Xdoclint:reference errors, which don't have a diagnostic code
+      // TODO(cushon): this is locale-dependent
+      if (diagnostic.getMessage(Locale.getDefault()).contains("error: reference not found")) {
+        return true;
+      }
+    }
+    if (result.output().contains("com.sun.tools.javac.code.Symbol$CompletionFailure")) {
+      return true;
+    }
+    return false;
   }
 
   @Override

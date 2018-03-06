@@ -5,13 +5,13 @@ title: Query Language
 <h1>The Bazel Query Reference</h1>
 
 
-<ul clas="toc">
-  <li><a href="examples">Examples</a></li>
-  <li><a href="tokens">Tokens: The Lexical Syntax</a></li>
-  <li><a href="concepts">Bazel Query Language Concepts</a></li>
-  <li><a href="expressions">Expressions: Syntax and Semantics of the Grammar</a></li>
-  <li><a href="functions">Functions</a></li>
-  <li><a href="output-formats">Output Formats</a></li>
+<ul class="toc">
+  <li><a href="#examples">Examples</a></li>
+  <li><a href="#tokens">Tokens: The Lexical Syntax</a></li>
+  <li><a href="#concepts">Bazel Query Language Concepts</a></li>
+  <li><a href="#expressions">Expressions: Syntax and Semantics of the Grammar</a></li>
+  <li><a href="#functions">Functions</a></li>
+  <li><a href="#output-formats">Output Formats</a></li>
 </ul>
 
 <p>
@@ -1027,7 +1027,7 @@ genrule(
 </p>
 
 <h3 id="rbuildfiles">Package definition files: rbuildfiles</h3>
-<pre>expr ::= buildfiles(<var>expr</var>)</pre>
+<pre>expr ::= rbuildfiles(<var>expr</var>)</pre>
 <b>Only available with <a href='#sky-query'>Sky Query</a></b><br/>
 <p>
   The <code>rbuildfiles(<var>x</var>)</code> operator returns the set of "buildfiles" (BUILD and

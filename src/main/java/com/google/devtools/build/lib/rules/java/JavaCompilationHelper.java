@@ -34,6 +34,7 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.StrictDepsMode;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector;
+import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
@@ -67,6 +68,7 @@ public final class JavaCompilationHelper {
   private final JavaSemantics semantics;
   private final ImmutableList<Artifact> additionalJavaBaseInputs;
   private final StrictDepsMode strictJavaDeps;
+  private final String fixDepsTool;
 
   private static final String DEFAULT_ATTRIBUTES_SUFFIX = "";
   private static final PathFragment JAVAC = PathFragment.create("_javac");
@@ -90,6 +92,7 @@ public final class JavaCompilationHelper {
     this.strictJavaDeps = disableStrictDeps
         ? StrictDepsMode.OFF
         : getJavaConfiguration().getFilteredStrictJavaDeps();
+    this.fixDepsTool = getJavaConfiguration().getFixDepsTool();
   }
 
   public JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
@@ -225,11 +228,13 @@ public final class JavaCompilationHelper {
     builder.setProcessorPaths(attributes.getProcessorPath());
     builder.addProcessorNames(attributes.getProcessorNames());
     builder.setStrictJavaDeps(attributes.getStrictJavaDeps());
+    builder.setFixDepsTool(getJavaConfiguration().getFixDepsTool());
     builder.setDirectJars(attributes.getDirectJars());
     builder.setCompileTimeDependencyArtifacts(attributes.getCompileTimeDependencyArtifacts());
     builder.setTargetLabel(
         attributes.getTargetLabel() == null
             ? ruleContext.getLabel() : attributes.getTargetLabel());
+    builder.setInjectingRuleKind(attributes.getInjectingRuleKind());
     getAnalysisEnvironment().registerAction(builder.build());
   }
 
@@ -406,6 +411,7 @@ public final class JavaCompilationHelper {
     builder.setCompileTimeDependencyArtifacts(attributes.getCompileTimeDependencyArtifacts());
     builder.setDirectJars(attributes.getDirectJars());
     builder.setTargetLabel(attributes.getTargetLabel());
+    builder.setInjectingRuleKind(attributes.getInjectingRuleKind());
     builder.setAdditionalInputs(NestedSetBuilder.wrap(Order.LINK_ORDER, additionalJavaBaseInputs));
     builder.setJavacJar(javaToolchain.getJavac());
     builder.setToolsJars(javaToolchain.getTools());
@@ -653,7 +659,15 @@ public final class JavaCompilationHelper {
     if (shouldUseHeaderCompilation()) {
       jar = createHeaderCompilationAction(runtimeJar, builder);
     } else if (getJavaConfiguration().getUseIjars()) {
-      jar = createIjarAction(ruleContext, javaToolchain, runtimeJar, false);
+      JavaTargetAttributes attributes = getAttributes();
+      jar =
+          createIjarAction(
+              ruleContext,
+              javaToolchain,
+              runtimeJar,
+              attributes.getTargetLabel(),
+              attributes.getInjectingRuleKind(),
+              false);
     } else {
       jar = runtimeJar;
       isFullJar = true;
@@ -744,6 +758,11 @@ public final class JavaCompilationHelper {
     return strictJavaDeps;
   }
 
+  /** Determines which tool to use when fixing dependency errors. */
+  public String getFixDepsTool() {
+    return fixDepsTool;
+  }
+
   /**
    * Gets the value of the "javacopts" attribute combining them with the
    * default options. If the current rule has no javacopts attribute, this
@@ -829,17 +848,28 @@ public final class JavaCompilationHelper {
    * Creates the Action that creates ijars from Jar files.
    *
    * @param inputJar the Jar to create the ijar for
-   * @param addPrefix whether to prefix the path of the generated ijar with the package and
-   *     name of the current rule
+   * @param addPrefix whether to prefix the path of the generated ijar with the package and name of
+   *     the current rule
    * @return the Artifact to create with the Action
    */
   protected static Artifact createIjarAction(
       RuleContext ruleContext,
       JavaToolchainProvider javaToolchain,
-      Artifact inputJar, boolean addPrefix) {
+      Artifact inputJar,
+      @Nullable Label targetLabel,
+      @Nullable String injectingRuleKind,
+      boolean addPrefix) {
     Artifact interfaceJar = getIjarArtifact(ruleContext, inputJar, addPrefix);
     FilesToRunProvider ijarTarget = javaToolchain.getIjar();
     if (!ruleContext.hasErrors()) {
+      CustomCommandLine.Builder commandLine =
+          CustomCommandLine.builder().addExecPath(inputJar).addExecPath(interfaceJar);
+      if (targetLabel != null) {
+        commandLine.addLabel("--target_label", targetLabel);
+      }
+      if (injectingRuleKind != null) {
+        commandLine.add("--injecting_rule_kind", injectingRuleKind);
+      }
       ruleContext.registerAction(
           new SpawnAction.Builder()
               .addInput(inputJar)
@@ -851,11 +881,7 @@ public final class JavaCompilationHelper {
               .useDefaultShellEnvironment()
               .setProgressMessage("Extracting interface %s", ruleContext.getLabel())
               .setMnemonic("JavaIjar")
-              .addCommandLine(
-                  CustomCommandLine.builder()
-                      .addExecPath(inputJar)
-                      .addExecPath(interfaceJar)
-                      .build())
+              .addCommandLine(commandLine.build())
               .build(ruleContext));
     }
     return interfaceJar;

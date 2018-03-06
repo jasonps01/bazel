@@ -36,6 +36,7 @@ import javax.annotation.Nullable;
  * a new custom subclass.
  *
  * <p>These are the most important requirements for subclasses:
+ *
  * <ul>
  *   <li>Actions must be generally immutable; we currently make an exception for C++, and that has
  *       been a constant source of correctness issues; there are still ongoing incremental
@@ -76,7 +77,6 @@ import javax.annotation.Nullable;
  * to action subclasses.
  */
 public interface Action extends ActionExecutionMetadata, Describable {
-
   /**
    * Prepares for executing this action; called by the Builder prior to executing the Action itself.
    * This method should prepare the file system, so that the execution of the Action can write the

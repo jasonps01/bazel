@@ -1,3 +1,109 @@
+## Release 0.11.0 (2018-02-23)
+
+```
+Baseline: 00d781ae78a8bd51d3c61b621d79f0bb095aff9e
+
+Cherry picks:
+   + ea2d4c475febdbd59ca0e0ba46adc7be759f84e0:
+     Update stub_finds_runfiles_test to be a real sh_test.
+   + d855d8133f4efb73ebd5e82c54a9afb4c7565d46:
+     java,runfiles: fix bugs in runfiles library
+   + 56aeb04a064218b845ecc193d530c341c6ec854d:
+     Fixing #4585: broken re-execution of orphaned actions.
+   + cf3f81aef7c32019d70cbce218a64a03276268f0:
+     remote: Add support for HTTP Basic Auth
+   + 28bd997c1c8793973f63dcae4c22bbae49e7d8b7:
+     Fixing test-setup.sh occasionally missing stdout/stderr, on
+     systems where "tail --pid" is supported.
+   + 109e4b4dc9e786e3a2d8d7cb245d18320dbe9216:
+     Automated rollback of commit
+     7e6837cc1d1aa4259f5c27ba3606b277b5f6c3e9.
+   + b3d52b1b6d46a0f23cc91125c1d522e9d13433b4:
+     Fix incorrect include directories when -no-canonical-prefixes is
+     passed to clang
+   + 3904ac33a983fd8faebba1b52bcac5a3ff942029:
+     Automated rollback of commit
+     28bd997c1c8793973f63dcae4c22bbae49e7d8b7.
+   + 1001141f0674ff4b611814edcb00a5183680ef4a:
+     Roll forward of
+     https://github.com/bazelbuild/bazel/commit/3904ac33a983fd8faebba1
+     b52bcac5a3ff942029
+     (https://github.com/bazelbuild/bazel/commit/3904ac33a983fd8faebba
+     1b52bcac5a3ff942029). Fix #4625 by running the test process in a
+     sub-shell.
+```
+
+Incompatible changes:
+
+  - ctx.fragments.jvm is not available anymore.
+
+New features:
+
+  - java,runfiles: You can now depend on
+    `@bazel_tools//tools/runfiles:java-runfiles` to get a
+    platform-independent runfiles library for Java. See JavaDoc of
+    https://github.com/bazelbuild/bazel/blob/master/src/tools/runfiles
+    /java/com/google/devtools/build/runfiles/Runfiles.java for usage
+    information.
+
+Important changes:
+
+  - The --[no]experimental_disable_jvm command line option is not
+    supported anymore.
+  - Allow expanding TreeArtifacts for libraries_to_link
+  - Proguarded Android binaries can be built with incremental dexing.
+  - aar_import now supports assets.
+  - Crash in OutputJar::Close has been fixed
+  - generator_* attributes are nonconfigurable.
+  - Introduces --[no]keep_state_after_build
+  - Add support for merged object files needed for -flto-unit.
+  - Fix how libraries to link is specified to archiver actions.
+  - Replace //tools/defaults:android_jar with
+    @bazel_tools//tools/android:android_jar.
+    //tools/defaults:android_jar will be removed in a future release.
+  - java_common.compile supports neverlink
+  - Resolved an issue where a failure in the remote cache would not
+    trigger local re-execution of an action.
+
+## Release 0.10.1 (2018-02-15)
+
+```
+Baseline: 22c2f9a7722e8c8b7fdf8f5d30a40f1c4118e993
+
+Cherry picks:
+   + f6ca78808722c8c119affdb33400838ee92d44b6:
+     isable_presubmit
+   + 65c13dd5a4c1b4b5a072f7680b8f1cf3c5079b52:
+     Fix StreamResourceLeak error
+   + e5436745e1732f5e43fc55f0deb5b19e23ce8524:
+     windows: fix --symlink_prefix=/ throwing exception
+   + 22ccdd1ebe1dc495e05d894a3325f6b05e681fb3:
+     Fix turbine command lines with empty javacopts
+   + 96c654d43eb2906177325cbc2fc2b1e90dbcc792:
+     Remove EOL'd Linux flavours, bump CentOS to 6.9.
+   + f0bec36864f10370cbbda4caa8beac2e0c5ee45b:
+     Automated rollback of commit
+     2aeaeba66857c561dd6d63c79a213f1cabc3650d.
+   + 860af5be10b6bad68144d9d2d34173e86b40268c:
+     Consolidate Error Prone resource handling
+   + 2e631c99495f75270d2639542cefb531ec262d67:
+     sandbox: properly add `tmpDir` to `writablePaths`
+   + 5bfa5844d0d16d71e88002956e88402bfec88ef7:
+     actions,temp: respect TMPDIR envvar
+   + 6cc2ad8676d1ae0542b351a07a05ddbe5efac165:
+     sandbox: add env[TMPDIR] instead of `tmpDir`
+   + 40c757f4ab90214f95935672532a495c4551490a:
+     Change git clone to pull all history, so all needed commits can
+     be accessed.
+   + 56aeb04a064218b845ecc193d530c341c6ec854d:
+     Fixing #4585: broken re-execution of orphaned actions.
+```
+
+Important changes:
+
+  - Resolved an issue where a failure in the remote cache would not
+    trigger local re-execution of an action.
+
 ## Release 0.10.0 (2018-02-01)
 
 ```
@@ -2382,6 +2488,8 @@ Baseline: a0881e8
 ```
 
 Initial release.
+
+
 
 
 

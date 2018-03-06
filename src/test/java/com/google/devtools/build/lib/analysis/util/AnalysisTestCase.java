@@ -154,7 +154,7 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
             BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY);
     directories =
         new BlazeDirectories(
-            new ServerDirectories(outputBase, outputBase),
+            new ServerDirectories(outputBase, outputBase, outputBase),
             rootDirectory,
             analysisMock.getProductName());
     workspaceStatusActionFactory =
@@ -500,8 +500,21 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
    * Also see {@link AnalysisTestCase#setRulesAndAspectsAvailableInTests(Iterable, Iterable)}.
    */
   protected void setRulesAvailableInTests(RuleDefinition... rules) throws Exception {
+    // Not all of these aspects are needed for all tests, but it makes it simple to offer them all.
     setRulesAndAspectsAvailableInTests(
-        ImmutableList.<NativeAspectClass>of(),
+        ImmutableList.of(
+            TestAspects.SIMPLE_ASPECT,
+            TestAspects.PARAMETRIZED_DEFINITION_ASPECT,
+            TestAspects.ASPECT_REQUIRING_PROVIDER,
+            TestAspects.FALSE_ADVERTISEMENT_ASPECT,
+            TestAspects.ALL_ATTRIBUTES_ASPECT,
+            TestAspects.ALL_ATTRIBUTES_WITH_TOOL_ASPECT,
+            TestAspects.BAR_PROVIDER_ASPECT,
+            TestAspects.EXTRA_ATTRIBUTE_ASPECT,
+            TestAspects.FOO_PROVIDER_ASPECT,
+            TestAspects.ASPECT_REQUIRING_PROVIDER_SETS,
+            TestAspects.WARNING_ASPECT,
+            TestAspects.ERROR_ASPECT),
         ImmutableList.copyOf(rules));
   }
 

@@ -19,7 +19,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.devtools.build.lib.actions.util.ActionsTestUtil.getFirstArtifactEndingWith;
 import static com.google.devtools.build.lib.actions.util.ActionsTestUtil.prettyArtifactNames;
-import static com.google.devtools.build.lib.testutil.MoreAsserts.expectThrows;
+import static com.google.devtools.build.lib.testutil.MoreAsserts.assertThrows;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
@@ -116,7 +116,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "--android_crosstool_top=//android/crosstool:everything");
 
     AssertionError noToolchainError =
-        expectThrows(AssertionError.class, () -> getConfiguredTarget("//test/skylark:test"));
+        assertThrows(AssertionError.class, () -> getConfiguredTarget("//test/skylark:test"));
     assertThat(noToolchainError)
         .hasMessageThat()
         .contains("No default_toolchain found for cpu 'doesnotexist'");
@@ -685,8 +685,9 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
   }
 
   @Test
-  public void testIncrementalDexingAfterProguard_autoShardedMultidex() throws Exception {
-    useConfiguration("--experimental_incremental_dexing_after_proguard=3");
+  public void testIncrementalDexingAfterProguard_autoShardedMultidexAutoOptIn() throws Exception {
+    useConfiguration("--experimental_incremental_dexing_after_proguard=3",
+        "--experimental_incremental_dexing_after_proguard_by_default");
     // Use "legacy" multidex mode so we get a main dex list file and can test that it's passed to
     // the splitter action (similar to _withDexShards below), unlike without the dex splitter where
     // the main dex list goes to the merging action.
@@ -696,11 +697,10 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "  name = 'top',",
         "  srcs = ['foo.java', 'bar.srcjar'],",
         "  manifest = 'AndroidManifest.xml',",
-        "  incremental_dexing = 1,",
         "  multidex = 'legacy',",
         "  dexopts = ['--minimal-main-dex', '--positions=none'],",
         "  proguard_specs = ['b.pro'],",
-        ")");
+        ")"); // incremental_dexing = 1 attribute not needed
 
     ConfiguredTarget topTarget = getConfiguredTarget("//java/com/google/android:top");
     assertNoEvents();
@@ -2827,6 +2827,56 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
               actionsTestUtil().artifactClosureOf(deployAction.getInputs()), "liba.jar");
 
     assertThat(javacAction.buildCommandLine()).contains("-g:lines,source");
+  }
+
+  @Test
+  public void testFixDepsToolFlag() throws Exception {
+    useConfiguration("--experimental_fix_deps_tool=autofixer");
+
+    scratch.file("java/foo/A.java", "foo");
+    scratch.file(
+        "java/foo/BUILD",
+        "android_binary(name = 'a', manifest = 'AndroidManifest.xml', ",
+        "  srcs = ['A.java'])");
+
+    Iterable<String> commandLine =
+        ((JavaCompileAction)
+                actionsTestUtil()
+                    .getActionForArtifactEndingWith(
+                        actionsTestUtil()
+                            .artifactClosureOf(
+                                getGeneratingAction(
+                                        getFileConfiguredTarget("//java/foo:a_deploy.jar")
+                                            .getArtifact())
+                                    .getInputs()),
+                        "liba.jar"))
+            .buildCommandLine();
+
+    assertThat(commandLine).containsAllOf("--experimental_fix_deps_tool", "autofixer").inOrder();
+  }
+
+  @Test
+  public void testFixDepsToolFlagEmpty() throws Exception {
+    scratch.file("java/foo/A.java", "foo");
+    scratch.file(
+        "java/foo/BUILD",
+        "android_binary(name = 'a', manifest = 'AndroidManifest.xml', ",
+        "  srcs = ['A.java'])");
+
+    Iterable<String> commandLine =
+        ((JavaCompileAction)
+                actionsTestUtil()
+                    .getActionForArtifactEndingWith(
+                        actionsTestUtil()
+                            .artifactClosureOf(
+                                getGeneratingAction(
+                                        getFileConfiguredTarget("//java/foo:a_deploy.jar")
+                                            .getArtifact())
+                                    .getInputs()),
+                        "liba.jar"))
+            .buildCommandLine();
+
+    assertThat(commandLine).containsAllOf("--experimental_fix_deps_tool", "add_dep").inOrder();
   }
 
   @Test

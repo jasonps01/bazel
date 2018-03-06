@@ -202,7 +202,7 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
                                    + "Did you mean to use 'linkstatic=1' instead?");
     }
 
-    linkingHelper.setCreateDynamicLibrary(createDynamicLibrary);
+    linkingHelper.setShouldCreateDynamicLibrary(createDynamicLibrary);
     linkingHelper.setDynamicLibrary(soImplArtifact);
 
     // If the reason we're not creating a dynamic library is that the toolchain
@@ -211,8 +211,8 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
     if (!createDynamicLibrary && !supportsDynamicLinker) {
       ImmutableList.Builder<Artifact> dynamicLibraries = ImmutableList.builder();
       dynamicLibraries.add(
-        CppHelper.getLinuxLinkedArtifact(
-          ruleContext, ruleContext.getConfiguration(), LinkTargetType.DYNAMIC_LIBRARY));
+          CppHelper.getLinuxLinkedArtifact(
+              ruleContext, ruleContext.getConfiguration(), LinkTargetType.NODEPS_DYNAMIC_LIBRARY));
       if (CppHelper.useInterfaceSharedObjects(ccToolchain.getCppConfiguration(), ccToolchain)) {
         dynamicLibraries.add(
           CppHelper.getLinuxLinkedArtifact(
@@ -229,8 +229,8 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
       // a "no generating action for this artifact" error.
       ImmutableList.Builder<Artifact> dynamicLibraries = ImmutableList.builder();
       dynamicLibraries.add(
-        CppHelper.getLinuxLinkedArtifact(
-          ruleContext, ruleContext.getConfiguration(), LinkTargetType.DYNAMIC_LIBRARY));
+          CppHelper.getLinuxLinkedArtifact(
+              ruleContext, ruleContext.getConfiguration(), LinkTargetType.NODEPS_DYNAMIC_LIBRARY));
       if (CppHelper.useInterfaceSharedObjects(ccToolchain.getCppConfiguration(), ccToolchain)) {
         dynamicLibraries.add(
           CppHelper.getLinuxLinkedArtifact(
@@ -283,7 +283,7 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
     CompilationInfo compilationInfo = compilationHelper.compile();
     LinkingInfo linkingInfo =
         linkingHelper.link(
-            compilationInfo.getCcCompilationOutputs(), compilationInfo.getCppCompilationContext());
+            compilationInfo.getCcCompilationOutputs(), compilationInfo.getCcCompilationInfo());
 
     /*
      * We always generate a static library, even if there aren't any source files.

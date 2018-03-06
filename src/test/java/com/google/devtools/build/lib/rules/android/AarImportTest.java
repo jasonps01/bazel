@@ -25,6 +25,7 @@ import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.configuredtargets.FileConfiguredTarget;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
+import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
@@ -127,7 +128,7 @@ public class AarImportTest extends BuildViewTestCase {
     ConfiguredTarget androidLibraryTarget = getConfiguredTarget("//java:lib");
 
     NestedSet<Artifact> nativeLibs =
-        androidLibraryTarget.getProvider(NativeLibsZipsProvider.class).getAarNativeLibs();
+        androidLibraryTarget.get(AndroidNativeLibsInfo.PROVIDER).getNativeLibs();
     assertThat(nativeLibs).containsExactly(
         ActionsTestUtil.getFirstArtifactEndingWith(nativeLibs, "foo/native_libs.zip"),
         ActionsTestUtil.getFirstArtifactEndingWith(nativeLibs, "bar/native_libs.zip"),
@@ -135,7 +136,7 @@ public class AarImportTest extends BuildViewTestCase {
   }
 
   @Test
-  public void testNativeLibsZipMakesItIntoApk() throws Exception {
+  public void testNativeLibsMakesItIntoApk() throws Exception {
     scratch.file("java/com/google/android/hello/BUILD",
         "aar_import(",
         "    name = 'my_aar',",
@@ -299,5 +300,11 @@ public class AarImportTest extends BuildViewTestCase {
         .get(0)
         .getManifest()
         .getRootRelativePathString();
+  }
+  
+  @Test
+  public void testTransitiveExports() throws Exception {
+    assertThat(getConfiguredTarget("//a:bar").get(JavaInfo.PROVIDER).getTransitiveExports())
+        .containsExactly(Label.parseAbsolute("//a:foo"), Label.parseAbsolute("//java:baz"));
   }
 }

@@ -14,21 +14,79 @@
 
 package com.google.devtools.build.lib.skyframe.serialization;
 
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationException.NoCodecException;
+import com.google.protobuf.CodedOutputStream;
+import java.io.IOException;
+import javax.annotation.Nullable;
+
 /** Stateful class for providing additional context to a single serialization "session". */
 // TODO(bazel-team): This class is just a shell, fill in.
 public class SerializationContext {
-  // TODO(bazel-team): Replace with real stateless implementation when we start adding
-  // functionality.
-  private static final SerializationContext EMPTY_STATELESS = new SerializationContext();
 
-  public static SerializationContext create() {
-    return stateless();
+  private final ObjectCodecRegistry registry;
+  private final ImmutableMap<Class<?>, Object> dependencies;
+
+  public SerializationContext(
+      ObjectCodecRegistry registry, ImmutableMap<Class<?>, Object> dependencies) {
+    this.registry = registry;
+    this.dependencies = dependencies;
   }
 
-  /** Returns an empty instance which doesn't retain any state. */
-  public static SerializationContext stateless() {
-    return EMPTY_STATELESS;
+  public SerializationContext(ImmutableMap<Class<?>, Object> dependencies) {
+    this(AutoRegistry.get(), dependencies);
   }
 
-  private SerializationContext() {}
+  @Nullable
+  private ObjectCodecRegistry.CodecDescriptor recordAndGetDescriptorIfNotConstantOrNull(
+      @Nullable Object object, CodedOutputStream codedOut) throws IOException, NoCodecException {
+    if (object == null) {
+      codedOut.writeSInt32NoTag(0);
+      return null;
+    }
+    Integer tag = registry.maybeGetTagForConstant(object);
+    if (tag != null) {
+      codedOut.writeSInt32NoTag(tag);
+      return null;
+    }
+    ObjectCodecRegistry.CodecDescriptor descriptor = registry.getCodecDescriptor(object.getClass());
+    codedOut.writeSInt32NoTag(descriptor.getTag());
+    return descriptor;
+  }
+
+  // TODO(shahan): consider making codedOut a member of this class.
+  public void serialize(Object object, CodedOutputStream codedOut)
+      throws IOException, SerializationException {
+    ObjectCodecRegistry.CodecDescriptor descriptor =
+        recordAndGetDescriptorIfNotConstantOrNull(object, codedOut);
+    if (descriptor != null) {
+      descriptor.serialize(this, object, codedOut);
+    }
+  }
+
+  /**
+   * Returns the {@link ObjectCodec} to use when serializing {@code object}. The codec's tag is
+   * written to {@code codedOut} so that {@link DeserializationContext#getCodecRecordedInInput} can
+   * return the correct codec as well. Only to be used by {@code MemoizingCodec}.
+   *
+   * <p>If the return value is null, this indicates that the value was serialized directly as null
+   * or a constant. The caller needs do nothing further to serialize {@code object} in this case.
+   */
+  @SuppressWarnings("unchecked") // cast to ObjectCodec<? super T>.
+  public <T> ObjectCodec<? super T> recordAndMaybeReturnCodec(T object, CodedOutputStream codedOut)
+      throws SerializationException, IOException {
+    ObjectCodecRegistry.CodecDescriptor descriptor =
+        recordAndGetDescriptorIfNotConstantOrNull(object, codedOut);
+    if (descriptor == null) {
+      return null;
+    }
+    return (ObjectCodec<? super T>) descriptor.getCodec();
+  }
+
+  @SuppressWarnings("unchecked")
+  public <T> T getDependency(Class<T> type) {
+    Preconditions.checkNotNull(type);
+    return (T) dependencies.get(type);
+  }
 }

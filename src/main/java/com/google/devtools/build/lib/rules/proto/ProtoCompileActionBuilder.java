@@ -28,6 +28,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
@@ -35,7 +36,6 @@ import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
-import com.google.devtools.build.lib.analysis.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
 import com.google.devtools.build.lib.analysis.stringtemplate.ExpansionException;
@@ -359,7 +359,8 @@ public class ProtoCompileActionBuilder {
       NestedSet<Artifact> protosInDirectDeps,
       Artifact output,
       boolean allowServices,
-      NestedSet<Artifact> transitiveDescriptorSets) {
+      NestedSet<Artifact> transitiveDescriptorSets,
+      NestedSet<String> protoSourceRoots) {
     if (protosToCompile.isEmpty()) {
       ruleContext.registerAction(
           FileWriteAction.createEmptyWithInputs(
@@ -374,6 +375,7 @@ public class ProtoCompileActionBuilder {
             protosToCompile,
             transitiveSources,
             protosInDirectDeps,
+            protoSourceRoots,
             ruleContext.getLabel(),
             ImmutableList.of(output),
             "Descriptor Set",
@@ -420,6 +422,7 @@ public class ProtoCompileActionBuilder {
       Iterable<Artifact> protosToCompile,
       NestedSet<Artifact> transitiveSources,
       NestedSet<Artifact> protosInDirectDeps,
+      NestedSet<String> protoSourceRoots,
       Label ruleLabel,
       Iterable<Artifact> outputs,
       String flavorName,
@@ -431,6 +434,7 @@ public class ProtoCompileActionBuilder {
             protosToCompile,
             transitiveSources,
             protosInDirectDeps,
+            protoSourceRoots,
             ruleLabel,
             outputs,
             flavorName,
@@ -447,6 +451,7 @@ public class ProtoCompileActionBuilder {
       Iterable<Artifact> protosToCompile,
       NestedSet<Artifact> transitiveSources,
       @Nullable NestedSet<Artifact> protosInDirectDeps,
+      NestedSet<String> protoSourceRoots,
       Label ruleLabel,
       Iterable<Artifact> outputs,
       String flavorName,
@@ -481,6 +486,7 @@ public class ProtoCompileActionBuilder {
                 toolchainInvocations,
                 protosToCompile,
                 transitiveSources,
+                protoSourceRoots,
                 areDepsStrict(ruleContext) ? protosInDirectDeps : null,
                 ruleLabel,
                 allowServices,
@@ -517,11 +523,16 @@ public class ProtoCompileActionBuilder {
       List<ToolchainInvocation> toolchainInvocations,
       Iterable<Artifact> protosToCompile,
       NestedSet<Artifact> transitiveSources,
+      NestedSet<String> transitiveProtoPathFlags,
       @Nullable NestedSet<Artifact> protosInDirectDeps,
       Label ruleLabel,
       boolean allowServices,
       ImmutableList<String> protocOpts) {
     CustomCommandLine.Builder cmdLine = CustomCommandLine.builder();
+
+    cmdLine.addAll(
+        VectorArg.of(transitiveProtoPathFlags)
+            .mapped(ProtoCompileActionBuilder::expandTransitiveProtoPathFlags));
 
     // A set to check if there are multiple invocations with the same name.
     HashSet<String> invocationNames = new HashSet<>();
@@ -595,27 +606,20 @@ public class ProtoCompileActionBuilder {
     }
   }
 
+  private static void expandTransitiveProtoPathFlags(String flag, Consumer<String> args) {
+    args.accept("--proto_path=" + flag);
+  }
+
   private static void expandTransitiveImportArg(Artifact artifact, Consumer<String> args) {
-    args.accept("-I" + getPathIgnoringRepository(artifact) + "=" + artifact.getExecPathString());
+    args.accept(
+        "-I"
+            + ProtoCommon.getPathIgnoringRepository(artifact).toString()
+            + "="
+            + artifact.getExecPathString());
   }
 
   private static void expandToPathIgnoringRepository(Artifact artifact, Consumer<String> args) {
-    args.accept(getPathIgnoringRepository(artifact));
-  }
-
-  /**
-   * Gets the artifact's path relative to the root, ignoring the external repository the artifact is
-   * at. For example, <code>
-   * //a:b.proto --> a/b.proto
-   * {@literal @}foo//a:b.proto --> a/b.proto
-   * </code>
-   */
-  private static String getPathIgnoringRepository(Artifact artifact) {
-    return artifact
-        .getRootRelativePath()
-        .relativeTo(
-            artifact.getOwnerLabel().getPackageIdentifier().getRepository().getPathUnderExecRoot())
-        .toString();
+    args.accept(ProtoCommon.getPathIgnoringRepository(artifact).toString());
   }
 
   /**

@@ -49,8 +49,8 @@ import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfig
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.HeadersCheckingMode;
+import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoMode;
 import com.google.devtools.build.lib.shell.ShellUtils;
-import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.syntax.Type;
@@ -69,6 +69,21 @@ import javax.annotation.Nullable;
  * Common parts of the implementation of cc rules.
  */
 public final class CcCommon {
+
+  /** Name of the build variable for the sysroot path variable name. */
+  public static final String SYSROOT_VARIABLE_NAME = "sysroot";
+
+  /** Name of the build variable for the path to the input file being processed. */
+  public static final String INPUT_FILE_VARIABLE_NAME = "input_file";
+
+  /**
+   * Name of the build variable for includes that compiler needs to include into sources to be
+   * compiled.
+   */
+  public static final String INCLUDES_VARIABLE_NAME = "includes";
+
+  /** Name of the build variable for stripopts for the strip action. */
+  public static final String STRIPOPTS_VARIABLE_NAME = "stripopts";
 
   private static final String NO_COPTS_ATTRIBUTE = "nocopts";
 
@@ -110,6 +125,7 @@ public final class CcCommon {
           // differently named outputs.
           Link.LinkTargetType.PIC_STATIC_LIBRARY.getActionName(),
           Link.LinkTargetType.INTERFACE_DYNAMIC_LIBRARY.getActionName(),
+          Link.LinkTargetType.NODEPS_DYNAMIC_LIBRARY.getActionName(),
           Link.LinkTargetType.DYNAMIC_LIBRARY.getActionName(),
           Link.LinkTargetType.ALWAYS_LINK_STATIC_LIBRARY.getActionName(),
           Link.LinkTargetType.ALWAYS_LINK_PIC_STATIC_LIBRARY.getActionName(),
@@ -388,8 +404,6 @@ public final class CcCommon {
   /** A filter that removes copts from a c++ compile action according to a nocopts regex. */
   @AutoCodec
   static class CoptsFilter {
-    public static final ObjectCodec<CoptsFilter> CODEC = new CcCommon_CoptsFilter_AutoCodec();
-
     private final Pattern noCoptsPattern;
     private final boolean allPasses;
 
@@ -575,13 +589,12 @@ public final class CcCommon {
     return result;
   }
 
-  /**
-   * Collects compilation prerequisite artifacts.
-   */
+  /** Collects compilation prerequisite artifacts. */
   static NestedSet<Artifact> collectCompilationPrerequisites(
-      RuleContext ruleContext, CppCompilationContext context) {
-    // TODO(bazel-team): Use context.getCompilationPrerequisites() instead; note that this will
-    // need cleaning up the prerequisites, as the compilation context currently collects them
+      RuleContext ruleContext, CcCompilationInfo ccCompilationInfo) {
+    // TODO(bazel-team): Use ccCompilationInfo.getCompilationPrerequisites() instead; note that this
+    // will
+    // need cleaning up the prerequisites, as the {@code CcCompilationInfo} currently collects them
     // transitively (to get transitive headers), but source files are not transitive compilation
     // prerequisites.
     NestedSetBuilder<Artifact> prerequisites = NestedSetBuilder.stableOrder();
@@ -593,10 +606,10 @@ public final class CcCommon {
                 provider.getFilesToBuild(), SourceCategory.CC_AND_OBJC.getSourceTypes()));
       }
     }
-    prerequisites.addTransitive(context.getDeclaredIncludeSrcs());
-    prerequisites.addTransitive(context.getAdditionalInputs());
-    prerequisites.addTransitive(context.getTransitiveModules(true));
-    prerequisites.addTransitive(context.getTransitiveModules(false));
+    prerequisites.addTransitive(ccCompilationInfo.getDeclaredIncludeSrcs());
+    prerequisites.addTransitive(ccCompilationInfo.getAdditionalInputs());
+    prerequisites.addTransitive(ccCompilationInfo.getTransitiveModules(true));
+    prerequisites.addTransitive(ccCompilationInfo.getTransitiveModules(false));
     return prerequisites.build();
   }
 
@@ -660,6 +673,19 @@ public final class CcCommon {
     }
   }
 
+  public static ImmutableList<String> getCoverageFeatures(RuleContext ruleContext) {
+    ImmutableList.Builder<String> coverageFeatures = ImmutableList.builder();
+    if (ruleContext.getConfiguration().isCodeCoverageEnabled()) {
+      coverageFeatures.add(CppRuleClasses.COVERAGE);
+      if (ruleContext.getFragment(CppConfiguration.class).useLLVMCoverageMapFormat()) {
+        coverageFeatures.add(CppRuleClasses.LLVM_COVERAGE_MAP_FORMAT);
+      } else {
+        coverageFeatures.add(CppRuleClasses.GCC_COVERAGE_MAP_FORMAT);
+      }
+    }
+    return coverageFeatures.build();
+  }
+
   /**
    * Creates the feature configuration for a given rule.
    *
@@ -678,11 +704,12 @@ public final class CcCommon {
       unsupportedFeaturesBuilder.add(CppRuleClasses.PARSE_HEADERS);
       unsupportedFeaturesBuilder.add(CppRuleClasses.PREPROCESS_HEADERS);
     }
-    if (toolchain.getCppCompilationContext().getCppModuleMap() == null) {
+    if (toolchain.getCcCompilationInfo().getCppModuleMap() == null) {
       unsupportedFeaturesBuilder.add(CppRuleClasses.MODULE_MAPS);
     }
     ImmutableSet<String> allUnsupportedFeatures = unsupportedFeaturesBuilder.build();
     ImmutableSet.Builder<String> allRequestedFeaturesBuilder = ImmutableSet.builder();
+
     // If STATIC_LINK_MSVCRT feature isn't specified by user, we add DYNAMIC_LINK_MSVCRT_* feature
     // according to compilation mode.
     // If STATIC_LINK_MSVCRT feature is specified, we add STATIC_LINK_MSVCRT_* feature
@@ -698,6 +725,41 @@ public final class CcCommon {
               ? CppRuleClasses.DYNAMIC_LINK_MSVCRT_DEBUG
               : CppRuleClasses.DYNAMIC_LINK_MSVCRT_NO_DEBUG);
     }
+
+    CppConfiguration cppConfiguration = toolchain.getCppConfiguration();
+
+    allRequestedFeaturesBuilder.addAll(getCoverageFeatures(ruleContext));
+
+    if (cppConfiguration.getFdoInstrument() != null
+        && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.FDO_INSTRUMENT)) {
+      allRequestedFeaturesBuilder.add(CppRuleClasses.FDO_INSTRUMENT);
+    }
+
+    FdoMode fdoMode = toolchain.getFdoMode();
+    boolean isFdo = fdoMode != FdoMode.OFF && toolchain.getCompilationMode() == CompilationMode.OPT;
+    if (isFdo
+        && fdoMode != FdoMode.AUTO_FDO
+        && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.FDO_OPTIMIZE)) {
+      allRequestedFeaturesBuilder.add(CppRuleClasses.FDO_OPTIMIZE);
+    }
+    if (isFdo && fdoMode == FdoMode.AUTO_FDO) {
+      allRequestedFeaturesBuilder.add(CppRuleClasses.AUTOFDO);
+      // For LLVM, support implicit enabling of ThinLTO for AFDO unless it has been
+      // explicitly disabled.
+      if (toolchain.isLLVMCompiler()
+          && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.THIN_LTO)) {
+        allRequestedFeaturesBuilder.add(CppRuleClasses.ENABLE_AFDO_THINLTO);
+      }
+    }
+    if (cppConfiguration.isLipoOptimizationOrInstrumentation()) {
+      // Map LIPO to ThinLTO for LLVM builds.
+      if (toolchain.isLLVMCompiler() && fdoMode != FdoMode.OFF) {
+        allRequestedFeaturesBuilder.add(CppRuleClasses.THIN_LTO);
+      } else {
+        allRequestedFeaturesBuilder.add(CppRuleClasses.LIPO);
+      }
+    }
+
     ImmutableList.Builder<String> allFeatures =
         new ImmutableList.Builder<String>()
             .addAll(

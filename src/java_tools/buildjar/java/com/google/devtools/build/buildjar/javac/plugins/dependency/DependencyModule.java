@@ -18,7 +18,6 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.buildjar.JarOwner;
 import com.google.devtools.build.buildjar.javac.plugins.BlazeJavaCompilerPlugin;
@@ -36,7 +35,10 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import javax.tools.Diagnostic;
+import javax.tools.JavaFileObject;
 
 /**
  * Wrapper class for managing dependencies on top of {@link
@@ -70,11 +72,10 @@ public final class DependencyModule {
   }
 
   private final StrictJavaDeps strictJavaDeps;
+  private final FixTool fixDepsTool;
   private final ImmutableSet<Path> directJars;
-  private final ImmutableMap<Path, JarOwner> jarsToTargets;
   private final boolean strictClasspathMode;
   private final Set<Path> depsArtifacts;
-  private final String ruleKind;
   private final String targetLabel;
   private final Path outputDepsProtoFile;
   private final Set<Path> usedClasspath;
@@ -88,22 +89,20 @@ public final class DependencyModule {
 
   DependencyModule(
       StrictJavaDeps strictJavaDeps,
+      FixTool fixDepsTool,
       ImmutableSet<Path> directJars,
-      ImmutableMap<Path, JarOwner> jarsToTargets,
       boolean strictClasspathMode,
       Set<Path> depsArtifacts,
       ImmutableSet<Path> platformJars,
-      String ruleKind,
       String targetLabel,
       Path outputDepsProtoFile,
       FixMessage fixMessage,
       Set<String> exemptGenerators) {
     this.strictJavaDeps = strictJavaDeps;
+    this.fixDepsTool = fixDepsTool;
     this.directJars = directJars;
-    this.jarsToTargets = jarsToTargets;
     this.strictClasspathMode = strictClasspathMode;
     this.depsArtifacts = depsArtifacts;
-    this.ruleKind = ruleKind;
     this.targetLabel = targetLabel;
     this.outputDepsProtoFile = outputDepsProtoFile;
     this.explicitDependenciesMap = new HashMap<>();
@@ -176,14 +175,14 @@ public final class DependencyModule {
     return directJars;
   }
 
-  /** Returns the mapping from jar paths to {@link JarOwner}s. */
-  public Map<Path, JarOwner> jarsToTargets() {
-    return jarsToTargets;
-  }
-
   /** Returns the strict dependency checking (strictJavaDeps) setting. */
   public StrictJavaDeps getStrictJavaDeps() {
     return strictJavaDeps;
+  }
+
+  /** Returns which tool to use for adding missing dependencies. */
+  public FixTool getFixDepsTool() {
+    return fixDepsTool;
   }
 
   /** Returns the map collecting precise explicit dependency information. */
@@ -204,11 +203,6 @@ public final class DependencyModule {
   /** Adds a package to the set of packages built by this target. */
   public boolean addPackage(PackageSymbol packge) {
     return packages.add(packge);
-  }
-
-  /** Returns the type (rule kind) of the originating target. */
-  public String getRuleKind() {
-    return ruleKind;
   }
 
   /** Returns the name (label) of the originating target. */
@@ -293,23 +287,50 @@ public final class DependencyModule {
     }
   }
 
-  /**
-   * A functional that formats a message for the user about a missing dependency that they should
-   * add to unbreak their build.
-   */
+  /** Emits a message to the user about missing dependencies to add to unbreak their build. */
   public interface FixMessage {
-    String get(Iterable<JarOwner> missing, String recipient, boolean useColor);
+
+    /**
+     * Gets a message describing what dependencies are missing and how to fix them.
+     *
+     * @param missing the missing dependencies to be added.
+     * @param recipient the target from which the dependencies are missing.
+     * @param dependencyModule {@link DependencyModule} instance for compilation context.
+     * @return the string message describing the dependency build issues, including fix.
+     */
+    String get(Iterable<JarOwner> missing, String recipient, DependencyModule dependencyModule);
+  }
+
+  /** Tool with which to fix dependency issues. */
+  public interface FixTool {
+
+    /**
+     * Applies this tool to find the missing import/dependency.
+     *
+     * @param diagnostic a full javac diagnostic, possibly containing an import for a class which
+     *     cannot be found on the classpath.
+     * @param javacopts list of all javac options/flags.
+     * @return the missing import or dependency as a String, or empty Optional if the diagnostic did
+     *     not contain exactly one unresolved import that we know how to fix.
+     */
+    Optional<String> resolveMissingImport(
+        Diagnostic<JavaFileObject> diagnostic, ImmutableList<String> javacopts);
+
+    /**
+     * Returns a command for this tool to fix {@code recipient} by adding all {@code missing}
+     * dependencies for this target.
+     */
+    String getFixCommand(Iterable<String> missing, String recipient);
   }
 
   /** Builder for {@link DependencyModule}. */
   public static class Builder {
 
     private StrictJavaDeps strictJavaDeps = StrictJavaDeps.OFF;
+    private FixTool fixDepsTool = null;
     private ImmutableSet<Path> directJars = ImmutableSet.of();
-    private ImmutableMap<Path, JarOwner> jarsToTargets = ImmutableMap.of();
     private final Set<Path> depsArtifacts = new HashSet<>();
     private ImmutableSet<Path> platformJars = ImmutableSet.of();
-    private String ruleKind;
     private String targetLabel;
     private Path outputDepsProtoFile;
     private boolean strictClasspathMode = false;
@@ -318,7 +339,7 @@ public final class DependencyModule {
 
     private static class DefaultFixMessage implements FixMessage {
       @Override
-      public String get(Iterable<JarOwner> missing, String recipient, boolean useColor) {
+      public String get(Iterable<JarOwner> missing, String recipient, DependencyModule depModule) {
         StringBuilder missingTargetsStr = new StringBuilder();
         for (JarOwner owner : missing) {
           missingTargetsStr.append(owner.label());
@@ -329,10 +350,7 @@ public final class DependencyModule {
             "%1$s ** Please add the following dependencies:%2$s \n  %3$s to %4$s \n"
                 + "%1$s ** You can use the following buildozer command:%2$s "
                 + "\nbuildozer 'add deps %3$s' %4$s \n\n",
-            useColor ? "\033[35m\033[1m" : "",
-            useColor ? "\033[0m" : "",
-            missingTargetsStr.toString(),
-            recipient);
+            "\033[35m\033[1m", "\033[0m", missingTargetsStr.toString(), recipient);
       }
     }
 
@@ -345,12 +363,11 @@ public final class DependencyModule {
     public DependencyModule build() {
       return new DependencyModule(
           strictJavaDeps,
+          fixDepsTool,
           directJars,
-          jarsToTargets,
           strictClasspathMode,
           depsArtifacts,
           platformJars,
-          ruleKind,
           targetLabel,
           outputDepsProtoFile,
           fixMessage,
@@ -369,13 +386,13 @@ public final class DependencyModule {
     }
 
     /**
-     * Sets the type (rule kind) of the originating target.
+     * Sets which tool to use for fixing missing dependencies.
      *
-     * @param ruleKind kind, such as the rule kind of a RuleConfiguredTarget
+     * @param fixDepsTool tool name
      * @return this Builder instance
      */
-    public Builder setRuleKind(String ruleKind) {
-      this.ruleKind = ruleKind;
+    public Builder setFixDepsTool(FixTool fixDepsTool) {
+      this.fixDepsTool = fixDepsTool;
       return this;
     }
 
@@ -393,12 +410,6 @@ public final class DependencyModule {
     /** Sets the paths to jars that are direct dependencies. */
     public Builder setDirectJars(ImmutableSet<Path> directJars) {
       this.directJars = directJars;
-      return this;
-    }
-
-    /** Sets the mapping from jar paths to {@link JarOwners}s. */
-    public Builder setJarsToTargets(ImmutableMap<Path, JarOwner> jarsToTargets) {
-      this.jarsToTargets = jarsToTargets;
       return this;
     }
 

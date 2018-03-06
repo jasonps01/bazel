@@ -364,15 +364,14 @@ public class AndroidCommon {
     throw new IllegalArgumentException(String.format("%s was not found in %s", needle, haystack));
   }
 
-  public static NestedSetBuilder<Artifact> collectTransitiveNativeLibsZips(
-      RuleContext ruleContext) {
-    NestedSetBuilder<Artifact> transitiveAarNativeLibs = NestedSetBuilder.naiveLinkOrder();
-    Iterable<NativeLibsZipsProvider> providers =
-        getTransitivePrerequisites(ruleContext, Mode.TARGET, NativeLibsZipsProvider.class);
-    for (NativeLibsZipsProvider nativeLibsZipsProvider : providers) {
-      transitiveAarNativeLibs.addTransitive(nativeLibsZipsProvider.getAarNativeLibs());
+  public static NestedSetBuilder<Artifact> collectTransitiveNativeLibs(RuleContext ruleContext) {
+    NestedSetBuilder<Artifact> transitiveNativeLibs = NestedSetBuilder.naiveLinkOrder();
+    Iterable<AndroidNativeLibsInfo> infos =
+        getTransitivePrerequisites(ruleContext, Mode.TARGET, AndroidNativeLibsInfo.PROVIDER);
+    for (AndroidNativeLibsInfo nativeLibsZipsInfo : infos) {
+      transitiveNativeLibs.addTransitive(nativeLibsZipsInfo.getNativeLibs());
     }
-    return transitiveAarNativeLibs;
+    return transitiveNativeLibs;
   }
 
   static boolean getExportsManifest(RuleContext ruleContext) {
@@ -793,8 +792,11 @@ public class AndroidCommon {
   }
 
   public static PathFragment getAssetDir(RuleContext ruleContext) {
-    return PathFragment.create(
-        ruleContext.attributes().get(ResourceType.ASSETS.getAttribute() + "_dir", Type.STRING));
+    if (ruleContext.attributes().has(ResourceType.ASSETS.getAttribute() + "_dir")) {
+      return PathFragment.create(
+          ruleContext.attributes().get(ResourceType.ASSETS.getAttribute() + "_dir", Type.STRING));
+    }
+    return PathFragment.EMPTY_FRAGMENT;
   }
 
   /**

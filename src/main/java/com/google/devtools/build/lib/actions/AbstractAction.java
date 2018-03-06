@@ -29,6 +29,7 @@ import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.AspectDescriptor;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
@@ -37,6 +38,7 @@ import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.SkylarkDict;
 import com.google.devtools.build.lib.syntax.SkylarkList;
 import com.google.devtools.build.lib.syntax.SkylarkNestedSet;
+import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
@@ -52,20 +54,27 @@ import javax.annotation.concurrent.GuardedBy;
 
 /**
  * Abstract implementation of Action which implements basic functionality: the inputs, outputs, and
- * toString method. Both input and output sets are immutable. Subclasses must be generally
- * immutable - see the documentation on {@link Action}.
+ * toString method. Both input and output sets are immutable. Subclasses must be generally immutable
+ * - see the documentation on {@link Action}.
  */
-@Immutable @ThreadSafe
+@Immutable
+@ThreadSafe
 @SkylarkModule(
-    name = "Action",
-    category = SkylarkModuleCategory.BUILTIN,
-    doc = "An action created on a <a href=\"ctx.html\">ctx</a> object. You can retrieve these "
-        + "using the <a href=\"globals.html#Actions\">Actions</a> provider. Some fields are only "
-        + "applicable for certain kinds of actions. Fields that are inapplicable are set to "
-        + "<code>None</code>."
+  name = "Action",
+  category = SkylarkModuleCategory.BUILTIN,
+  doc =
+      "An action created during rule analysis."
+          + "<p>This object is visible for the purpose of testing, and may be obtained from an "
+          + "<a href=\"globals.html#Actions\">Actions</a> provider. It is normally not necessary "
+          + "to access `Action` objects or their fields within a rule's implementation function. "
+          + "You may instead want to see the "
+          + "<a href='../rules.$DOC_EXT#actions'>Rules page</a> for a general discussion of how to "
+          + "use actions when defining custom rules, or the <a href='actions.html'>API reference"
+          + "</a> for creating actions."
+          + "<p>Some fields of this object are only applicable for certain kinds of actions. "
+          + "Fields that are inapplicable are set to <code>None</code>."
 )
 public abstract class AbstractAction implements Action, SkylarkValue {
-
   /**
    * An arbitrary default resource set. Currently 250MB of memory, 50% CPU and 0% of total I/O.
    */
@@ -77,7 +86,7 @@ public abstract class AbstractAction implements Action, SkylarkValue {
    * AbstractAction itself. The appropriate getter methods should be used instead. This has to be
    * done due to the fact that the getter methods can be overridden in subclasses.
    */
-  private final ActionOwner owner;
+  @VisibleForSerialization protected final ActionOwner owner;
 
   /**
    * Tools are a subset of inputs and used by the WorkerSpawnStrategy to determine whether a
@@ -103,11 +112,12 @@ public abstract class AbstractAction implements Action, SkylarkValue {
 
   // The variable inputs is non-final only so that actions that discover their inputs can modify it.
   @GuardedBy("this")
-  private Iterable<Artifact> inputs;
+  @VisibleForSerialization
+  protected Iterable<Artifact> inputs;
 
   protected final ActionEnvironment env;
   private final RunfilesSupplier runfilesSupplier;
-  private final ImmutableSet<Artifact> outputs;
+  @VisibleForSerialization protected final ImmutableSet<Artifact> outputs;
 
   private String cachedKey;
 
@@ -299,16 +309,27 @@ public abstract class AbstractAction implements Action, SkylarkValue {
   /**
    * See the javadoc for {@link com.google.devtools.build.lib.actions.Action} and {@link
    * ActionExecutionMetadata#getKey(ActionKeyContext)} for the contract for {@link
-   * #computeKey(ActionKeyContext)}.
+   * #computeKey(ActionKeyContext, Fingerprint)}.
    */
-  protected abstract String computeKey(ActionKeyContext actionKeyContext)
+  protected abstract void computeKey(ActionKeyContext actionKeyContext, Fingerprint fp)
       throws CommandLineExpansionException;
 
   @Override
   public final synchronized String getKey(ActionKeyContext actionKeyContext) {
     if (cachedKey == null) {
       try {
-        cachedKey = computeKey(actionKeyContext);
+        Fingerprint fp = new Fingerprint();
+        computeKey(actionKeyContext, fp);
+
+        // Add a bool indicating whether the execution platform was set.
+        fp.addBoolean(getExecutionPlatform() != null);
+        if (getExecutionPlatform() != null) {
+          // Add the execution platform information.
+          getExecutionPlatform().addTo(fp);
+        }
+
+        // Compute the actual key and store it.
+        cachedKey = fp.hexDigestAndReset();
       } catch (CommandLineExpansionException e) {
         cachedKey = KEY_ERROR;
       }

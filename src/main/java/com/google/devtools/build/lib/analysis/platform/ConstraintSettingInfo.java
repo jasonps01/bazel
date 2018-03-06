@@ -15,18 +15,20 @@
 package com.google.devtools.build.lib.analysis.platform;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.NativeInfo;
 import com.google.devtools.build.lib.packages.NativeProvider;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.FunctionSignature;
 import com.google.devtools.build.lib.syntax.SkylarkType;
+import com.google.devtools.build.lib.util.Fingerprint;
 
 /** Provider for a platform constraint setting that is available to be fulfilled. */
 @SkylarkModule(
@@ -35,8 +37,8 @@ import com.google.devtools.build.lib.syntax.SkylarkType;
   category = SkylarkModuleCategory.PROVIDER
 )
 @Immutable
+@AutoCodec
 public class ConstraintSettingInfo extends NativeInfo {
-
   /** Name used in Skylark for accessing this provider. */
   public static final String SKYLARK_NAME = "ConstraintSettingInfo";
 
@@ -67,8 +69,9 @@ public class ConstraintSettingInfo extends NativeInfo {
 
   private final Label label;
 
-  private ConstraintSettingInfo(Label label, Location location) {
-    super(PROVIDER, ImmutableMap.<String, Object>of("label", label), location);
+  @VisibleForSerialization
+  ConstraintSettingInfo(Label label, Location location) {
+    super(PROVIDER, location);
 
     this.label = label;
   }
@@ -90,5 +93,10 @@ public class ConstraintSettingInfo extends NativeInfo {
   /** Returns a new {@link ConstraintSettingInfo} with the given data. */
   public static ConstraintSettingInfo create(Label constraintSetting, Location location) {
     return new ConstraintSettingInfo(constraintSetting, location);
+  }
+
+  /** Add this constraint setting to the given fingerprint. */
+  public void addTo(Fingerprint fp) {
+    fp.addString(label.getCanonicalForm());
   }
 }

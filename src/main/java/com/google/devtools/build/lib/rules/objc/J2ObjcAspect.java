@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile;
 import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
@@ -33,7 +34,6 @@ import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
-import com.google.devtools.build.lib.analysis.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.ConfigAwareAspectBuilder;
@@ -80,6 +80,7 @@ import java.util.List;
 /** J2ObjC transpilation aspect for Java and proto rules. */
 public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectFactory {
   public static final String NAME = "J2ObjcAspect";
+
   private final String toolsRepository;
 
   private static final ExtraCompileArgs EXTRA_COMPILE_ARGS = new ExtraCompileArgs(

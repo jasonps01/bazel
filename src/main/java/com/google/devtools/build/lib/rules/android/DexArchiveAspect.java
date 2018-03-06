@@ -31,6 +31,7 @@ import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ExecutionRequirements;
+import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredAspectFactory;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
@@ -40,7 +41,6 @@ import com.google.devtools.build.lib.analysis.WrappingProvider;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.Builder;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
-import com.google.devtools.build.lib.analysis.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.HostTransition;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
@@ -60,7 +60,7 @@ import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationInfoProvider;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaRuntimeJarProvider;
-import com.google.devtools.build.lib.rules.java.proto.JavaLiteProtoAspect;
+import com.google.devtools.build.lib.rules.java.proto.JavaProtoAspectCommon;
 import com.google.devtools.build.lib.rules.java.proto.JavaProtoLibraryAspectProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoLangToolchainProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
@@ -74,6 +74,7 @@ import java.util.Set;
 /** Aspect to {@link DexArchiveProvider build .dex Archives} from Jars. */
 public final class DexArchiveAspect extends NativeAspectClass implements ConfiguredAspectFactory {
   public static final String NAME = "DexArchiveAspect";
+
   /**
    * Function that returns a {@link Rule}'s {@code incremental_dexing} attribute for use by this
    * aspect. Must be provided when attaching this aspect to a target.
@@ -109,7 +110,7 @@ public final class DexArchiveAspect extends NativeAspectClass implements Configu
           ":android_sdk",
           "aidl_lib", // for the aidl runtime in the android_sdk rule
           // To get from proto_library through proto_lang_toolchain rule to proto runtime library.
-          JavaLiteProtoAspect.PROTO_TOOLCHAIN_ATTR, "runtime");
+          JavaProtoAspectCommon.LITE_PROTO_TOOLCHAIN_ATTR, "runtime");
 
   private static final FlagMatcher DEXOPTS_SUPPORTED_IN_DEXBUILDER =
       new FlagMatcher(
@@ -393,6 +394,9 @@ public final class DexArchiveAspect extends NativeAspectClass implements Configu
     if (getAndroidConfig(ruleContext).checkDesugarDeps()) {
       args.add("--emit_dependency_metadata_as_needed");
     }
+    if (getAndroidConfig(ruleContext).desugarJava8Libs()) {
+      args.add("--desugar_supported_core_libs");
+    }
 
     ruleContext.registerAction(
         new SpawnAction.Builder()
@@ -412,23 +416,13 @@ public final class DexArchiveAspect extends NativeAspectClass implements Configu
   }
 
   /**
-   * Creates a dex archive using an executable prerequisite called {@code "$dexbuilder"}. Rules
-   * calling this method must declare the appropriate prerequisite, similar to how {@link
-   * #getDefinition} does it for {@link DexArchiveAspect} under a different name.
+   * Creates a dexbuilder action with the given input, output, and flags. Flags must have been
+   * filtered and normalized to a set that the dexbuilder tool can understand.
    *
    * @return the artifact given as {@code result}, which can simplify calling code
    */
   // Package-private method for use in AndroidBinary
   static Artifact createDexArchiveAction(
-      RuleContext ruleContext, Artifact jar, Set<String> tokenizedDexopts, Artifact result) {
-    return createDexArchiveAction(ruleContext, "$dexbuilder", jar, tokenizedDexopts, result);
-  }
-
-  /**
-   * Creates a dexbuilder action with the given input, output, and flags. Flags must have been
-   * filtered and normalized to a set that the dexbuilder tool can understand.
-   */
-  private static Artifact createDexArchiveAction(
       RuleContext ruleContext,
       String dexbuilderPrereq,
       Artifact jar,

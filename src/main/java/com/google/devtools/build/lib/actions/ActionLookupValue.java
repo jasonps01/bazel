@@ -20,12 +20,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
-import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
-import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
-import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
-import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.Strategy;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
 import java.util.ArrayList;
@@ -40,43 +37,28 @@ import javax.annotation.Nullable;
  */
 public class ActionLookupValue implements SkyValue {
   protected final List<ActionAnalysisMetadata> actions;
-  private final ImmutableMap<Artifact, Integer> generatingActionIndex;
+  @VisibleForSerialization protected final ImmutableMap<Artifact, Integer> generatingActionIndex;
 
-  private static Actions.GeneratingActions filterSharedActionsAndThrowRuntimeIfConflict(
-      ActionKeyContext actionKeyContext, List<ActionAnalysisMetadata> actions) {
-    try {
-      return Actions.filterSharedActionsAndThrowActionConflict(actionKeyContext, actions);
-    } catch (ActionConflictException e) {
-      // Programming bug.
-      throw new IllegalStateException(e);
-    }
+  protected ActionLookupValue(
+      ActionAnalysisMetadata action,
+      boolean removeActionAfterEvaluation) {
+    this(Actions.GeneratingActions.fromSingleAction(action), removeActionAfterEvaluation);
   }
 
   @VisibleForTesting
   public ActionLookupValue(
-      ActionKeyContext actionKeyContext,
-      List<ActionAnalysisMetadata> actions,
-      boolean removeActionsAfterEvaluation) {
-    this(
-        filterSharedActionsAndThrowRuntimeIfConflict(actionKeyContext, actions),
-        removeActionsAfterEvaluation);
-  }
-
-  protected ActionLookupValue(
-      ActionKeyContext actionKeyContext,
-      ActionAnalysisMetadata action,
-      boolean removeActionAfterEvaluation) {
-    this(actionKeyContext, ImmutableList.of(action), removeActionAfterEvaluation);
-  }
-
-  protected ActionLookupValue(
       Actions.GeneratingActions generatingActions, boolean removeActionsAfterEvaluation) {
-    if (removeActionsAfterEvaluation) {
-      this.actions = new ArrayList<>(generatingActions.getActions());
-    } else {
-      this.actions = ImmutableList.copyOf(generatingActions.getActions());
-    }
-    this.generatingActionIndex = generatingActions.getGeneratingActionIndex();
+    this(
+        removeActionsAfterEvaluation
+            ? new ArrayList<>(generatingActions.getActions())
+            : ImmutableList.copyOf(generatingActions.getActions()),
+        generatingActions.getGeneratingActionIndex());
+  }
+
+  protected ActionLookupValue(
+      List<ActionAnalysisMetadata> actions, ImmutableMap<Artifact, Integer> generatingActionIndex) {
+    this.actions = actions;
+    this.generatingActionIndex = generatingActionIndex;
   }
 
   /**
@@ -122,18 +104,19 @@ public class ActionLookupValue implements SkyValue {
     return Preconditions.checkNotNull(actions.get(index), "null action: %s %s", index, this);
   }
 
+  public ActionTemplate<?> getActionTemplate(int index) {
+    ActionAnalysisMetadata result = getActionAnalysisMetadata(index);
+    Preconditions.checkState(
+        result instanceof ActionTemplate, "Not action template: %s %s %s", result, index, this);
+    return (ActionTemplate<?>) result;
+  }
+
   /**
-   * Returns the {@link ActionAnalysisMetadata} at index {@code index} if it is present and
-   * <i>not</i> an {@link Action}. Tree artifacts need their {@code ActionTemplate}s in order to
-   * generate the correct actions, but in general most actions are not needed after they are
-   * executed and may not even be available.
+   * Returns if the action at {@code index} is an {@link ActionTemplate} so that tree artifacts can
+   * take the proper action.
    */
-  public ActionAnalysisMetadata getIfPresentAndNotAction(int index) {
-    ActionAnalysisMetadata actionAnalysisMetadata = actions.get(index);
-    if (!(actionAnalysisMetadata instanceof Action)) {
-      return actionAnalysisMetadata;
-    }
-    return null;
+  public boolean isActionTemplate(int index) {
+    return actions.get(index) instanceof ActionTemplate;
   }
 
   /** To be used only when checking consistency of the action graph -- not by other values. */
@@ -190,11 +173,7 @@ public class ActionLookupValue implements SkyValue {
    * subclasses of ActionLookupKey. This allows callers to easily find the value key, while
    * remaining agnostic to what ActionLookupValues actually exist.
    */
-  @AutoCodec(strategy = Strategy.POLYMORPHIC)
   public abstract static class ActionLookupKey implements ArtifactOwner, SkyKey {
-    public static final ObjectCodec<ActionLookupKey> CODEC =
-        new ActionLookupValue_ActionLookupKey_AutoCodec();
-
     @Override
     public Label getLabel() {
       return null;

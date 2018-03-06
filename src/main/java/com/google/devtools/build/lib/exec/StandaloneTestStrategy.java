@@ -29,7 +29,6 @@ import com.google.devtools.build.lib.actions.SpawnActionContext;
 import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.actions.TestExecException;
 import com.google.devtools.build.lib.analysis.RunfilesSupplierImpl;
-import com.google.devtools.build.lib.analysis.config.BinTools;
 import com.google.devtools.build.lib.analysis.test.TestActionContext;
 import com.google.devtools.build.lib.analysis.test.TestResult;
 import com.google.devtools.build.lib.analysis.test.TestRunnerAction;
@@ -51,17 +50,15 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /** Runs TestRunnerAction actions. */
+// TODO(bazel-team): add tests for this strategy.
 @ExecutionStrategy(
   contextType = TestActionContext.class,
   name = {"standalone"}
 )
 public class StandaloneTestStrategy extends TestStrategy {
-  // TODO(bazel-team) - add tests for this strategy.
-  public static final String COLLECT_COVERAGE =
-      "external/bazel_tools/tools/test/collect_coverage.sh";
-
   private static final ImmutableMap<String, String> ENV_VARS =
       ImmutableMap.<String, String>builder()
           .put("TZ", "UTC")
@@ -97,25 +94,19 @@ public class StandaloneTestStrategy extends TestStrategy {
             binTools,
             action.getLocalShellEnvironment(),
             action.isEnableRunfiles());
-    Path tmpDir =
-        tmpDirRoot.getChild(
-            getTmpDirName(
-                action.getExecutionSettings().getExecutable().getExecPath(),
-                action.getShardNum(),
-                action.getRunNumber()));
+    Path tmpDir = tmpDirRoot.getChild(TestStrategy.getTmpDirName(action));
     Map<String, String> env = setupEnvironment(
         action, actionExecutionContext.getClientEnv(), execRoot, runfilesDir, tmpDir);
     Path workingDirectory = runfilesDir.getRelative(action.getRunfilesPrefix());
 
     ResolvedPaths resolvedPaths = action.resolve(execRoot);
 
-    ImmutableMap.Builder<String, String> executionInfo = ImmutableMap.builder();
+    Map<String, String> executionInfo =
+        new TreeMap<>(action.getTestProperties().getExecutionInfo());
     if (!action.shouldCacheResult()) {
       executionInfo.put(ExecutionRequirements.NO_CACHE, "");
     }
-    // This key is only understood by StandaloneSpawnStrategy.
-    executionInfo.put("timeout", "" + getTimeout(action).getSeconds());
-    executionInfo.putAll(action.getTestProperties().getExecutionInfo());
+    executionInfo.put(ExecutionRequirements.TIMEOUT, "" + getTimeout(action).getSeconds());
 
     ResourceSet localResourceUsage =
         action
@@ -126,9 +117,9 @@ public class StandaloneTestStrategy extends TestStrategy {
     Spawn spawn =
         new SimpleSpawn(
             action,
-            getArgs(COLLECT_COVERAGE, action),
+            getArgs(action),
             ImmutableMap.copyOf(env),
-            executionInfo.build(),
+            ImmutableMap.copyOf(executionInfo),
             new RunfilesSupplierImpl(
                 runfilesDir.relativeTo(execRoot), action.getExecutionSettings().getRunfiles()),
             /*inputs=*/ ImmutableList.copyOf(action.getInputs()),

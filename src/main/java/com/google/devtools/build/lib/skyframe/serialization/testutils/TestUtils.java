@@ -16,10 +16,13 @@ package com.google.devtools.build.lib.skyframe.serialization.testutils;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.devtools.build.lib.skyframe.serialization.CodecRegisterer;
+import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.devtools.build.lib.skyframe.serialization.strings.StringCodecs;
-import com.google.devtools.build.lib.syntax.Environment.Frame;
+import com.google.devtools.build.lib.syntax.Environment.GlobalFrame;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -31,26 +34,26 @@ public class TestUtils {
   private TestUtils() {}
 
   /** Serialize a value to a new byte array. */
-  public static <T> byte[] toBytes(ObjectCodec<T> codec, T value)
+  public static <T> byte[] toBytes(SerializationContext context, ObjectCodec<T> codec, T value)
       throws IOException, SerializationException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     CodedOutputStream codedOut = CodedOutputStream.newInstance(bytes);
-    codec.serialize(value, codedOut);
+    codec.serialize(context, value, codedOut);
     codedOut.flush();
     return bytes.toByteArray();
   }
 
   /** Deserialize a value from a byte array. */
-  public static <T> T fromBytes(ObjectCodec<T> codec, byte[] bytes)
+  public static <T> T fromBytes(DeserializationContext context, ObjectCodec<T> codec, byte[] bytes)
       throws SerializationException, IOException {
-    return codec.deserialize(CodedInputStream.newInstance(bytes));
+    return codec.deserialize(context, CodedInputStream.newInstance(bytes));
   }
 
   /**
-   * Asserts that two {@link Frame}s have the same structure. Needed because {@link Frame} doesn't
-   * override {@link Object#equals}.
+   * Asserts that two {@link GlobalFrame}s have the same structure. Needed because
+   * {@link GlobalFrame} doesn't override {@link Object#equals}.
    */
-  public static void assertFramesEqual(Frame frame1, Frame frame2) {
+  public static void assertGlobalFramesEqual(GlobalFrame frame1, GlobalFrame frame2) {
     assertThat(frame1.mutability().getAnnotation())
         .isEqualTo(frame2.mutability().getAnnotation());
     assertThat(frame1.getLabel()).isEqualTo(frame2.getLabel());
@@ -60,7 +63,7 @@ public class TestUtils {
       assertThat(frame1.getParent()).isNull();
       assertThat(frame2.getParent()).isNull();
     } else {
-      assertFramesEqual(frame1.getParent(), frame2.getParent());
+      assertGlobalFramesEqual(frame1.getParent(), frame2.getParent());
     }
   }
 
@@ -77,16 +80,20 @@ public class TestUtils {
     }
 
     @Override
-    public void serialize(String value, CodedOutputStream codedOut)
+    public void serialize(SerializationContext context, String value, CodedOutputStream codedOut)
         throws SerializationException, IOException {
-      stringCodec.serialize("dummy", codedOut);
+      stringCodec.serialize(context, "dummy", codedOut);
     }
 
     @Override
-    public String deserialize(CodedInputStream codedIn)
+    public String deserialize(DeserializationContext context, CodedInputStream codedIn)
         throws SerializationException, IOException {
-      stringCodec.deserialize(codedIn);
+      stringCodec.deserialize(context, codedIn);
       return "dummy";
     }
+
+    /** Disables auto-registration of ConstantStringCodec. */
+    private static class ConstantStringCodecRegisterer
+        implements CodecRegisterer<ConstantStringCodec> {}
   }
 }

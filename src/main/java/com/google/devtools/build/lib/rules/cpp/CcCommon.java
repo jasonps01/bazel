@@ -15,8 +15,6 @@ package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
 import com.google.common.base.Strings;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
@@ -45,13 +43,16 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform;
-import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper.SourceCategory;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationHelper.SourceCategory;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.CollidingProvidesException;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.HeadersCheckingMode;
+import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoMode;
 import com.google.devtools.build.lib.shell.ShellUtils;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.Pair;
@@ -59,6 +60,7 @@ import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import javax.annotation.Nullable;
@@ -67,6 +69,21 @@ import javax.annotation.Nullable;
  * Common parts of the implementation of cc rules.
  */
 public final class CcCommon {
+
+  /** Name of the build variable for the sysroot path variable name. */
+  public static final String SYSROOT_VARIABLE_NAME = "sysroot";
+
+  /** Name of the build variable for the path to the input file being processed. */
+  public static final String INPUT_FILE_VARIABLE_NAME = "input_file";
+
+  /**
+   * Name of the build variable for includes that compiler needs to include into sources to be
+   * compiled.
+   */
+  public static final String INCLUDES_VARIABLE_NAME = "includes";
+
+  /** Name of the build variable for stripopts for the strip action. */
+  public static final String STRIPOPTS_VARIABLE_NAME = "stripopts";
 
   private static final String NO_COPTS_ATTRIBUTE = "nocopts";
 
@@ -108,6 +125,7 @@ public final class CcCommon {
           // differently named outputs.
           Link.LinkTargetType.PIC_STATIC_LIBRARY.getActionName(),
           Link.LinkTargetType.INTERFACE_DYNAMIC_LIBRARY.getActionName(),
+          Link.LinkTargetType.NODEPS_DYNAMIC_LIBRARY.getActionName(),
           Link.LinkTargetType.DYNAMIC_LIBRARY.getActionName(),
           Link.LinkTargetType.ALWAYS_LINK_STATIC_LIBRARY.getActionName(),
           Link.LinkTargetType.ALWAYS_LINK_PIC_STATIC_LIBRARY.getActionName(),
@@ -117,7 +135,6 @@ public final class CcCommon {
   private static final ImmutableSet<String> DEFAULT_FEATURES =
       ImmutableSet.of(
           CppRuleClasses.DEPENDENCY_FILE,
-          CppRuleClasses.COMPILE_ACTION_FLAGS_IN_FLAG_SET,
           CppRuleClasses.RANDOM_SEED,
           CppRuleClasses.MODULE_MAPS,
           CppRuleClasses.MODULE_MAP_HOME_CWD,
@@ -145,6 +162,31 @@ public final class CcCommon {
     this.fdoSupport =
         Preconditions.checkNotNull(
             CppHelper.getFdoSupportUsingDefaultCcToolchainAttribute(ruleContext));
+  }
+
+  /**
+   * Merges a list of output groups into one. The sets for each entry with a given key are merged.
+   */
+  public static Map<String, NestedSet<Artifact>> mergeOutputGroups(
+      ImmutableList<Map<String, NestedSet<Artifact>>> outputGroups) {
+    Map<String, NestedSetBuilder<Artifact>> mergedOutputGroupsBuilder = new TreeMap<>();
+
+    for (Map<String, NestedSet<Artifact>> outputGroup : outputGroups) {
+      for (Map.Entry<String, NestedSet<Artifact>> entryOutputGroup : outputGroup.entrySet()) {
+        String key = entryOutputGroup.getKey();
+        mergedOutputGroupsBuilder.computeIfAbsent(
+            key, (String k) -> NestedSetBuilder.compileOrder());
+        mergedOutputGroupsBuilder.get(key).addTransitive(entryOutputGroup.getValue());
+      }
+    }
+
+    Map<String, NestedSet<Artifact>> mergedOutputGroups = new TreeMap<>();
+    for (Map.Entry<String, NestedSetBuilder<Artifact>> entryOutputGroupBuilder :
+        mergedOutputGroupsBuilder.entrySet()) {
+      mergedOutputGroups.put(
+          entryOutputGroupBuilder.getKey(), entryOutputGroupBuilder.getValue().build());
+    }
+    return mergedOutputGroups;
   }
 
   /**
@@ -176,7 +218,7 @@ public final class CcCommon {
   }
 
   public ImmutableList<String> getCopts() {
-    if (!getCoptsFilter(ruleContext).apply("-Wno-future-warnings")) {
+    if (!getCoptsFilter(ruleContext).passesFilter("-Wno-future-warnings")) {
       ruleContext.attributeWarning(
           "nocopts",
           String.format(
@@ -359,18 +401,53 @@ public final class CcCommon {
     }
   }
 
+  /** A filter that removes copts from a c++ compile action according to a nocopts regex. */
+  @AutoCodec
+  static class CoptsFilter {
+    private final Pattern noCoptsPattern;
+    private final boolean allPasses;
+
+    @VisibleForSerialization
+    CoptsFilter(Pattern noCoptsPattern, boolean allPasses) {
+      this.noCoptsPattern = noCoptsPattern;
+      this.allPasses = allPasses;
+    }
+
+    /** Creates a filter that filters all matches to a regex. */
+    public static CoptsFilter fromRegex(Pattern noCoptsPattern) {
+      return new CoptsFilter(noCoptsPattern, false);
+    }
+
+    /** Creates a filter that passes on all inputs. */
+    public static CoptsFilter alwaysPasses() {
+      return new CoptsFilter(null, true);
+    }
+
+    /**
+     * Returns true if the provided string passes through the filter, or false if it should be
+     * removed.
+     */
+    public boolean passesFilter(String flag) {
+      if (allPasses) {
+        return true;
+      } else {
+        return !noCoptsPattern.matcher(flag).matches();
+      }
+    }
+  }
+
   /** Returns copts filter built from the make variable expanded nocopts attribute. */
-  Predicate<String> getCoptsFilter() {
+  CoptsFilter getCoptsFilter() {
     return getCoptsFilter(ruleContext);
   }
 
   /** @see CcCommon#getCoptsFilter() */
-  private static Predicate<String> getCoptsFilter(RuleContext ruleContext) {
+  private static CoptsFilter getCoptsFilter(RuleContext ruleContext) {
     Pattern noCoptsPattern = getNoCoptsPattern(ruleContext);
     if (noCoptsPattern == null) {
-      return Predicates.alwaysTrue();
+      return CoptsFilter.alwaysPasses();
     }
-    return flag -> !noCoptsPattern.matcher(flag).matches();
+    return CoptsFilter.fromRegex(noCoptsPattern);
   }
 
   @Nullable
@@ -402,7 +479,7 @@ public final class CcCommon {
    * otherwise.
    */
   static boolean noCoptsMatches(String option, RuleContext ruleContext) {
-    return !getCoptsFilter(ruleContext).apply(option);
+    return !getCoptsFilter(ruleContext).passesFilter(option);
   }
 
   private static final String DEFINES_ATTRIBUTE = "defines";
@@ -482,8 +559,8 @@ public final class CcCommon {
             "ignoring invalid absolute path '" + includesAttr + "'");
         continue;
       }
-      PathFragment includesPath = packageFragment.getRelative(includesAttr).normalize();
-      if (!includesPath.isNormalized()) {
+      PathFragment includesPath = packageFragment.getRelative(includesAttr);
+      if (includesPath.containsUplevelReferences()) {
         ruleContext.attributeError("includes",
             "Path references a path above the execution root.");
       }
@@ -512,13 +589,12 @@ public final class CcCommon {
     return result;
   }
 
-  /**
-   * Collects compilation prerequisite artifacts.
-   */
+  /** Collects compilation prerequisite artifacts. */
   static NestedSet<Artifact> collectCompilationPrerequisites(
-      RuleContext ruleContext, CppCompilationContext context) {
-    // TODO(bazel-team): Use context.getCompilationPrerequisites() instead; note that this will
-    // need cleaning up the prerequisites, as the compilation context currently collects them
+      RuleContext ruleContext, CcCompilationInfo ccCompilationInfo) {
+    // TODO(bazel-team): Use ccCompilationInfo.getCompilationPrerequisites() instead; note that this
+    // will
+    // need cleaning up the prerequisites, as the {@code CcCompilationInfo} currently collects them
     // transitively (to get transitive headers), but source files are not transitive compilation
     // prerequisites.
     NestedSetBuilder<Artifact> prerequisites = NestedSetBuilder.stableOrder();
@@ -530,10 +606,10 @@ public final class CcCommon {
                 provider.getFilesToBuild(), SourceCategory.CC_AND_OBJC.getSourceTypes()));
       }
     }
-    prerequisites.addTransitive(context.getDeclaredIncludeSrcs());
-    prerequisites.addTransitive(context.getAdditionalInputs());
-    prerequisites.addTransitive(context.getTransitiveModules(true));
-    prerequisites.addTransitive(context.getTransitiveModules(false));
+    prerequisites.addTransitive(ccCompilationInfo.getDeclaredIncludeSrcs());
+    prerequisites.addTransitive(ccCompilationInfo.getAdditionalInputs());
+    prerequisites.addTransitive(ccCompilationInfo.getTransitiveModules(true));
+    prerequisites.addTransitive(ccCompilationInfo.getTransitiveModules(false));
     return prerequisites.build();
   }
 
@@ -597,6 +673,19 @@ public final class CcCommon {
     }
   }
 
+  public static ImmutableList<String> getCoverageFeatures(RuleContext ruleContext) {
+    ImmutableList.Builder<String> coverageFeatures = ImmutableList.builder();
+    if (ruleContext.getConfiguration().isCodeCoverageEnabled()) {
+      coverageFeatures.add(CppRuleClasses.COVERAGE);
+      if (ruleContext.getFragment(CppConfiguration.class).useLLVMCoverageMapFormat()) {
+        coverageFeatures.add(CppRuleClasses.LLVM_COVERAGE_MAP_FORMAT);
+      } else {
+        coverageFeatures.add(CppRuleClasses.GCC_COVERAGE_MAP_FORMAT);
+      }
+    }
+    return coverageFeatures.build();
+  }
+
   /**
    * Creates the feature configuration for a given rule.
    *
@@ -615,11 +704,12 @@ public final class CcCommon {
       unsupportedFeaturesBuilder.add(CppRuleClasses.PARSE_HEADERS);
       unsupportedFeaturesBuilder.add(CppRuleClasses.PREPROCESS_HEADERS);
     }
-    if (toolchain.getCppCompilationContext().getCppModuleMap() == null) {
+    if (toolchain.getCcCompilationInfo().getCppModuleMap() == null) {
       unsupportedFeaturesBuilder.add(CppRuleClasses.MODULE_MAPS);
     }
     ImmutableSet<String> allUnsupportedFeatures = unsupportedFeaturesBuilder.build();
     ImmutableSet.Builder<String> allRequestedFeaturesBuilder = ImmutableSet.builder();
+
     // If STATIC_LINK_MSVCRT feature isn't specified by user, we add DYNAMIC_LINK_MSVCRT_* feature
     // according to compilation mode.
     // If STATIC_LINK_MSVCRT feature is specified, we add STATIC_LINK_MSVCRT_* feature
@@ -635,6 +725,41 @@ public final class CcCommon {
               ? CppRuleClasses.DYNAMIC_LINK_MSVCRT_DEBUG
               : CppRuleClasses.DYNAMIC_LINK_MSVCRT_NO_DEBUG);
     }
+
+    CppConfiguration cppConfiguration = toolchain.getCppConfiguration();
+
+    allRequestedFeaturesBuilder.addAll(getCoverageFeatures(ruleContext));
+
+    if (cppConfiguration.getFdoInstrument() != null
+        && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.FDO_INSTRUMENT)) {
+      allRequestedFeaturesBuilder.add(CppRuleClasses.FDO_INSTRUMENT);
+    }
+
+    FdoMode fdoMode = toolchain.getFdoMode();
+    boolean isFdo = fdoMode != FdoMode.OFF && toolchain.getCompilationMode() == CompilationMode.OPT;
+    if (isFdo
+        && fdoMode != FdoMode.AUTO_FDO
+        && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.FDO_OPTIMIZE)) {
+      allRequestedFeaturesBuilder.add(CppRuleClasses.FDO_OPTIMIZE);
+    }
+    if (isFdo && fdoMode == FdoMode.AUTO_FDO) {
+      allRequestedFeaturesBuilder.add(CppRuleClasses.AUTOFDO);
+      // For LLVM, support implicit enabling of ThinLTO for AFDO unless it has been
+      // explicitly disabled.
+      if (toolchain.isLLVMCompiler()
+          && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.THIN_LTO)) {
+        allRequestedFeaturesBuilder.add(CppRuleClasses.ENABLE_AFDO_THINLTO);
+      }
+    }
+    if (cppConfiguration.isLipoOptimizationOrInstrumentation()) {
+      // Map LIPO to ThinLTO for LLVM builds.
+      if (toolchain.isLLVMCompiler() && fdoMode != FdoMode.OFF) {
+        allRequestedFeaturesBuilder.add(CppRuleClasses.THIN_LTO);
+      } else {
+        allRequestedFeaturesBuilder.add(CppRuleClasses.LIPO);
+      }
+    }
+
     ImmutableList.Builder<String> allFeatures =
         new ImmutableList.Builder<String>()
             .addAll(

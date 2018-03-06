@@ -29,8 +29,8 @@ import com.google.devtools.build.lib.packages.NoSuchTargetException;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration;
 import com.google.devtools.build.lib.rules.objc.J2ObjcConfiguration;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodecAdapter;
-import com.google.devtools.build.lib.skyframe.serialization.testutils.ObjectCodecTester;
+import com.google.devtools.build.lib.skyframe.serialization.testutils.SerializationTester;
+import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.common.options.Options;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -430,10 +430,7 @@ public class BuildConfigurationTest extends ConfigurationTestCase {
 
   @Test
   public void testCodec() throws Exception {
-    ObjectCodecTester.newBuilder(
-            new InjectingObjectCodecAdapter<>(
-                BuildConfiguration.CODEC, () -> getScratch().getFileSystem()))
-        .addSubjects(
+    new SerializationTester(
             create(),
             create("--cpu=piii"),
             create("--javacopt=foo"),
@@ -453,8 +450,9 @@ public class BuildConfigurationTest extends ConfigurationTestCase {
                 "qspace=a\\ quoted\\ space",
                 "--define",
                 "#a=pounda"))
-        .verificationFunction(BuildConfigurationTest::verifyDeserialized)
-        .buildAndRunTests();
+        .addDependency(FileSystem.class, getScratch().getFileSystem())
+        .setVerificationFunction(BuildConfigurationTest::verifyDeserialized)
+        .runTests();
   }
 
   /**

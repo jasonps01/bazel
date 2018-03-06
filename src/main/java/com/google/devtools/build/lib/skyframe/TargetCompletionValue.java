@@ -18,6 +18,7 @@ import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.TopLevelArtifactContext;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.skyframe.SkyFunctionName;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
@@ -60,9 +61,12 @@ public class TargetCompletionValue implements SkyValue {
         });
   }
 
+  /** {@link SkyKey} for {@link TargetCompletionValue}. */
+  @AutoCodec
   @AutoValue
   abstract static class TargetCompletionKey implements SkyKey {
-    public static TargetCompletionKey create(
+    @AutoCodec.Instantiator
+    static TargetCompletionKey create(
         ConfiguredTargetKey configuredTargetKey,
         TopLevelArtifactContext topLevelArtifactContext,
         boolean willTest) {

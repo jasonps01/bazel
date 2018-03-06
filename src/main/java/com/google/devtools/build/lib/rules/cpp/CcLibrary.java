@@ -37,7 +37,8 @@ import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction;
 import com.google.devtools.build.lib.packages.RawAttributeMapper;
 import com.google.devtools.build.lib.rules.cpp.CcCommon.CcFlagsSupplier;
-import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper.Info;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationHelper.CompilationInfo;
+import com.google.devtools.build.lib.rules.cpp.CcLinkingHelper.LinkingInfo;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.rules.cpp.LinkerInputs.LibraryToLink;
@@ -132,16 +133,23 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
       return;
     }
 
-    CcLibraryHelper compilationHelper =
-        new CcLibraryHelper(ruleContext, semantics, featureConfiguration, ccToolchain, fdoSupport)
+    CcCompilationHelper compilationHelper =
+        new CcCompilationHelper(
+                ruleContext, semantics, featureConfiguration, ccToolchain, fdoSupport)
             .fromCommon(common)
             .addSources(common.getSources())
             .addPublicHeaders(common.getHeaders())
             .enableCompileProviders()
             .addPrecompiledFiles(precompiledFiles);
 
-    CcLibraryHelper linkingHelper =
-        new CcLibraryHelper(ruleContext, semantics, featureConfiguration, ccToolchain, fdoSupport)
+    CcLinkingHelper linkingHelper =
+        new CcLinkingHelper(
+                ruleContext,
+                semantics,
+                featureConfiguration,
+                ccToolchain,
+                fdoSupport,
+                ruleContext.getConfiguration())
             .fromCommon(common)
             .addLinkopts(common.getLinkopts())
             .enableCcNativeLibrariesProvider()
@@ -194,7 +202,7 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
                                    + "Did you mean to use 'linkstatic=1' instead?");
     }
 
-    linkingHelper.setCreateDynamicLibrary(createDynamicLibrary);
+    linkingHelper.setShouldCreateDynamicLibrary(createDynamicLibrary);
     linkingHelper.setDynamicLibrary(soImplArtifact);
 
     // If the reason we're not creating a dynamic library is that the toolchain
@@ -203,8 +211,8 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
     if (!createDynamicLibrary && !supportsDynamicLinker) {
       ImmutableList.Builder<Artifact> dynamicLibraries = ImmutableList.builder();
       dynamicLibraries.add(
-        CppHelper.getLinuxLinkedArtifact(
-          ruleContext, ruleContext.getConfiguration(), LinkTargetType.DYNAMIC_LIBRARY));
+          CppHelper.getLinuxLinkedArtifact(
+              ruleContext, ruleContext.getConfiguration(), LinkTargetType.NODEPS_DYNAMIC_LIBRARY));
       if (CppHelper.useInterfaceSharedObjects(ccToolchain.getCppConfiguration(), ccToolchain)) {
         dynamicLibraries.add(
           CppHelper.getLinuxLinkedArtifact(
@@ -221,8 +229,8 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
       // a "no generating action for this artifact" error.
       ImmutableList.Builder<Artifact> dynamicLibraries = ImmutableList.builder();
       dynamicLibraries.add(
-        CppHelper.getLinuxLinkedArtifact(
-          ruleContext, ruleContext.getConfiguration(), LinkTargetType.DYNAMIC_LIBRARY));
+          CppHelper.getLinuxLinkedArtifact(
+              ruleContext, ruleContext.getConfiguration(), LinkTargetType.NODEPS_DYNAMIC_LIBRARY));
       if (CppHelper.useInterfaceSharedObjects(ccToolchain.getCppConfiguration(), ccToolchain)) {
         dynamicLibraries.add(
           CppHelper.getLinuxLinkedArtifact(
@@ -272,10 +280,10 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
     linkingHelper.addDynamicLibraries(dynamicLibraries);
     linkingHelper.addExecutionDynamicLibraries(dynamicLibraries);
 
-    Info.CompilationInfo compilationInfo = compilationHelper.compile();
-    Info.LinkingInfo linkingInfo =
+    CompilationInfo compilationInfo = compilationHelper.compile();
+    LinkingInfo linkingInfo =
         linkingHelper.link(
-            compilationInfo.getCcCompilationOutputs(), compilationInfo.getCppCompilationContext());
+            compilationInfo.getCcCompilationOutputs(), compilationInfo.getCcCompilationInfo());
 
     /*
      * We always generate a static library, even if there aren't any source files.
@@ -322,8 +330,8 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
         .addProviders(linkingInfo.getProviders())
         .addSkylarkTransitiveInfo(CcSkylarkApiProvider.NAME, new CcSkylarkApiProvider())
         .addOutputGroups(
-            Info.mergeOutputGroups(
-                compilationInfo.getOutputGroups(), linkingInfo.getOutputGroups()))
+            CcCommon.mergeOutputGroups(
+                ImmutableList.of(compilationInfo.getOutputGroups(), linkingInfo.getOutputGroups())))
         .addProvider(InstrumentedFilesProvider.class, instrumentedFilesProvider)
         .addProvider(
             RunfilesProvider.class, RunfilesProvider.withData(staticRunfiles, sharedRunfiles))
@@ -335,8 +343,8 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
             collectHiddenTopLevelArtifacts(
                 ruleContext, ccToolchain, compilationInfo.getCcCompilationOutputs()))
         .addOutputGroup(
-            CcLibraryHelper.HIDDEN_HEADER_TOKENS,
-            CcLibraryHelper.collectHeaderTokens(
+            CcCompilationHelper.HIDDEN_HEADER_TOKENS,
+            CcCompilationHelper.collectHeaderTokens(
                 ruleContext, compilationInfo.getCcCompilationOutputs()));
   }
 

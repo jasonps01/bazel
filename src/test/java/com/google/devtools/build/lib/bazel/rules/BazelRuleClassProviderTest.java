@@ -106,7 +106,7 @@ public class BazelRuleClassProviderTest {
 
   @Test
   public void shConsistency() {
-    checkModule(BazelRuleClassProvider.SH_RULES);
+    checkModule(ShRules.INSTANCE);
   }
 
   @Test
@@ -141,11 +141,16 @@ public class BazelRuleClassProviderTest {
 
   @Test
   public void j2objcConsistency() {
-    checkModule(BazelRuleClassProvider.J2OBJC_RULES);
+    checkModule(J2ObjcRules.INSTANCE);
   }
 
   @Test
   public void variousWorkspaceConsistency() {
     checkModule(BazelRuleClassProvider.VARIOUS_WORKSPACE_RULES);
+  }
+
+  @Test
+  public void toolchainConsistency() {
+    checkModule(ToolchainRules.INSTANCE);
   }
 }

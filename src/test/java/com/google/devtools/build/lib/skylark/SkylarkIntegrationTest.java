@@ -39,6 +39,7 @@ import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.Provider;
 import com.google.devtools.build.lib.packages.SkylarkProvider;
 import com.google.devtools.build.lib.packages.SkylarkProvider.SkylarkKey;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
 import com.google.devtools.build.lib.skyframe.PackageFunction;
 import com.google.devtools.build.lib.skyframe.SkyFunctions;
 import com.google.devtools.build.lib.skyframe.SkylarkImportLookupFunction;
@@ -107,7 +108,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
   }
 
   private AttributeContainer getContainerForTarget(String targetName) throws Exception {
-    ConfiguredTarget target = getConfiguredTarget("//test/skylark:" + targetName);
+    ConfiguredTargetAndTarget target = getConfiguredTargetAndTarget("//test/skylark:" + targetName);
     return target.getTarget().getAssociatedRule().getAttributeContainer();
   }
 
@@ -915,6 +916,46 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
   }
 
   @Test
+  public void testPrintProviderCollection() throws Exception {
+    scratch.file(
+        "test/skylark/rules.bzl",
+        "",
+        "FooInfo = provider()",
+        "BarInfo = provider()",
+        "",
+        "def _top_level_rule_impl(ctx):",
+        "  print('My Dep Providers:', ctx.attr.my_dep)",
+        "",
+        "def _dep_rule_impl(name):",
+        "  providers = [",
+        "      FooInfo(),",
+        "      BarInfo(),",
+        "  ]",
+        "  return providers",
+        "",
+        "top_level_rule = rule(",
+        "    implementation=_top_level_rule_impl,",
+        "    attrs={'my_dep':attr.label()}",
+        ")",
+        "",
+        "dep_rule = rule(",
+        "    implementation=_dep_rule_impl,",
+        ")");
+
+    scratch.file(
+        "test/skylark/BUILD",
+        "load('//test/skylark:rules.bzl', 'top_level_rule', 'dep_rule')",
+        "",
+        "top_level_rule(name = 'tl', my_dep=':d')",
+        "",
+        "dep_rule(name = 'd')");
+
+    getConfiguredTarget("//test/skylark:tl");
+    assertContainsEvent(
+        "My Dep Providers: <target //test/skylark:d, keys:[FooInfo, BarInfo, OutputGroupInfo]>");
+  }
+
+  @Test
   public void testRuleClassImplicitOutputFunctionPrints() throws Exception {
     scratch.file(
         "test/skylark/extension.bzl",
@@ -1611,6 +1652,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
               .getSkyFunctionsForTesting();
       SkylarkImportLookupFunction skylarkImportLookupFunction =
           new SkylarkImportLookupFunction(this.getRuleClassProvider(), this.getPackageFactory());
+      skylarkImportLookupFunction.resetCache();
       ((PackageFunction) skyFunctions.get(SkyFunctions.PACKAGE))
           .setSkylarkImportLookupFunctionForInliningForTesting(skylarkImportLookupFunction);
     }

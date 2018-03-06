@@ -51,6 +51,7 @@ import com.google.devtools.build.lib.shell.BadExitStatusException;
 import com.google.devtools.build.lib.shell.CommandException;
 import com.google.devtools.build.lib.shell.CommandResult;
 import com.google.devtools.build.lib.util.CommandBuilder;
+import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.NetUtil;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -251,15 +252,19 @@ public class BazelWorkspaceStatusModule extends BlazeModule {
         return false;
       }
 
+      // We consider clientEnv in equality because we pass it when executing the workspace status
+      // command
+
       BazelWorkspaceStatusAction that = (BazelWorkspaceStatusAction) o;
-      return this.stableStatus.equals(that.stableStatus)
+      return this.clientEnv.equals(that.clientEnv)
+          && this.stableStatus.equals(that.stableStatus)
           && this.volatileStatus.equals(that.volatileStatus)
           && this.options.equals(that.options);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(stableStatus, volatileStatus, options);
+      return Objects.hash(clientEnv, stableStatus, volatileStatus, options);
     }
 
     @Override
@@ -268,9 +273,7 @@ public class BazelWorkspaceStatusModule extends BlazeModule {
     }
 
     @Override
-    protected String computeKey(ActionKeyContext actionKeyContext) {
-      return "";
-    }
+    protected void computeKey(ActionKeyContext actionKeyContext, Fingerprint fp) {}
 
     @Override
     public boolean executeUnconditionally() {

@@ -175,7 +175,6 @@ public class AndroidLibraryTest extends AndroidBuildViewTestCase {
         (JavaCompileAction) getGeneratingActionForLabel("//java/android:liba.jar");
 
     String commandLine = Iterables.toString(javacAction.buildCommandLine());
-    assertThat(commandLine).contains("--rule_kind, android_library");
     assertThat(commandLine).contains("--target_label, //java/android:a");
   }
 
@@ -209,6 +208,25 @@ public class AndroidLibraryTest extends AndroidBuildViewTestCase {
     JavaCompileAction compileAction = (JavaCompileAction) getGeneratingAction(artifact);
     assertThat(compileAction.getStrictJavaDepsMode())
         .isEqualTo(BuildConfiguration.StrictDepsMode.WARN);
+  }
+
+  @Test
+  public void testFixDepsToolEmpty() throws Exception {
+    scratch.file("java/android/BUILD", "android_library(name = 'b', srcs = ['B.java'])");
+    List<String> commandLine =
+        getGeneratingSpawnActionArgs(
+            getFileConfiguredTarget("//java/android:libb.jar").getArtifact());
+    assertThat(commandLine).containsAllOf("--experimental_fix_deps_tool", "add_dep").inOrder();
+  }
+
+  @Test
+  public void testFixDepsTool() throws Exception {
+    useConfiguration("--experimental_fix_deps_tool=auto_fixer");
+    scratch.file("java/android/BUILD", "android_library(name = 'b', srcs = ['B.java'])");
+    List<String> commandLine =
+        getGeneratingSpawnActionArgs(
+            getFileConfiguredTarget("//java/android:libb.jar").getArtifact());
+    assertThat(commandLine).containsAllOf("--experimental_fix_deps_tool", "auto_fixer").inOrder();
   }
 
   @Test

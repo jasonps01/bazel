@@ -62,6 +62,7 @@ import com.google.devtools.build.lib.rules.java.JavaSourceJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaTargetAttributes;
 import com.google.devtools.build.lib.rules.java.JavaUtil;
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.util.ShellEscaper;
@@ -78,7 +79,7 @@ import javax.annotation.Nullable;
  */
 public class BazelJavaSemantics implements JavaSemantics {
 
-  public static final BazelJavaSemantics INSTANCE = new BazelJavaSemantics();
+  @AutoCodec public static final BazelJavaSemantics INSTANCE = new BazelJavaSemantics();
 
   private static final Template STUB_SCRIPT =
       Template.forResource(BazelJavaSemantics.class, "java_stub_template.txt");
@@ -231,8 +232,8 @@ public class BazelJavaSemantics implements JavaSemantics {
         if (!isRunfilesEnabled) {
           buffer.append("$(rlocation ");
           PathFragment runfilePath =
-              PathFragment.create(PathFragment.create(workspacePrefix), artifact.getRunfilesPath());
-          buffer.append(runfilePath.normalize().getPathString());
+              PathFragment.create(workspacePrefix).getRelative(artifact.getRunfilesPath());
+          buffer.append(runfilePath.getPathString());
           buffer.append(")");
         } else {
           buffer.append("${RUNPATH}");

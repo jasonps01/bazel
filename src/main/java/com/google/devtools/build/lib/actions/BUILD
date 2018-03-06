@@ -12,18 +12,21 @@ filegroup(
 # Action graph and cache.
 java_library(
     name = "actions",
-    srcs = glob([
-        "*.java",
-        "cache/*.java",
-    ]),
+    srcs = glob(
+        [
+            "*.java",
+            "cache/*.java",
+        ],
+        exclude = ["CommandLineItem.java"],
+    ),
     deps = [
-        "//src/main/java/com/google/devtools/build/lib:commandline_item",
         "//src/main/java/com/google/devtools/build/lib:events",
         "//src/main/java/com/google/devtools/build/lib:io",
         "//src/main/java/com/google/devtools/build/lib:packages-internal",
         "//src/main/java/com/google/devtools/build/lib:skylarkinterface",
         "//src/main/java/com/google/devtools/build/lib:unix",
         "//src/main/java/com/google/devtools/build/lib:util",
+        "//src/main/java/com/google/devtools/build/lib/actions:commandline_item",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:build_event_stream_java_proto",
@@ -31,6 +34,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/collect",
         "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
         "//src/main/java/com/google/devtools/build/lib/collect/nestedset:fingerprint_cache",
+        "//src/main/java/com/google/devtools/build/lib/collect/nestedset:serialization",
         "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//src/main/java/com/google/devtools/build/lib/profiler",
         "//src/main/java/com/google/devtools/build/lib/shell",
@@ -47,4 +51,9 @@ java_library(
         "//third_party:jsr305",
         "//third_party/protobuf:protobuf_java",
     ],
+)
+
+java_library(
+    name = "commandline_item",
+    srcs = ["CommandLineItem.java"],
 )

@@ -18,6 +18,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
+import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -27,6 +28,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Range;
 import com.google.common.collect.Sets;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
+import com.google.devtools.build.lib.analysis.AnalysisProtos.ActionGraphContainer;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.BuildView;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
@@ -41,13 +43,17 @@ import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.packages.AspectClass;
 import com.google.devtools.build.lib.packages.BuildFileName;
+import com.google.devtools.build.lib.packages.NoSuchPackageException;
+import com.google.devtools.build.lib.packages.NoSuchTargetException;
 import com.google.devtools.build.lib.packages.Package;
 import com.google.devtools.build.lib.packages.PackageFactory;
+import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.RuleClass;
 import com.google.devtools.build.lib.packages.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.pkgcache.PackageCacheOptions;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.profiler.AutoProfiler;
+import com.google.devtools.build.lib.skyframe.AspectValue.AspectKey;
 import com.google.devtools.build.lib.skyframe.DirtinessCheckerUtils.BasicFilesystemDirtinessChecker;
 import com.google.devtools.build.lib.skyframe.DirtinessCheckerUtils.ExternalDirtinessChecker;
 import com.google.devtools.build.lib.skyframe.DirtinessCheckerUtils.MissingDiffDirtinessChecker;
@@ -57,6 +63,7 @@ import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.ExternalFilesK
 import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.FileType;
 import com.google.devtools.build.lib.skyframe.PackageFunction.ActionOnIOExceptionReadingBuildFile;
 import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
+import com.google.devtools.build.lib.skyframe.actiongraph.ActionGraphDump;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.ResourceUsage;
@@ -71,7 +78,6 @@ import com.google.devtools.build.skyframe.BuildDriver;
 import com.google.devtools.build.skyframe.Differencer;
 import com.google.devtools.build.skyframe.InMemoryMemoizingEvaluator;
 import com.google.devtools.build.skyframe.Injectable;
-import com.google.devtools.build.skyframe.LegacySkyKey;
 import com.google.devtools.build.skyframe.MemoizingEvaluator.EvaluatorSupplier;
 import com.google.devtools.build.skyframe.NodeEntry;
 import com.google.devtools.build.skyframe.RecordingDifferencer;
@@ -343,7 +349,7 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
     envToCheck.addAll(clientEnv.get().keySet());
     previousClientEnvironment = clientEnv.get().keySet();
     for (String env : envToCheck) {
-      SkyKey key = LegacySkyKey.create(SkyFunctions.CLIENT_ENVIRONMENT_VARIABLE, env);
+      SkyKey key = ClientEnvironmentFunction.key(env);
       if (values.containsKey(key)) {
         String value = ((ClientEnvironmentValue) values.get(key)).getValue();
         String newValue = clientEnv.get().get(env);
@@ -642,6 +648,15 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       Collection<ConfiguredTarget> topLevelTargets, Collection<AspectValue> topLevelAspects) {
     topLevelTargets = ImmutableSet.copyOf(topLevelTargets);
     topLevelAspects = ImmutableSet.copyOf(topLevelAspects);
+    // This is to prevent throwing away Packages we may need during execution.
+    ImmutableSet.Builder<PackageIdentifier> packageSetBuilder = ImmutableSet.builder();
+    packageSetBuilder.addAll(
+        Collections2.transform(
+            topLevelTargets, (target) -> target.getLabel().getPackageIdentifier()));
+    packageSetBuilder.addAll(
+        Collections2.transform(
+            topLevelAspects, (aspect) -> aspect.getLabel().getPackageIdentifier()));
+    ImmutableSet<PackageIdentifier> topLevelPackages = packageSetBuilder.build();
     try (AutoProfiler p = AutoProfiler.logged("discarding analysis cache", logger)) {
       lastAnalysisDiscarded = true;
       Iterator<? extends Map.Entry<SkyKey, ? extends NodeEntry>> it =
@@ -654,6 +669,11 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
         }
         SkyKey key = keyAndEntry.getKey();
         SkyFunctionName functionName = key.functionName();
+        // Keep packages for top-level targets and aspects in memory to get the target from later.
+        if (functionName.equals(SkyFunctions.PACKAGE)
+            && topLevelPackages.contains((key.argument()))) {
+          continue;
+        }
         if (!tracksStateForIncrementality() && LOADING_TYPES.contains(functionName)) {
           it.remove();
           continue;
@@ -692,7 +712,7 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
   }
 
   @Override
-  public List<RuleStat> getRuleStats() {
+  public List<RuleStat> getRuleStats(ExtendedEventHandler eventHandler) {
     Map<String, RuleStat> ruleStats = new HashMap<>();
     for (Map.Entry<SkyKey, ? extends NodeEntry> skyKeyAndNodeEntry :
         memoizingEvaluator.getGraphMap().entrySet()) {
@@ -707,8 +727,17 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
           ConfiguredTargetValue ctValue = (ConfiguredTargetValue) entry.getValue();
           ConfiguredTarget configuredTarget = ctValue.getConfiguredTarget();
           if (configuredTarget instanceof RuleConfiguredTarget) {
+
+            Rule rule;
+            try {
+              rule =
+                  (Rule) getPackageManager().getTarget(eventHandler, configuredTarget.getLabel());
+            } catch (NoSuchPackageException | NoSuchTargetException | InterruptedException e) {
+              throw new IllegalStateException(
+                  "Failed to get Rule target from package when calculating stats.", e);
+            }
             RuleConfiguredTarget ruleConfiguredTarget = (RuleConfiguredTarget) configuredTarget;
-            RuleClass ruleClass = ruleConfiguredTarget.getTarget().getRuleClassObject();
+            RuleClass ruleClass = rule.getRuleClassObject();
             RuleStat ruleStat =
                 ruleStats.computeIfAbsent(
                     ruleClass.getKey(), k -> new RuleStat(k, ruleClass.getName(), true));
@@ -732,6 +761,34 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
     }
     return new ArrayList<>(ruleStats.values());
   }
+
+  @Override
+  public ActionGraphContainer getActionGraphContainer(List<String> actionGraphTargets) {
+    ActionGraphDump actionGraphDump = new ActionGraphDump(actionGraphTargets);
+    for (Map.Entry<SkyKey, ? extends NodeEntry> skyKeyAndNodeEntry :
+        memoizingEvaluator.getGraphMap().entrySet()) {
+      NodeEntry entry = skyKeyAndNodeEntry.getValue();
+      SkyKey key = skyKeyAndNodeEntry.getKey();
+      SkyFunctionName functionName = key.functionName();
+      try {
+        if (functionName.equals(SkyFunctions.CONFIGURED_TARGET)) {
+          actionGraphDump.dumpConfiguredTarget((ConfiguredTargetValue) entry.getValue());
+        } else if (functionName.equals(SkyFunctions.ASPECT)) {
+          AspectValue aspectValue = (AspectValue) entry.getValue();
+          AspectKey aspectKey = aspectValue.getKey();
+          ConfiguredTargetValue configuredTargetValue =
+              (ConfiguredTargetValue)
+                  memoizingEvaluator.getExistingValue(aspectKey.getBaseConfiguredTargetKey());
+          actionGraphDump.dumpAspect(aspectValue, configuredTargetValue);
+        }
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("No interruption in sequenced evaluation", e);
+      }
+    }
+    return actionGraphDump.build();
+  }
+
 
   /**
    * In addition to calling the superclass method, deletes all ConfiguredTarget values from the

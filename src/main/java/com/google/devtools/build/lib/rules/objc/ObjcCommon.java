@@ -62,17 +62,17 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
-import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationInfo;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
-import com.google.devtools.build.lib.rules.cpp.CppCompilationContext;
 import com.google.devtools.build.lib.rules.cpp.CppFileTypes;
 import com.google.devtools.build.lib.rules.cpp.CppModuleMap;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -90,7 +90,7 @@ import java.util.Set;
 public final class ObjcCommon {
 
   /** Filters fileset artifacts out of a group of artifacts. */
-  public static Iterable<Artifact> filterFileset(Iterable<Artifact> artifacts) {
+  public static ImmutableList<Artifact> filterFileset(Iterable<Artifact> artifacts) {
     ImmutableList.Builder<Artifact> inputs = ImmutableList.<Artifact>builder();
     for (Artifact artifact : artifacts) {
       if (!artifact.isFileset()) {
@@ -165,7 +165,7 @@ public final class ObjcCommon {
     private DsymOutputType dsymOutputType;
     private Optional<Artifact> linkedBinary = Optional.absent();
     private Optional<Artifact> linkmapFile = Optional.absent();
-    private Iterable<CppCompilationContext> depCcHeaderProviders = ImmutableList.of();
+    private Iterable<CcCompilationInfo> depCcHeaderProviders = ImmutableList.of();
     private Iterable<CcLinkParamsInfo> depCcLinkProviders = ImmutableList.of();
 
     /**
@@ -249,20 +249,20 @@ public final class ObjcCommon {
       return this;
     }
 
-    Builder addDeps(List<? extends TransitiveInfoCollection> deps) {
+    Builder addDeps(List<ConfiguredTargetAndTarget> deps) {
       ImmutableList.Builder<ObjcProvider> propagatedObjcDeps =
           ImmutableList.<ObjcProvider>builder();
-      ImmutableList.Builder<CppCompilationContext> cppDeps =
-          ImmutableList.<CppCompilationContext>builder();
+      ImmutableList.Builder<CcCompilationInfo> cppDeps = ImmutableList.<CcCompilationInfo>builder();
       ImmutableList.Builder<CcLinkParamsInfo> cppDepLinkParams =
           ImmutableList.<CcLinkParamsInfo>builder();
 
-      for (TransitiveInfoCollection dep : deps) {
-        addAnyProviders(propagatedObjcDeps, dep, ObjcProvider.SKYLARK_CONSTRUCTOR);
-        addAnyProviders(cppDeps, dep, CppCompilationContext.class);
+      for (ConfiguredTargetAndTarget dep : deps) {
+        ConfiguredTarget depCT = dep.getConfiguredTarget();
+        addAnyProviders(propagatedObjcDeps, depCT, ObjcProvider.SKYLARK_CONSTRUCTOR);
+        addAnyProviders(cppDeps, depCT, CcCompilationInfo.PROVIDER);
         if (isCcLibrary(dep)) {
-          cppDepLinkParams.add(dep.get(CcLinkParamsInfo.PROVIDER));
-          addDefines(dep.getProvider(CppCompilationContext.class).getDefines());
+          cppDepLinkParams.add(depCT.get(CcLinkParamsInfo.PROVIDER));
+          addDefines(depCT.get(CcCompilationInfo.PROVIDER).getDefines());
         }
       }
       addDepObjcProviders(propagatedObjcDeps.build());
@@ -285,17 +285,6 @@ public final class ObjcCommon {
       this.runtimeDepObjcProviders = Iterables.concat(
           this.runtimeDepObjcProviders, propagatedDeps.build());
       return this;
-    }
-
-    private <T extends TransitiveInfoProvider> ImmutableList.Builder<T> addAnyProviders(
-        ImmutableList.Builder<T> listBuilder,
-        TransitiveInfoCollection collection,
-        Class<T> providerClass) {
-      T provider = collection.getProvider(providerClass);
-      if (provider != null) {
-        listBuilder.add(provider);
-      }
-      return listBuilder;
     }
 
     private <T extends Info> ImmutableList.Builder<T> addAnyProviders(
@@ -429,10 +418,11 @@ public final class ObjcCommon {
         objcProvider.addTransitiveAndPropagate(ObjcProvider.MERGE_ZIP, provider);
       }
 
-      for (CppCompilationContext headerProvider : depCcHeaderProviders) {
+      for (CcCompilationInfo headerProvider : depCcHeaderProviders) {
         objcProvider.addAll(HEADER, filterFileset(headerProvider.getDeclaredIncludeSrcs()));
         objcProvider.addAll(INCLUDE, headerProvider.getIncludeDirs());
-        // TODO(bazel-team): This pulls in stl via CppHelper.mergeToolchainDependentContext but
+        // TODO(bazel-team): This pulls in stl via
+        // CppHelper.mergeToolchainDependentCcCompilationInfo but
         // probably shouldn't.
         objcProvider.addAll(INCLUDE_SYSTEM, headerProvider.getSystemIncludeDirs());
         objcProvider.addAll(DEFINE, headerProvider.getDefines());
@@ -555,8 +545,13 @@ public final class ObjcCommon {
         if (umbrellaHeader.isPresent()) {
           objcProvider.add(UMBRELLA_HEADER, umbrellaHeader.get());
         }
-        objcProvider.add(MODULE_MAP, moduleMap.getArtifact());
-        objcProvider.add(TOP_LEVEL_MODULE_MAP, moduleMap);
+        if (context.getFragment(ObjcConfiguration.class).useStrictObjcModuleMaps()) {
+          objcProvider.addForDirectDependents(MODULE_MAP, moduleMap.getArtifact());
+          objcProvider.addForDirectDependents(TOP_LEVEL_MODULE_MAP, moduleMap);
+        } else {
+          objcProvider.add(MODULE_MAP, moduleMap.getArtifact());
+          objcProvider.add(TOP_LEVEL_MODULE_MAP, moduleMap);
+        }
       }
 
       objcProvider
@@ -572,10 +567,10 @@ public final class ObjcCommon {
       return new ObjcCommon(objcProvider.build(), compilationArtifacts);
     }
 
-    private static boolean isCcLibrary(TransitiveInfoCollection info) {
+    private static boolean isCcLibrary(ConfiguredTargetAndTarget info) {
       try {
-        ConfiguredTarget target = (ConfiguredTarget) info;
-        String targetName = target.getTarget().getTargetKind();
+        String targetName = info.getTarget().getTargetKind();
+
         for (String ruleClassName : ObjcRuleClasses.CompilingRule.ALLOWED_CC_DEPS_RULE_CLASSES) {
           if (targetName.equals(ruleClassName + " rule")) {
             return true;
@@ -719,10 +714,6 @@ public final class ObjcCommon {
     return notInContainerErrors(artifacts, ImmutableList.of(containerType));
   }
 
-  @VisibleForTesting
-  static final String NOT_IN_CONTAINER_ERROR_FORMAT =
-      "File '%s' is not in a directory of one of these type(s): %s";
-
   static Iterable<String> notInContainerErrors(
       Iterable<Artifact> artifacts, Iterable<FileType> containerTypes) {
     Set<String> errors = new HashSet<>();
@@ -738,4 +729,8 @@ public final class ObjcCommon {
     }
     return errors;
   }
+
+  @VisibleForTesting
+  static final String NOT_IN_CONTAINER_ERROR_FORMAT =
+      "File '%s' is not in a directory of one of these type(s): %s";
 }

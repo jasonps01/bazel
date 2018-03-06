@@ -38,6 +38,11 @@ alias(
 )
 
 alias(
+    name = "dexbuilder_after_proguard",
+    actual = "//src/tools/android/java/com/google/devtools/build/android/dexer:DexBuilder",
+)
+
+alias(
     name = "dexmerger",
     actual = "//src/tools/android/java/com/google/devtools/build/android/dexer:DexFileMerger",
 )
@@ -50,6 +55,12 @@ alias(
 alias(
     name = "desugar_java8",
     actual = "//src/tools/android/java/com/google/devtools/build/android/desugar:Desugar",
+)
+
+alias(
+    name = "aar_import_deps_checker",
+    actual = "//src/java_tools/import_deps_checker/java/com/google/devtools/build/importdeps:ImportDepsChecker_embedded",
+    visibility = ["//visibility:public"]
 )
 
 alias(
@@ -116,6 +127,26 @@ genrule(
         "//conditions:default": gen_java_lang_extras_jar_cmd % "@bazel_tools//tools/jdk:singlejar",
     }),
     visibility = ["//visibility:private"],
+)
+
+filegroup(
+    name = "desugared_java8_legacy_apis",
+    srcs = [],  # TODO(b/70681189): Populate with ijars
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "build_java8_legacy_dex",
+    srcs = ["fail.sh"],
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "java8_legacy_dex",
+    outs = ["java8_legacy.dex.zip"],
+    cmd = "$(location :build_java8_legacy_dex) --output $@",
+    tools = [":build_java8_legacy_dex"],
+    visibility = ["//visibility:public"],
 )
 
 alias(

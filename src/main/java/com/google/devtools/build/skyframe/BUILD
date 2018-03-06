@@ -7,7 +7,7 @@ package(
 SKYFRAME_OBJECT_SRCS = [
     "SkyValue.java",
     "SkyKey.java",
-    "LegacySkyKey.java",
+    "AbstractSkyKey.java",
     "SkyFunctionName.java",
 ]
 
@@ -17,7 +17,6 @@ java_library(
     visibility = ["//visibility:public"],
     deps = [
         "//src/main/java/com/google/devtools/build/lib/collect",
-        "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//third_party:guava",
     ],
 )
@@ -38,6 +37,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
         "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//src/main/java/com/google/devtools/build/lib/profiler",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/autocodec",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/common/options",
         "//third_party:guava",

@@ -110,7 +110,9 @@ public class StandaloneSpawnStrategyTest {
 
     BlazeDirectories directories =
         new BlazeDirectories(
-            new ServerDirectories(outputBase, outputBase), workspaceDir, "mock-product-name");
+            new ServerDirectories(outputBase, outputBase, outputBase),
+            workspaceDir,
+            "mock-product-name");
     // This call implicitly symlinks the integration bin tools into the exec root.
     IntegrationMock.get()
         .getIntegrationBinTools(fileSystem, directories, TestConstants.WORKSPACE_NAME);
@@ -141,11 +143,10 @@ public class StandaloneSpawnStrategyTest {
                         execRoot,
                         localExecutionOptions,
                         resourceManager,
-                        "mock-product-name",
                         LocalEnvProvider.UNMODIFIED))),
             ImmutableList.<ActionContextProvider>of());
 
-    executor.getExecRoot().createDirectory();
+    executor.getExecRoot().createDirectoryAndParents();
   }
 
   private Spawn createSpawn(String... arguments) {

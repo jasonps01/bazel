@@ -118,8 +118,8 @@ public final class SkylarkRuleContext implements SkylarkValue {
           + "<code>None</code>. If an optional attribute is not specified in the rule "
           + "then the corresponding struct value is <code>None</code>. If a label type is not "
           + "marked as <code>executable=True</code>, no corresponding struct field is generated. "
-          + "<a href=\"https://github.com/bazelbuild/examples/blob/master/rules/actions_run/execute.bzl\">"
-          + "See example of use</a>.";
+          + "<a href=\"https://github.com/bazelbuild/examples/blob/master/rules/actions_run/"
+          + "execute.bzl\">See example of use</a>.";
   public static final String FILES_DOC =
       "A <code>struct</code> containing files defined in label or label list "
           + "type attributes. The struct fields correspond to the attribute names. The struct "
@@ -127,7 +127,8 @@ public final class SkylarkRuleContext implements SkylarkValue {
           + "It is a shortcut for:"
           + "<pre class=language-python>[f for t in ctx.attr.&lt;ATTR&gt; for f in t.files]</pre> "
           + "In other words, use <code>files</code> to access the "
-          + "<a href=\"../rules.$DOC_EXT#default-outputs\">default output</a> of dependencies. "
+          + "<a href=\"../rules.$DOC_EXT#requesting-output-files\">default outputs</a> of a "
+          + "dependency. "
           + "<a href=\"https://github.com/bazelbuild/examples/blob/master/rules/depsets/foo.bzl\">"
           + "See example of use</a>.";
   public static final String FILE_DOC =
@@ -139,17 +140,18 @@ public final class SkylarkRuleContext implements SkylarkValue {
           + "marked as <code>allow_single_file</code>, no corresponding struct field is generated. "
           + "It is a shortcut for:"
           + "<pre class=language-python>list(ctx.attr.&lt;ATTR&gt;.files)[0]</pre>"
-          + "In other words, use <code>file</code> to access the "
-          + "<a href=\"../rules.$DOC_EXT#default-outputs\">default output</a> of a dependency. "
-          + "<a href=\"https://github.com/bazelbuild/examples/blob/master/rules/expand_template/hello.bzl\">"
-          + "See example of use</a>.";
+          + "In other words, use <code>file</code> to access the (singular) "
+          + "<a href=\"../rules.$DOC_EXT#requesting-output-files\">default output</a> of a "
+          + "dependency. "
+          + "<a href=\"https://github.com/bazelbuild/examples/blob/master/rules/expand_template/"
+          + "hello.bzl\">See example of use</a>.";
   public static final String ATTR_DOC =
       "A struct to access the values of the attributes. The values are provided by "
           + "the user (if not, a default value is used). The attributes of the struct and the "
           + "types of their values correspond to the keys and values of the <code>attrs</code> "
           + "dict provided to the <code>rule</code> function. "
-          + "<a href=\"https://github.com/bazelbuild/examples/blob/master/rules/attributes/printer.bzl\">"
-          + "See example of use</a>.";
+          + "<a href=\"https://github.com/bazelbuild/examples/blob/master/rules/attributes/"
+          + "printer.bzl\">See example of use</a>.";
   public static final String SPLIT_ATTR_DOC =
       "A struct to access the values of attributes with split configurations. If the attribute is "
           + "a label list, the value of split_attr is a dict of the keys of the split (as strings) "
@@ -159,23 +161,32 @@ public final class SkylarkRuleContext implements SkylarkValue {
           + "attr struct, but their values will be single lists with all the branches of the split "
           + "merged together.";
   public static final String OUTPUTS_DOC =
-      "A pseudo-struct containing all the pre-declared output files."
-          + " It is generated the following way:<br>"
-          + "<ul>" + ""
-          + "<li>For every entry in the rule's <code>outputs</code> dict an attr is generated with "
-          + "the same name and the corresponding <code>file</code> value."
-          + "<li>For every output type attribute a struct attribute is generated with the "
-          + "same name and the corresponding <code>file</code> value or <code>None</code>, "
-          + "if no value is specified in the rule."
-          + "<li>For every output list type attribute a struct attribute is generated with the "
-          + "same name and corresponding <code>list</code> of <code>file</code>s value "
-          + "(an empty list if no value is specified in the rule).</li>"
-          + "<li>DEPRECATED: If the rule is marked as <code>executable=True</code>, a field "
-          + "\"executable\" can be accessed. That will declare the rule's default executable "
-          + "<code>File</code> value. The recommended alternative is to declare an executable with "
-          + "<a href=\"actions.html#declare_file\"><code>ctx.actions.declare_file</code></a> "
-          + "and return it as the <code>executable</code> field of the rule's "
-          + "<a href=\"globals.html#DefaultInfo\"><code>DefaultInfo</code></a> provider."
+      "A pseudo-struct containing all the predeclared output files, represented by "
+          + "<a href='File.html'><code>File</code></a> objects. See the "
+          + "<a href='../rules.$DOC_EXT#files'>Rules page</a> for more information and examples."
+          + "<p>This field does not exist on aspect contexts, since aspects do not have "
+          + "predeclared outputs."
+          + "<p>The fields of this object are defined as follows. It is an error if two outputs "
+          + "produce the same field name or have the same label."
+          + "<ul>"
+          + "<li>If the rule declares an <a href='globals.html#rule.outputs'><code>outputs</code>"
+          + "</a> dict, then for every entry in the dict, there is a field whose name is the key "
+          + "and whose value is the corresponding <code>File</code>."
+          + "<li>For every attribute of type <a href='attr.html#output'><code>attr.output</code>"
+          + "</a> that the rule declares, there is a field whose name is the attribute's name. "
+          + "If the target specified a label for that attribute, then the field value is the "
+          + "corresponding <code>File</code>; otherwise the field value is <code>None</code>."
+          + "<li>For every attribute of type <a href='attr.html#output_list'><code>attr.output_list"
+          + "</code></a> that the rule declares, there is a field whose name is the attribute's "
+          + "name. The field value is a list of <code>File</code> objects corresponding to the "
+          + "labels given for that attribute in the target, or an empty list if the attribute was "
+          + "not specified in the target."
+          + "<li><b>(Deprecated)</b> If the rule is marked <a href='globals.html#rule.executable'>"
+          + "<code>executable</code></a> or <a href='globals.html#rule.test'><code>test</code></a>,"
+          + "there is a field named <code>\"executable\"</code>, which is the default executable. "
+          + "It is recommended that instead of using this, you pass another file (either "
+          + "predeclared or not) to the <code>executable</code> arg of "
+          + "<a href='globals.html#DefaultInfo'><code>DefaultInfo</code></a>."
           + "</ul>";
   public static final Function<Attribute, Object> ATTRIBUTE_VALUE_EXTRACTOR_FOR_ASPECT =
       new Function<Attribute, Object>() {

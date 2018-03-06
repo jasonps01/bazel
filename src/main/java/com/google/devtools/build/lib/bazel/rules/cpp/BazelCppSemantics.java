@@ -20,23 +20,22 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.rules.cpp.AspectLegalCppSemantics;
-import com.google.devtools.build.lib.rules.cpp.CppCompilationContext.Builder;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationInfo.Builder;
 import com.google.devtools.build.lib.rules.cpp.CppCompileActionBuilder;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.HeadersCheckingMode;
 import com.google.devtools.build.lib.rules.cpp.IncludeProcessing;
 import com.google.devtools.build.lib.rules.cpp.NoProcessing;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 
-/**
- * C++ compilation semantics.
- */
+/** C++ compilation semantics. */
 public class BazelCppSemantics implements AspectLegalCppSemantics {
-  public static final BazelCppSemantics INSTANCE = new BazelCppSemantics();
+  @AutoCodec public static final BazelCppSemantics INSTANCE = new BazelCppSemantics();
 
   private final IncludeProcessing includeProcessing;
 
   private BazelCppSemantics() {
-    this.includeProcessing = new NoProcessing();
+    this.includeProcessing = NoProcessing.INSTANCE;
   }
 
   @Override
@@ -51,8 +50,7 @@ public class BazelCppSemantics implements AspectLegalCppSemantics {
   }
 
   @Override
-  public void setupCompilationContext(RuleContext ruleContext, Builder contextBuilder) {
-  }
+  public void setupCcCompilationInfo(RuleContext ruleContext, Builder ccCompilationInfoBuilder) {}
 
   @Override
   public NestedSet<Artifact> getAdditionalPrunableIncludes() {

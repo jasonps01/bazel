@@ -73,32 +73,6 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
   public boolean incompatibleBzlDisallowLoadAfterStatement;
 
   @Option(
-    name = "incompatible_checked_arithmetic",
-    defaultValue = "true",
-    category = "incompatible changes",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help = "If set to true, arithmetic operations throw an error in case of overflow/underflow."
-  )
-  public boolean incompatibleCheckedArithmetic;
-
-  @Option(
-    name = "incompatible_comprehension_variables_do_not_leak",
-    defaultValue = "true",
-    category = "incompatible changes",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help =
-        "If set to true, loop variables in a comprehension shadow any existing variable by "
-            + "the same name. If the existing variable was declared in the same scope that "
-            + "contains the comprehension, then it also becomes inaccessible after the "
-            + " comprehension executes."
-  )
-  public boolean incompatibleComprehensionVariablesDoNotLeak;
-
-  @Option(
     name = "incompatible_depset_union",
     defaultValue = "false",
     category = "incompatible changes",
@@ -126,19 +100,8 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
   public boolean incompatibleDepsetIsNotIterable;
 
   @Option(
-    name = "incompatible_dict_literal_has_no_duplicates",
-    defaultValue = "true",
-    category = "incompatible changes",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help = "If set to true, the dictionary literal syntax doesn't allow duplicated keys."
-  )
-  public boolean incompatibleDictLiteralHasNoDuplicates;
-
-  @Option(
     name = "incompatible_disable_glob_tracking",
-    defaultValue = "false",
+    defaultValue = "true",
     category = "incompatible changes",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
@@ -146,6 +109,17 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
     help = "If set to true, do not track the values of globs (this is used by rare specific cases"
   )
   public boolean incompatibleDisableGlobTracking;
+
+  @Option(
+      name = "incompatible_disable_objc_provider_resources",
+      defaultValue = "false",
+      category = "incompatible changes",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+      help = "If set to true, disallow use of deprecated resource fields on the Objc provider."
+  )
+  public boolean incompatibleDisableObjcProviderResources;
 
   @Option(
     name = "incompatible_disallow_dict_plus",
@@ -157,17 +131,6 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
     help = "If set to true, the `+` becomes disabled for dicts."
   )
   public boolean incompatibleDisallowDictPlus;
-
-  @Option(
-    name = "incompatible_disallow_keyword_only_args",
-    defaultValue = "true",
-    category = "incompatible changes",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help = "If set to true, disables the keyword-only argument syntax in function definition."
-  )
-  public boolean incompatibleDisallowKeywordOnlyArgs;
 
   @Option(
     name = "incompatible_disallow_toplevel_if_statement",
@@ -200,9 +163,7 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help =
-        "If set to true, the first argument of 'load' statements is a label (not a path). "
-            + "It must start with '//' or ':'."
+    help = "no op - will be removed soon"
   )
   public boolean incompatibleLoadArgumentIsLabel;
 
@@ -217,6 +178,32 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
           + "not on `ctx`."
   )
   public boolean incompatibleNewActionsApi;
+
+  @Option(
+    name = "incompatible_remove_native_git_repository",
+    defaultValue = "false",
+    category = "incompatible changes",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+    help =
+        "If set to true, the native git_repository rules are disabled; only the skylark version "
+            + "will be available"
+  )
+  public boolean incompatibleRemoveNativeGitRepository;
+
+  @Option(
+    name = "incompatible_remove_native_http_archive",
+    defaultValue = "false",
+    category = "incompatible changes",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+    help =
+        "If set to true, the native http_archive rules are disabled; only the skylark version "
+            + "will be available"
+  )
+  public boolean incompatibleRemoveNativeHttpArchive;
 
   @Option(
     name = "incompatible_show_all_print_messages",
@@ -259,18 +246,17 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
     return SkylarkSemantics.builder()
         // <== Add new options here in alphabetic order ==>
         .incompatibleBzlDisallowLoadAfterStatement(incompatibleBzlDisallowLoadAfterStatement)
-        .incompatibleCheckedArithmetic(incompatibleCheckedArithmetic)
-        .incompatibleComprehensionVariablesDoNotLeak(incompatibleComprehensionVariablesDoNotLeak)
         .incompatibleDepsetIsNotIterable(incompatibleDepsetIsNotIterable)
         .incompatibleDepsetUnion(incompatibleDepsetUnion)
-        .incompatibleDictLiteralHasNoDuplicates(incompatibleDictLiteralHasNoDuplicates)
         .incompatibleDisableGlobTracking(incompatibleDisableGlobTracking)
+        .incompatibleDisableObjcProviderResources(incompatibleDisableObjcProviderResources)
         .incompatibleDisallowDictPlus(incompatibleDisallowDictPlus)
-        .incompatibleDisallowKeywordOnlyArgs(incompatibleDisallowKeywordOnlyArgs)
         .incompatibleDisallowToplevelIfStatement(incompatibleDisallowToplevelIfStatement)
         .incompatibleDisallowUncalledSetConstructor(incompatibleDisallowUncalledSetConstructor)
         .incompatibleLoadArgumentIsLabel(incompatibleLoadArgumentIsLabel)
         .incompatibleNewActionsApi(incompatibleNewActionsApi)
+        .incompatibleRemoveNativeGitRepository(incompatibleRemoveNativeGitRepository)
+        .incompatibleRemoveNativeHttpArchive(incompatibleRemoveNativeHttpArchive)
         .incompatibleShowAllPrintMessages(incompatibleShowAllPrintMessages)
         .incompatibleStringIsNotIterable(incompatibleStringIsNotIterable)
         .internalSkylarkFlagTestCanary(internalSkylarkFlagTestCanary)

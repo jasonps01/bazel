@@ -30,6 +30,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.packages.BuildType;
+import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import javax.annotation.Nullable;
@@ -99,6 +100,43 @@ public class ProtoCommon {
   }
 
   /**
+   * Returns all proto source roots in this lib and in its transitive dependencies.
+   *
+   * Build will fail if the {@code proto_source_root} of the current lib is different than the
+   * package name.
+   */
+  public static NestedSet<String> collectTransitiveProtoPathFlags(RuleContext ruleContext) {
+    NestedSetBuilder<String> protoPath = NestedSetBuilder.stableOrder();
+
+    // first add the protoSourceRoot of the current target, if any
+    String protoSourceRoot =
+        ruleContext.attributes().get("proto_source_root", Type.STRING);
+    if (protoSourceRoot != null && !protoSourceRoot.isEmpty()) {
+      checkProtoSourceRootIsTheSameAsPackage(protoSourceRoot, ruleContext);
+      protoPath.add(protoSourceRoot);
+    }
+
+    for (ProtoSourcesProvider provider : ruleContext.getPrerequisites(
+            "deps", Mode.TARGET, ProtoSourcesProvider.class)) {
+      protoPath.addTransitive(provider.getTransitiveProtoPathFlags());
+    }
+
+    return protoPath.build();
+  }
+
+  private static void checkProtoSourceRootIsTheSameAsPackage(
+      String protoSourceRoot, RuleContext ruleContext) {
+    if (!ruleContext.getLabel().getPackageName().equals(protoSourceRoot)) {
+      ruleContext.attributeError(
+          "proto_source_root",
+          "proto_source_root must be the same as the package name ("
+              + ruleContext.getLabel().getPackageName() + ")."
+              + " not '" + protoSourceRoot + "'."
+      );
+    }
+  }
+
+  /**
    * Check that .proto files in sources are from the same package. This is done to avoid clashes
    * with the generated sources.
    */
@@ -145,7 +183,7 @@ public class ProtoCommon {
     ArtifactRoot genfiles =
         ruleContext.getConfiguration().getGenfilesDirectory(ruleContext.getRule().getRepository());
     for (Artifact src : protoSources) {
-      PathFragment srcPath = src.getRootRelativePath();
+      PathFragment srcPath = getPathIgnoringRepository(src);
       if (pythonNames) {
         srcPath = srcPath.replaceName(srcPath.getBaseName().replace('-', '_'));
       }
@@ -212,5 +250,19 @@ public class ProtoCommon {
       return true;
     }
     return (flagValue == BuildConfiguration.StrictDepsMode.STRICT);
+  }
+
+  /**
+   * Gets the artifact's path relative to the root, ignoring the external repository the artifact is
+   * at. For example, <code>
+   * //a:b.proto --> a/b.proto
+   * {@literal @}foo//a:b.proto --> a/b.proto
+   * </code>
+   */
+  public static PathFragment getPathIgnoringRepository(Artifact artifact) {
+    return artifact
+        .getRootRelativePath()
+        .relativeTo(
+            artifact.getOwnerLabel().getPackageIdentifier().getRepository().getPathUnderExecRoot());
   }
 }

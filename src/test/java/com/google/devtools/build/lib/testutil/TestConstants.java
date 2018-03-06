@@ -59,6 +59,9 @@ public class TestConstants {
    */
   public static final String JAVATESTS_ROOT = "io_bazel/src/test/java/";
 
+  /** Location of the bazel repo relative to the workspace root */
+  public static final String BAZEL_REPO_PATH = "";
+
   /** Relative path to the {@code process-wrapper} tool. */
   public static final String PROCESS_WRAPPER_PATH =
       "io_bazel/src/main/tools/process-wrapper";
@@ -83,8 +86,6 @@ public class TestConstants {
   public static final ImmutableList<String> IGNORED_MESSAGE_PREFIXES = ImmutableList.<String>of();
 
   public static final String WORKSPACE_CONTENT = "";
-
-  public static final String GCC_INCLUDE_PATH = "external/bazel_tools/tools/cpp/gcc3";
 
   /** The path in which the mock cc crosstool resides. */
   public static final String MOCK_CC_CROSSTOOL_PATH = "tools/cpp";

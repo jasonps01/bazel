@@ -25,6 +25,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
@@ -472,7 +473,11 @@ public class PackageFunction implements SkyFunction {
     }
 
     if (packageFactory != null) {
-      packageFactory.afterDoneLoadingPackage(pkg, skylarkSemantics);
+      packageFactory.afterDoneLoadingPackage(
+          pkg,
+          skylarkSemantics,
+          // This is a lie.
+          /*loadTimeNanos=*/0L);
     }
     return new PackageValue(pkg);
   }
@@ -576,6 +581,7 @@ public class PackageFunction implements SkyFunction {
     List<Statement> preludeStatements =
         astLookupValue.lookupSuccessful()
             ? astLookupValue.getAST().getStatements() : ImmutableList.<Statement>of();
+    long startTimeNanos = BlazeClock.nanoTime();
     BuilderAndGlobDeps packageBuilderAndGlobDeps =
         loadPackage(
             workspaceName,
@@ -588,6 +594,7 @@ public class PackageFunction implements SkyFunction {
             preludeStatements,
             packageLookupValue.getRoot(),
             env);
+    long loadTimeNanos = Math.max(BlazeClock.nanoTime() - startTimeNanos, 0L);
     if (packageBuilderAndGlobDeps == null) {
       return null;
     }
@@ -629,20 +636,20 @@ public class PackageFunction implements SkyFunction {
       return null;
     }
 
-    Event.replayEventsOn(env.getListener(), pkgBuilder.getEvents());
-    for (Postable post : pkgBuilder.getPosts()) {
-      env.getListener().post(post);
-    }
-
     if (packageShouldBeConsideredInError) {
       pkgBuilder.setContainsErrors();
     }
     Package pkg = pkgBuilder.finishBuild();
 
+    Event.replayEventsOn(env.getListener(), pkgBuilder.getEvents());
+    for (Postable post : pkgBuilder.getPosts()) {
+      env.getListener().post(post);
+    }
+
     // We know this SkyFunction will not be called again, so we can remove the cache entry.
     packageFunctionCache.invalidate(packageId);
 
-    packageFactory.afterDoneLoadingPackage(pkg, skylarkSemantics);
+    packageFactory.afterDoneLoadingPackage(pkg, skylarkSemantics, loadTimeNanos);
     return new PackageValue(pkg);
   }
 
@@ -814,7 +821,13 @@ public class PackageFunction implements SkyFunction {
     Set<SkyKey> containingPkgLookupKeys = Sets.newHashSet();
     Map<Target, SkyKey> targetToKey = new HashMap<>();
     for (Target target : pkgBuilder.getTargets()) {
-      PathFragment dir = target.getLabel().toPathFragment().getParentDirectory();
+      PathFragment dir = getContainingDirectory(target.getLabel());
+      if (dir == null) {
+        throw new IllegalStateException(
+            String.format(
+                "Null pkg for label %s as path fragment %s in pkg %s",
+                target.getLabel(), target.getLabel().getPackageFragment(), pkgId));
+      }
       PackageIdentifier dirId = PackageIdentifier.create(pkgId.getRepository(), dir);
       if (dir.equals(pkgId.getPackageFragment())) {
         continue;
@@ -825,7 +838,7 @@ public class PackageFunction implements SkyFunction {
     }
     Map<Label, SkyKey> subincludeToKey = new HashMap<>();
     for (Label subincludeLabel : pkgBuilder.getSubincludeLabels()) {
-      PathFragment dir = subincludeLabel.toPathFragment().getParentDirectory();
+      PathFragment dir = getContainingDirectory(subincludeLabel);
       PackageIdentifier dirId = PackageIdentifier.create(pkgId.getRepository(), dir);
       if (dir.equals(pkgId.getPackageFragment())) {
         continue;
@@ -868,6 +881,12 @@ public class PackageFunction implements SkyFunction {
         pkgBuilder.setContainsErrors();
       }
     }
+  }
+
+  private static PathFragment getContainingDirectory(Label label) {
+    PathFragment pkg = label.getPackageFragment();
+    String name = label.getName();
+    return name.equals(".") ? pkg : pkg.getRelative(name).getParentDirectory();
   }
 
   @Nullable

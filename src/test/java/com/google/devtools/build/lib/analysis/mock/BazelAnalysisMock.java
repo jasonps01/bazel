@@ -125,7 +125,9 @@ public final class BazelAnalysisMock extends AnalysisMock {
         "/bazel_tools_workspace/tools/genrule/BUILD", "exports_files(['genrule-setup.sh'])");
 
     config.create("/bazel_tools_workspace/tools/test/BUILD",
-        "filegroup(name = 'runtime', srcs = ['test-setup.sh'],)",
+        "filegroup(name = 'runtime', srcs = ['test-setup.sh'])",
+        "filegroup(name = 'test_setup', srcs = ['test-setup.sh'])",
+        "filegroup(name = 'collect_coverage', srcs = ['collect_coverage.sh'])",
         "filegroup(name='coverage_support', srcs=['collect_coverage.sh','LcovMerger'])",
         "filegroup(name = 'coverage_report_generator', srcs = ['coverage_report_generator.sh'])");
 
@@ -221,11 +223,16 @@ public final class BazelAnalysisMock extends AnalysisMock {
         .add("sh_binary(name = 'aar_generator', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'desugar_java8', srcs = ['empty.sh'])")
         .add("filegroup(name = 'desugar_java8_extra_bootclasspath', srcs = ['fake.jar'])")
+        .add("filegroup(name = 'java8_legacy_dex', srcs = ['java8_legacy.dex.zip'])")
+        .add("sh_binary(name = 'build_java8_legacy_dex', srcs = ['empty.sh'])")
+        .add("filegroup(name = 'desugared_java8_legacy_apis', srcs = ['fake.jar'])")
         .add("sh_binary(name = 'aar_native_libs_zip_creator', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'resource_extractor', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'dexbuilder', srcs = ['empty.sh'])")
+        .add("sh_binary(name = 'dexbuilder_after_proguard', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'dexmerger', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'dexsharder', srcs = ['empty.sh'])")
+        .add("sh_binary(name = 'aar_import_deps_checker', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'busybox', srcs = ['empty.sh'])")
         .add("android_library(name = 'incremental_stub_application')")
         .add("android_library(name = 'incremental_split_stub_application')")

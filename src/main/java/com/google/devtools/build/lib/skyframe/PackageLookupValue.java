@@ -15,12 +15,16 @@ package com.google.devtools.build.lib.skyframe;
 
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Interner;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
+import com.google.devtools.build.lib.concurrent.BlazeInterners;
 import com.google.devtools.build.lib.packages.BuildFileName;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
 import com.google.devtools.build.lib.vfs.RootedPath;
-import com.google.devtools.build.skyframe.LegacySkyKey;
+import com.google.devtools.build.skyframe.AbstractSkyKey;
+import com.google.devtools.build.skyframe.SkyFunctionName;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
 
@@ -37,10 +41,15 @@ import com.google.devtools.build.skyframe.SkyValue;
  */
 public abstract class PackageLookupValue implements SkyValue {
 
+  @AutoCodec
   public static final NoBuildFilePackageLookupValue NO_BUILD_FILE_VALUE =
       new NoBuildFilePackageLookupValue();
+
+  @AutoCodec
   public static final DeletedPackageLookupValue DELETED_PACKAGE_VALUE =
       new DeletedPackageLookupValue();
+
+  @AutoCodec
   public static final NoRepositoryPackageLookupValue NO_SUCH_REPOSITORY_VALUE =
       new NoRepositoryPackageLookupValue();
 
@@ -112,18 +121,42 @@ public abstract class PackageLookupValue implements SkyValue {
     return key(PackageIdentifier.createInMainRepo(directory));
   }
 
-  public static SkyKey key(PackageIdentifier pkgIdentifier) {
+  public static Key key(PackageIdentifier pkgIdentifier) {
     Preconditions.checkArgument(!pkgIdentifier.getRepository().isDefault());
-    return LegacySkyKey.create(SkyFunctions.PACKAGE_LOOKUP, pkgIdentifier);
+    return Key.create(pkgIdentifier);
+  }
+
+  @AutoCodec.VisibleForSerialization
+  @AutoCodec
+  static class Key extends AbstractSkyKey<PackageIdentifier> {
+    private static final Interner<Key> interner = BlazeInterners.newWeakInterner();
+
+    private Key(PackageIdentifier arg) {
+      super(arg);
+    }
+
+    @AutoCodec.VisibleForSerialization
+    @AutoCodec.Instantiator
+    static Key create(PackageIdentifier arg) {
+      return interner.intern(new Key(arg));
+    }
+
+    @Override
+    public SkyFunctionName functionName() {
+      return SkyFunctions.PACKAGE_LOOKUP;
+    }
   }
 
   /** Successful lookup value. */
+  @AutoCodec
   public static class SuccessfulPackageLookupValue extends PackageLookupValue {
 
     private final Root root;
     private final BuildFileName buildFileName;
 
-    private SuccessfulPackageLookupValue(Root root, BuildFileName buildFileName) {
+    @AutoCodec.Instantiator
+    @AutoCodec.VisibleForSerialization
+    SuccessfulPackageLookupValue(Root root, BuildFileName buildFileName) {
       this.root = root;
       this.buildFileName = buildFileName;
     }
@@ -188,7 +221,6 @@ public abstract class PackageLookupValue implements SkyValue {
 
   /** Marker value for no build file found. */
   public static class NoBuildFilePackageLookupValue extends UnsuccessfulPackageLookupValue {
-
     private NoBuildFilePackageLookupValue() {
     }
 
@@ -204,11 +236,14 @@ public abstract class PackageLookupValue implements SkyValue {
   }
 
   /** Value indicating the package name was in error. */
+  @AutoCodec
   public static class InvalidNamePackageLookupValue extends UnsuccessfulPackageLookupValue {
 
     private final String errorMsg;
 
-    private InvalidNamePackageLookupValue(String errorMsg) {
+    @AutoCodec.Instantiator
+    @AutoCodec.VisibleForSerialization
+    InvalidNamePackageLookupValue(String errorMsg) {
       this.errorMsg = errorMsg;
     }
 
@@ -243,13 +278,16 @@ public abstract class PackageLookupValue implements SkyValue {
   }
 
   /** Value indicating the package name was in error. */
+  @AutoCodec
   public static class IncorrectRepositoryReferencePackageLookupValue
       extends UnsuccessfulPackageLookupValue {
 
     private final PackageIdentifier invalidPackageIdentifier;
     private final PackageIdentifier correctedPackageIdentifier;
 
-    private IncorrectRepositoryReferencePackageLookupValue(
+    @AutoCodec.Instantiator
+    @AutoCodec.VisibleForSerialization
+    IncorrectRepositoryReferencePackageLookupValue(
         PackageIdentifier invalidPackageIdentifier, PackageIdentifier correctedPackageIdentifier) {
       this.invalidPackageIdentifier = invalidPackageIdentifier;
       this.correctedPackageIdentifier = correctedPackageIdentifier;
@@ -306,7 +344,6 @@ public abstract class PackageLookupValue implements SkyValue {
 
   /** Marker value for a deleted package. */
   public static class DeletedPackageLookupValue extends UnsuccessfulPackageLookupValue {
-
     private DeletedPackageLookupValue() {
     }
 
@@ -326,7 +363,6 @@ public abstract class PackageLookupValue implements SkyValue {
    * specifies a non-existent repository.
    */
   public static class NoRepositoryPackageLookupValue extends UnsuccessfulPackageLookupValue {
-
     private NoRepositoryPackageLookupValue() {}
 
     @Override

@@ -28,7 +28,6 @@ import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.BlazeVersionInfo;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.ServerDirectories;
-import com.google.devtools.build.lib.analysis.config.BinTools;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.analysis.test.CoverageReportActionFactory;
@@ -38,6 +37,7 @@ import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.clock.Clock;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.OutputFilter;
+import com.google.devtools.build.lib.exec.BinTools;
 import com.google.devtools.build.lib.packages.Package;
 import com.google.devtools.build.lib.packages.PackageFactory;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
@@ -93,6 +93,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -395,14 +396,19 @@ public final class BlazeRuntime {
       // Instead of logEvent() we're calling the low level function to pass the timings we took in
       // the launcher. We're setting the INIT phase marker so that it follows immediately the LAUNCH
       // phase.
-      profiler.logSimpleTaskDuration(execStartTimeNanos - startupTimeNanos, 0, ProfilerTask.PHASE,
+      profiler.logSimpleTaskDuration(
+          execStartTimeNanos - startupTimeNanos,
+          Duration.ZERO,
+          ProfilerTask.PHASE,
           ProfilePhase.LAUNCH.description);
-      profiler.logSimpleTaskDuration(execStartTimeNanos, 0, ProfilerTask.PHASE,
-          ProfilePhase.INIT.description);
+      profiler.logSimpleTaskDuration(
+          execStartTimeNanos, Duration.ZERO, ProfilerTask.PHASE, ProfilePhase.INIT.description);
     }
 
     if (options.memoryProfilePath != null) {
       Path memoryProfilePath = env.getWorkingDirectory().getRelative(options.memoryProfilePath);
+      MemoryProfiler.instance()
+          .setStableMemoryParameters(options.memoryProfileStableHeapParameters);
       try {
         MemoryProfiler.instance().start(memoryProfilePath.getOutputStream());
       } catch (IOException e) {
@@ -973,16 +979,21 @@ public final class BlazeRuntime {
     String productName = startupOptions.productName.toLowerCase(Locale.US);
 
     PathFragment workspaceDirectory = startupOptions.workspaceDirectory;
+    PathFragment outputUserRoot = startupOptions.outputUserRoot;
     PathFragment installBase = startupOptions.installBase;
     PathFragment outputBase = startupOptions.outputBase;
 
     maybeForceJNIByGettingPid(installBase); // Must be before first use of JNI.
 
-    // From the point of view of the Java program --install_base and --output_base
-    // are mandatory options, despite the comment in their declarations.
+    // From the point of view of the Java program --install_base, --output_base, and
+    // --output_user_root are mandatory options, despite the comment in their declarations.
     if (installBase == null || !installBase.isAbsolute()) { // (includes "" default case)
       throw new IllegalArgumentException(
           "Bad --install_base option specified: '" + installBase + "'");
+    }
+    if (outputUserRoot != null && !outputUserRoot.isAbsolute()) { // (includes "" default case)
+      throw new IllegalArgumentException(
+          "Bad --output_user_root option specified: '" + outputUserRoot + "'");
     }
     if (outputBase != null && !outputBase.isAbsolute()) { // (includes "" default case)
       throw new IllegalArgumentException(
@@ -1005,6 +1016,7 @@ public final class BlazeRuntime {
     Path.setFileSystemForSerialization(fs);
     SubprocessBuilder.setSubprocessFactory(subprocessFactoryImplementation());
 
+    Path outputUserRootPath = fs.getPath(outputUserRoot);
     Path installBasePath = fs.getPath(installBase);
     Path outputBasePath = fs.getPath(outputBase);
     Path workspaceDirectoryPath = null;
@@ -1013,7 +1025,8 @@ public final class BlazeRuntime {
     }
 
     ServerDirectories serverDirectories =
-        new ServerDirectories(installBasePath, outputBasePath, startupOptions.installMD5);
+        new ServerDirectories(
+            installBasePath, outputBasePath, outputUserRootPath, startupOptions.installMD5);
     Clock clock = BlazeClock.instance();
     BlazeRuntime.Builder runtimeBuilder =
         new BlazeRuntime.Builder()

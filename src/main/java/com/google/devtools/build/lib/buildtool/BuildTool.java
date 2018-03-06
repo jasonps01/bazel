@@ -66,6 +66,7 @@ import com.google.devtools.build.lib.profiler.ProfilePhase;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.query2.CommonQueryOptions;
 import com.google.devtools.build.lib.query2.ConfiguredTargetQueryEnvironment;
+import com.google.devtools.build.lib.query2.engine.QueryEnvironment.QueryFunction;
 import com.google.devtools.build.lib.query2.engine.QueryEvalResult;
 import com.google.devtools.build.lib.query2.engine.QueryException;
 import com.google.devtools.build.lib.query2.engine.QueryExpression;
@@ -299,8 +300,9 @@ public final class BuildTool {
         if (errorMessage != null) {
           throw new BuildFailedException(errorMessage);
         }
-        // Return.
+        // Will return after profiler line below.
       }
+      Profiler.instance().markPhase(ProfilePhase.FINISH);
     } catch (RuntimeException e) {
       // Print an error message for unchecked runtime exceptions. This does not concern Error
       // subclasses such as OutOfMemoryError.
@@ -474,11 +476,16 @@ public final class BuildTool {
 
     WalkableGraph walkableGraph =
         SkyframeExecutorWrappingWalkableGraph.of(env.getSkyframeExecutor());
+    ImmutableList<QueryFunction> extraFunctions =
+        new ImmutableList.Builder<QueryFunction>()
+            .addAll(ConfiguredTargetQueryEnvironment.CQUERY_FUNCTIONS)
+            .addAll(env.getRuntime().getQueryFunctions())
+            .build();
     ConfiguredTargetQueryEnvironment configuredTargetQueryEnvironment =
         new ConfiguredTargetQueryEnvironment(
             request.getKeepGoing(),
             env.getReporter(),
-            env.getRuntime().getQueryFunctions(),
+            extraFunctions,
             targetConfig,
             hostConfiguration,
             env.newTargetPatternEvaluator().getOffset(),

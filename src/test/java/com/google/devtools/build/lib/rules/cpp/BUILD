@@ -13,6 +13,7 @@ filegroup(
 java_test(
     name = "cpp-rules-tests",
     srcs = glob(["*.java"]) + ["proto/CcProtoLibraryTest.java"],
+    resources = ["//tools/cpp:lib_cc_configure"],
     tags = ["rules"],
     test_class = "com.google.devtools.build.lib.AllTests",
     deps = [
@@ -31,6 +32,8 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//src/main/java/com/google/devtools/build/lib/rules/cpp",
         "//src/main/java/com/google/devtools/build/lib/rules/platform",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/autocodec",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/testutils",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/build/lib/vfs/inmemoryfs",
@@ -41,6 +44,7 @@ java_test(
         "//src/test/java/com/google/devtools/build/lib:actions_testutil",
         "//src/test/java/com/google/devtools/build/lib:analysis_testutil",
         "//src/test/java/com/google/devtools/build/lib:packages_testutil",
+        "//src/test/java/com/google/devtools/build/lib:syntax_testutil",
         "//src/test/java/com/google/devtools/build/lib:testutil",
         "//third_party:guava",
         "//third_party:guava-testlib",

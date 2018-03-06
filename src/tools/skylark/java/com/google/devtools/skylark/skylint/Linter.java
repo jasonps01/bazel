@@ -39,7 +39,9 @@ public class Linter {
   private static final ImmutableMap<String, Check> nameToCheck =
       ImmutableMap.<String, Check>builder()
           .put("bad-operation", BadOperationChecker::check)
+          .put("bad-recursive-glob", NativeRecursiveGlobChecker::check)
           .put("control-flow", ControlFlowChecker::check)
+          .put("deprecated-api", DeprecatedApiChecker::check)
           .put("docstring", DocstringChecker::check)
           .put("load", LoadStatementChecker::check)
           .put("naming", NamingConventionsChecker::check)

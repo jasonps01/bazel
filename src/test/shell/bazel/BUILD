@@ -102,6 +102,7 @@ sh_test(
 sh_test(
     name = "bazel_java_test",
     size = "large",
+    timeout = "eternal",
     srcs = ["bazel_java_test.sh"],
     data = [":test-deps"],
 )
@@ -136,6 +137,7 @@ sh_test(
 
 sh_test(
     name = "bazel_test_test",
+    timeout = "long",
     srcs = ["bazel_test_test.sh"],
     data = [":test-deps"],
     shard_count = 3,
@@ -237,7 +239,7 @@ sh_test(
     size = "large",
     srcs = ["external_integration_test.sh"],
     data = [":test-deps"],
-    shard_count = 6,
+    shard_count = 12,
 )
 
 sh_test(
@@ -245,6 +247,15 @@ sh_test(
     size = "medium",
     srcs = ["external_patching_test.sh"],
     data = [":test-deps"],
+    shard_count = 3,
+)
+
+sh_test(
+    name = "external_path_test",
+    size = "medium",
+    srcs = ["external_path_test.sh"],
+    data = [":test-deps"],
+    shard_count = 6,
 )
 
 sh_test(
@@ -410,6 +421,7 @@ sh_test(
 sh_test(
     name = "remote_execution_test",
     size = "large",
+    timeout = "eternal",
     srcs = ["remote_execution_test.sh"],
     data = [
         ":test-deps",

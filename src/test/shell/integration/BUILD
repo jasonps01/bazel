@@ -166,6 +166,7 @@ sh_test(
 sh_test(
     name = "incompatible_changes_conflict_test",
     size = "small",
+    timeout = "moderate",
     srcs = ["incompatible_changes_conflict_test.sh"],
     data = [":test-deps"],
 )
@@ -242,6 +243,7 @@ sh_test(
 sh_test(
     name = "build_event_stream_test",
     size = "medium",
+    timeout = "long",
     srcs = ["build_event_stream_test.sh"],
     data = [":test-deps"],
     shard_count = 2,

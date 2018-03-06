@@ -18,7 +18,6 @@ import static java.util.stream.Collectors.toList;
 
 import com.android.utils.StdLogger;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.devtools.build.android.AndroidResourceProcessingAction.Options;
 import com.google.devtools.build.android.aapt2.Aapt2ConfigOptions;
 import com.google.devtools.build.android.aapt2.CompiledResources;
@@ -29,7 +28,6 @@ import com.google.devtools.build.android.aapt2.StaticLibrary;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.ShellQuotedParamsFilePreProcessor;
 import com.google.devtools.common.options.TriState;
-import java.io.Closeable;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -73,7 +71,8 @@ public class Aapt2ResourcePackagingAction {
     options = optionsParser.getOptions(Options.class);
 
     try (ScopedTemporaryDirectory scopedTmp =
-        new ScopedTemporaryDirectory("android_resources_tmp")) {
+            new ScopedTemporaryDirectory("android_resources_tmp");
+        ExecutorServiceCloser executorService = ExecutorServiceCloser.createWithFixedPoolOf(15)) {
       final Path tmp = scopedTmp.getPath();
       final Path mergedAssets = tmp.resolve("merged_assets");
       final Path mergedResources = tmp.resolve("merged_resources");
@@ -86,11 +85,6 @@ public class Aapt2ResourcePackagingAction {
           Files.createDirectories(tmp.resolve("android_data_binding_resources"));
       final Path compiledResources = Files.createDirectories(tmp.resolve("compiled"));
       final Path linkedOut = Files.createDirectories(tmp.resolve("linked"));
-
-
-      // TODO(b/72995408): Remove the densitiesForManifest option once it is no longer being passed.
-      final List<String> densities =
-          options.densities.isEmpty() ? options.densitiesForManifest : options.densities;
 
       profiler.recordEndOf("setup").startTask("merging");
 
@@ -113,15 +107,16 @@ public class Aapt2ResourcePackagingAction {
                   options.symbolsOut,
                   null /* rclassWriter */,
                   dataDeserializer,
-                  options.throwOnResourceConflict)
+                  options.throwOnResourceConflict,
+                  executorService)
               .filter(
-                  new DensitySpecificResourceFilter(densities, filteredResources, mergedResources),
-                  new DensitySpecificManifestProcessor(densities, densityManifest));
+                  new DensitySpecificResourceFilter(
+                      options.densities, filteredResources, mergedResources),
+                  new DensitySpecificManifestProcessor(options.densities, densityManifest));
 
       profiler.recordEndOf("merging");
 
-      final ListeningExecutorService executorService = ExecutorServiceCloser.createDefaultService();
-      try (final Closeable closeable = ExecutorServiceCloser.createWith(executorService)) {
+     
         profiler.startTask("compile");
         final ResourceCompiler compiler =
             ResourceCompiler.create(
@@ -147,7 +142,7 @@ public class Aapt2ResourcePackagingAction {
                                 processedManifest))
                 .processManifest(
                     manifest ->
-                        new DensitySpecificManifestProcessor(densities, densityManifest)
+                        new DensitySpecificManifestProcessor(options.densities, densityManifest)
                             .process(manifest));
         profiler.recordEndOf("compile").startTask("link");
         // Write manifestOutput now before the dummy manifest is created.
@@ -178,7 +173,7 @@ public class Aapt2ResourcePackagingAction {
                 .withAssets(assetDirs)
                 .buildVersion(aaptConfigOptions.buildToolsVersion)
                 .conditionalKeepRules(aaptConfigOptions.conditionalKeepRules == TriState.YES)
-                .filterToDensity(densities)
+                .filterToDensity(options.densities)
                 .includeOnlyConfigs(aaptConfigOptions.resourceConfigs)
                 .link(compiled)
                 .copyPackageTo(options.packagePath)
@@ -201,5 +196,3 @@ public class Aapt2ResourcePackagingAction {
       }
     }
   }
-
-}

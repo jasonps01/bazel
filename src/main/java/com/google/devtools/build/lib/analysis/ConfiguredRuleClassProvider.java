@@ -25,7 +25,6 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.devtools.build.lib.analysis.buildinfo.BuildInfoFactory;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
@@ -593,7 +592,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
 
   private final PrerequisiteValidator prerequisiteValidator;
 
-  private final Environment.Frame globals;
+  private final Environment.GlobalFrame globals;
 
   private final ImmutableList<NativeProvider> nativeProviders;
 
@@ -740,7 +739,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
     return BuildOptions.of(configurationOptions, optionsProvider);
   }
 
-  private Environment.Frame createGlobals(
+  private Environment.GlobalFrame createGlobals(
       ImmutableMap<String, Object> skylarkAccessibleToplLevels,
       ImmutableList<Class<?>> modules) {
     try (Mutability mutability = Mutability.create("ConfiguredRuleClassProvider globals")) {
@@ -773,7 +772,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
 
   private Environment createSkylarkRuleClassEnvironment(
       Mutability mutability,
-      Environment.Frame globals,
+      Environment.GlobalFrame globals,
       SkylarkSemantics skylarkSemantics,
       EventHandler eventHandler,
       String astFileContentHashCode,
@@ -827,8 +826,7 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
 
   /** Returns all skylark objects in global scope for this RuleClassProvider. */
   public Map<String, Object> getTransitiveGlobalBindings() {
-    // TODO(brandjon): Remove unordered hash maps from Environment so we don't have to sort here.
-    return ImmutableSortedMap.copyOf(globals.getTransitiveBindings());
+    return globals.getTransitiveBindings();
   }
 
   /** Returns all registered {@link BuildConfiguration.Fragment} classes. */

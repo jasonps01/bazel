@@ -26,10 +26,10 @@ dependency from that Java binary. Each time you add a layer of abstraction, you
 make it harder for a user to do these tasks.
 
 BUILD files are also analyzed and updated by many different tools.
-Tools may not be able to edit your be able to edit your BUILD file if it uses
-abstractions. Keeping your BUILD files simple will allow you to get better
-tooling. As a code base grows, it becomes more and more frequent to do changes
-across many BUILD files in order to update a library or do a cleanup.
+Tools may not be able to edit your BUILD file if it uses abstractions. Keeping
+your BUILD files simple will allow you to get better tooling. As a code base
+grows, it becomes more and more frequent to do changes across many BUILD files
+in order to update a library or do a cleanup.
 
 Do not create a macro just to avoid some amount of repetition in BUILD files.
 The [DRY](https://en.wikipedia.org/wiki/Don%27t_repeat_yourself) principle
@@ -72,8 +72,12 @@ def fct(name, srcs):
   native.cc_library(
     name = name,
     srcs = filtered_srcs,
+    testonly = True,
   )
 ```
+
+* Prefer values `True` and `False` instead of `0` and `1` for boolean values
+  (e.g. when using a boolean attribute in a rule).
 
 * Do not use the `print()` function in production code; it is only intended for
   debugging, and will spam all direct and indirect users of your `.bzl` file.

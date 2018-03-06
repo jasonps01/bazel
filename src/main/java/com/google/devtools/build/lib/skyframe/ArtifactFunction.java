@@ -29,12 +29,10 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
 import com.google.devtools.build.lib.actions.MissingInputFileException;
-import com.google.devtools.build.lib.analysis.actions.ActionTemplate;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.RootedPath;
 import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.build.skyframe.SkyFunctionException;
@@ -66,7 +64,7 @@ class ArtifactFunction implements SkyFunction {
       }
     }
 
-    SkyKey actionLookupKey = getActionLookupKey(artifact);
+    ActionLookupKey actionLookupKey = getActionLookupKey(artifact);
     ActionLookupValue actionLookupValue = getActionLookupValue(actionLookupKey, env, artifact);
     if (actionLookupValue == null) {
       return null;
@@ -84,26 +82,21 @@ class ArtifactFunction implements SkyFunction {
 
     // If the action is an ActionTemplate, we need to expand the ActionTemplate into concrete
     // actions, execute those actions in parallel and then aggregate the action execution results.
-    if (artifact.isTreeArtifact()) {
-      ActionAnalysisMetadata actionMetadata =
-          actionLookupValue.getIfPresentAndNotAction(actionIndex);
-      if (actionMetadata instanceof ActionTemplate) {
-        // Create the directory structures for the output TreeArtifact first.
-        try {
-          FileSystemUtils.createDirectoryAndParents(artifact.getPath());
-        } catch (IOException e) {
-          env.getListener()
-              .handle(
-                  Event.error(
-                      String.format(
-                          "Failed to create output directory for TreeArtifact %s: %s",
-                          artifact, e.getMessage())));
-          throw new ArtifactFunctionException(e, Transience.TRANSIENT);
-        }
-
-        return createTreeArtifactValueFromActionTemplate(
-            (ActionTemplate<?>) actionMetadata, artifact, env);
+    if (artifact.isTreeArtifact() && actionLookupValue.isActionTemplate(actionIndex)) {
+      // Create the directory structures for the output TreeArtifact first.
+      try {
+        artifact.getPath().createDirectoryAndParents();
+      } catch (IOException e) {
+        env.getListener()
+            .handle(
+                Event.error(
+                    String.format(
+                        "Failed to create output directory for TreeArtifact %s: %s",
+                        artifact, e.getMessage())));
+        throw new ArtifactFunctionException(e, Transience.TRANSIENT);
       }
+
+      return createTreeArtifactValueFromActionKey(actionLookupKey, actionIndex, artifact, env);
     }
     ActionExecutionValue actionValue =
         (ActionExecutionValue) env.getValue(ActionExecutionValue.key(actionLookupKey, actionIndex));
@@ -133,11 +126,15 @@ class ArtifactFunction implements SkyFunction {
     return createSimpleFileArtifactValue(artifact, actionValue);
   }
 
-  private static TreeArtifactValue createTreeArtifactValueFromActionTemplate(
-      final ActionTemplate<?> actionTemplate, final Artifact treeArtifact, Environment env)
-          throws InterruptedException {
+  private static TreeArtifactValue createTreeArtifactValueFromActionKey(
+      ActionLookupKey actionLookupKey,
+      int actionIndex,
+      final Artifact treeArtifact,
+      Environment env)
+      throws InterruptedException {
     // Request the list of expanded actions from the ActionTemplate.
-    SkyKey templateKey = ActionTemplateExpansionValue.key(actionTemplate);
+    ActionTemplateExpansionValue.ActionTemplateExpansionKey templateKey =
+        ActionTemplateExpansionValue.key(actionLookupKey, actionIndex);
     ActionTemplateExpansionValue expansionValue =
         (ActionTemplateExpansionValue) env.getValue(templateKey);
 
@@ -165,9 +162,10 @@ class ArtifactFunction implements SkyFunction {
           (ActionExecutionValue)
               Preconditions.checkNotNull(
                   expandedActionValueMap.get(expandedActionExecutionKeys.get(i)),
-                  "Missing tree value: %s %s %s %s",
+                  "Missing tree value: %s %s %s %s %s",
                   treeArtifact,
-                  actionTemplate,
+                  actionLookupKey,
+                  actionIndex,
                   expansionValue,
                   expandedActionValueMap);
       Iterable<TreeFileArtifact> treeFileArtifacts =
@@ -179,11 +177,12 @@ class ArtifactFunction implements SkyFunction {
                     public boolean apply(Artifact artifact) {
                       Preconditions.checkState(
                           artifact.hasParent(),
-                          "No parent: %s %s %s %s",
+                          "No parent: %s %s %s %s %s",
                           artifact,
                           treeArtifact,
                           actionExecutionValue,
-                          actionTemplate);
+                          actionLookupKey,
+                          actionIndex);
                       return artifact.getParent().equals(treeArtifact);
                     }
                   }),
@@ -309,7 +308,7 @@ class ArtifactFunction implements SkyFunction {
   }
 
   @VisibleForTesting
-  static SkyKey getActionLookupKey(Artifact artifact) {
+  static ActionLookupKey getActionLookupKey(Artifact artifact) {
     ArtifactOwner artifactOwner = artifact.getArtifactOwner();
 
     Preconditions.checkState(artifactOwner instanceof ActionLookupKey, "", artifact, artifactOwner);

@@ -18,9 +18,10 @@ import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.MetadataProvider;
 import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
-import com.google.devtools.build.lib.remote.DigestUtil.ActionKey;
 import com.google.devtools.build.lib.remote.TreeNodeRepository.TreeNode;
 import com.google.devtools.build.lib.remote.blobstore.SimpleBlobStore;
+import com.google.devtools.build.lib.remote.util.DigestUtil;
+import com.google.devtools.build.lib.remote.util.DigestUtil.ActionKey;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
@@ -196,7 +197,7 @@ public final class SimpleBlobStoreActionCache extends AbstractRemoteActionCache 
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     boolean success = blobStore.getActionResult(digest.getHash(), out);
     if (!success) {
-      throw new CacheNotFoundException(digest);
+      throw new CacheNotFoundException(digest, digestUtil);
     }
     return out.toByteArray();
   }
@@ -216,7 +217,7 @@ public final class SimpleBlobStoreActionCache extends AbstractRemoteActionCache 
     try (OutputStream out = dest.getOutputStream()) {
       boolean success = blobStore.get(digest.getHash(), out);
       if (!success) {
-        throw new CacheNotFoundException(digest);
+        throw new CacheNotFoundException(digest, digestUtil);
       }
     }
   }
@@ -229,7 +230,7 @@ public final class SimpleBlobStoreActionCache extends AbstractRemoteActionCache 
     try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
       boolean success = blobStore.get(digest.getHash(), out);
       if (!success) {
-        throw new CacheNotFoundException(digest);
+        throw new CacheNotFoundException(digest, digestUtil);
       }
       return out.toByteArray();
     }

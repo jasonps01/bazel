@@ -21,13 +21,13 @@ import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
-import com.google.devtools.build.lib.analysis.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -100,7 +100,7 @@ public final class AndroidBinaryMobileInstall {
       ResourceApk resourceApk,
       MobileInstallResourceApks mobileInstallResourceApks,
       FilesToRunProvider resourceExtractor,
-      NestedSet<Artifact> nativeLibsZips,
+      NestedSet<Artifact> nativeLibsAar,
       Artifact signingKey,
       ImmutableList<Artifact> additionalMergedManifests,
       ApplicationManifest applicationManifest)
@@ -147,7 +147,7 @@ public final class AndroidBinaryMobileInstall {
             .setClassesDex(stubDex)
             .addInputZip(mobileInstallResourceApks.incrementalResourceApk.getArtifact())
             .setJavaResourceZip(dexingOutput.javaResourceJar, resourceExtractor)
-            .addInputZips(nativeLibsZips)
+            .addInputZips(nativeLibsAar)
             .setJavaResourceFile(stubData)
             .setSignedApk(incrementalApk)
             .setSigningKey(signingKey);
@@ -259,7 +259,7 @@ public final class AndroidBinaryMobileInstall {
     ApkActionsBuilder.create("split main apk")
         .setClassesDex(splitStubDex)
         .addInputZip(splitMainApkResources)
-        .addInputZips(nativeLibsZips)
+        .addInputZips(nativeLibsAar)
         .setSignedApk(splitMainApk)
         .setSigningKey(signingKey)
         .registerActions(ruleContext);

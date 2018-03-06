@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTa
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationInfo;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
 import com.google.devtools.build.lib.rules.objc.ObjcCommon.ResourceAttributes;
 import com.google.devtools.build.lib.syntax.Type;
@@ -43,7 +44,7 @@ public class ObjcLibrary implements RuleConfiguredTargetFactory {
         .setResourceAttributes(new ResourceAttributes(ruleContext))
         .addDefines(ruleContext.getExpander().withDataLocations().tokenized("defines"))
         .setCompilationArtifacts(CompilationSupport.compilationArtifacts(ruleContext))
-        .addDeps(ruleContext.getPrerequisites("deps", Mode.TARGET))
+        .addDeps(ruleContext.getPrerequisiteConfiguredTargetAndTargets("deps", Mode.TARGET))
         .addRuntimeDeps(ruleContext.getPrerequisites("runtime_deps", Mode.TARGET))
         .addDepObjcProviders(
             ruleContext.getPrerequisites("bundles", Mode.TARGET, ObjcProvider.SKYLARK_CONSTRUCTOR))
@@ -87,16 +88,24 @@ public class ObjcLibrary implements RuleConfiguredTargetFactory {
     J2ObjcEntryClassProvider j2ObjcEntryClassProvider = new J2ObjcEntryClassProvider.Builder()
       .addTransitive(ruleContext.getPrerequisites("deps", Mode.TARGET,
           J2ObjcEntryClassProvider.class)).build();
+    CcCompilationInfo ccCompilationInfo =
+        new CcCompilationInfo.Builder(ruleContext)
+            .addDeclaredIncludeSrcs(
+                CompilationAttributes.Builder.fromRuleContext(ruleContext)
+                    .build()
+                    .hdrs()
+                    .toCollection())
+            .build();
 
     return ObjcRuleClasses.ruleConfiguredTarget(ruleContext, filesToBuild.build())
         .addNativeDeclaredProvider(common.getObjcProvider())
+        .addNativeDeclaredProvider(ccCompilationInfo)
         .addProvider(J2ObjcEntryClassProvider.class, j2ObjcEntryClassProvider)
         .addProvider(J2ObjcMappingFileProvider.class, j2ObjcMappingFileProvider)
         .addProvider(
             InstrumentedFilesProvider.class,
             compilationSupport.getInstrumentedFilesProvider(common))
-        .addNativeDeclaredProvider(
-            new CcLinkParamsInfo(new ObjcLibraryCcLinkParamsStore(common)))
+        .addNativeDeclaredProvider(new CcLinkParamsInfo(new ObjcLibraryCcLinkParamsStore(common)))
         .addOutputGroups(outputGroupCollector)
         .build();
   }

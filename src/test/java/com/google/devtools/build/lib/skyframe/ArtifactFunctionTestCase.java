@@ -77,8 +77,9 @@ abstract class ArtifactFunctionTestCase {
                 ImmutableList.of(Root.fromPath(root)),
                 BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY));
     BlazeDirectories directories =
-        new BlazeDirectories(new ServerDirectories(root, root), root, TestConstants.PRODUCT_NAME);
-    ExternalFilesHelper externalFilesHelper = new ExternalFilesHelper(
+        new BlazeDirectories(
+            new ServerDirectories(root, root, root), root, TestConstants.PRODUCT_NAME);
+    ExternalFilesHelper externalFilesHelper = ExternalFilesHelper.createForTesting(
         pkgLocator,
         ExternalFileAction.DEPEND_ON_EXTERNAL_PKG_FOR_EXTERNAL_REPO_PATHS,
         directories);

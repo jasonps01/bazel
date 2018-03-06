@@ -17,6 +17,7 @@ import com.google.common.base.Preconditions;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.shell.TerminationStatus;
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
@@ -128,6 +129,12 @@ public interface SpawnResult {
   @Nullable String getExecutorHostName();
 
   /**
+   * The name of the SpawnRunner that executed the spawn. It should always be defined, unless
+   * isCacheHit is true, in which case the spawn was not actually run.
+   */
+  String getRunnerName();
+
+  /**
    * Returns the wall time taken by the {@link Spawn}'s execution.
    *
    * @return the measurement, or empty in case of execution errors or when the measurement is not
@@ -183,6 +190,17 @@ public interface SpawnResult {
     return "";
   }
 
+  /**
+   * SpawnResults can optionally support returning outputs in-memory. Such outputs can be obtained
+   * from this method if so.
+   *
+   * @param output
+   */
+  @Nullable
+  default InputStream getInMemoryOutput(ActionInput output) {
+    return null;
+  }
+
   String getDetailMessage(
       String messagePrefix, String message, boolean catastrophe, boolean forciblyRunRemotely);
 
@@ -194,6 +212,7 @@ public interface SpawnResult {
     private final int exitCode;
     private final Status status;
     private final String executorHostName;
+    private final String runnerName;
     private final Optional<Duration> wallTime;
     private final Optional<Duration> userTime;
     private final Optional<Duration> systemTime;
@@ -207,6 +226,7 @@ public interface SpawnResult {
       this.exitCode = builder.exitCode;
       this.status = Preconditions.checkNotNull(builder.status);
       this.executorHostName = builder.executorHostName;
+      this.runnerName = builder.runnerName;
       this.wallTime = builder.wallTime;
       this.userTime = builder.userTime;
       this.systemTime = builder.systemTime;
@@ -243,6 +263,11 @@ public interface SpawnResult {
     @Override
     public String getExecutorHostName() {
       return executorHostName;
+    }
+
+    @Override
+    public String getRunnerName() {
+      return runnerName;
     }
 
     @Override
@@ -323,6 +348,7 @@ public interface SpawnResult {
     private int exitCode;
     private Status status;
     private String executorHostName;
+    private String runnerName = "";
     private Optional<Duration> wallTime = Optional.empty();
     private Optional<Duration> userTime = Optional.empty();
     private Optional<Duration> systemTime = Optional.empty();
@@ -356,6 +382,11 @@ public interface SpawnResult {
 
     public Builder setExecutorHostname(String executorHostName) {
       this.executorHostName = executorHostName;
+      return this;
+    }
+
+    public Builder setRunnerName(String runnerName) {
+      this.runnerName = runnerName;
       return this;
     }
 

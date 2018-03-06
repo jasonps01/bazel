@@ -31,11 +31,12 @@
 #include "src/main/cpp/workspace_layout.h"
 
 // On OSX, there apparently is no header that defines this.
+#ifndef environ
 extern char **environ;
+#endif
 
 namespace blaze {
 
-using std::list;
 using std::map;
 using std::set;
 using std::string;
@@ -237,9 +238,9 @@ blaze_exit_code::ExitCode OptionProcessor::ParseOptions(
   // paths to the rc files. This list may contain duplicates.
   vector<string> candidate_blazerc_paths;
   if (use_master_blazerc) {
-    workspace_layout_->FindCandidateBlazercPaths(
-        workspace, cwd, cmd_line_->path_to_binary, cmd_line_->startup_args,
-        &candidate_blazerc_paths);
+    candidate_blazerc_paths =
+        workspace_layout_->FindCandidateBlazercPaths(
+            workspace, cwd, cmd_line_->path_to_binary, cmd_line_->startup_args);
   }
 
   string user_blazerc_path;
@@ -358,8 +359,8 @@ static bool IsValidEnvName(const char* p) {
 
 #if defined(COMPILER_MSVC)
 static void PreprocessEnvString(string* env_str) {
-  static std::set<string> vars_to_uppercase = {"PATH", "TMP", "TEMP", "TEMPDIR",
-                                               "SYSTEMROOT"};
+  static constexpr const char* vars_to_uppercase[] = {"PATH", "SYSTEMROOT",
+                                                      "TEMP", "TEMPDIR", "TMP"};
 
   int pos = env_str->find_first_of('=');
   if (pos == string::npos) return;
@@ -367,7 +368,8 @@ static void PreprocessEnvString(string* env_str) {
   string name = env_str->substr(0, pos);
   // We do not care about locale. All variable names are ASCII.
   std::transform(name.begin(), name.end(), name.begin(), ::toupper);
-  if (vars_to_uppercase.find(name) != vars_to_uppercase.end()) {
+  if (std::find(std::begin(vars_to_uppercase), std::end(vars_to_uppercase),
+                name) != std::end(vars_to_uppercase)) {
     env_str->assign(name + "=" + env_str->substr(pos + 1));
   }
 }

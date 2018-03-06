@@ -40,7 +40,7 @@ right environment variables for them:
   r = runfiles.Create()
   env = {}
   ...
-  env.update(r.EnvVar())
+  env.update(r.EnvVars())
   p = subprocess.Popen([r.Rlocation("path/to/binary")], env, ...)
 """
 
@@ -69,9 +69,8 @@ def Create(env=None):
   the whole manifest file upon instantiation; this may be relevant for
   performance consideration.
 
-  Otherwise, if `env` contains "RUNFILES_DIR" or "TEST_SRCDIR" with non-empty
-  value (checked in this priority order), this method returns a directory-based
-  implementation.
+  Otherwise, if `env` contains "RUNFILES_DIR" with non-empty value (checked in
+  this priority order), this method returns a directory-based implementation.
 
   If neither cases apply, this method returns null.
 
@@ -87,8 +86,6 @@ def Create(env=None):
     return CreateManifestBased(manifest)
 
   directory = env_map.get("RUNFILES_DIR")
-  if not directory:
-    directory = env_map.get("TEST_SRCDIR")
   if directory:
     return CreateDirectoryBased(directory)
 
@@ -135,19 +132,18 @@ class _Runfiles(object):
       raise ValueError("path is absolute: \"%s\"" % path)
     return self._strategy.RlocationChecked(path)
 
-  def EnvVar(self):
-    """Returns an environment variable for subprocesses.
+  def EnvVars(self):
+    """Returns environment variables for subprocesses.
 
-    The caller should set the returned key-value pair in the environment of
+    The caller should set the returned key-value pairs in the environment of
     subprocesses in case those subprocesses are also Bazel-built binaries that
     need to use runfiles.
 
     Returns:
-      {string: string}; a single-entry dict; key is an environment variable
-      name (either "RUNFILES_MANIFEST_FILE" or "RUNFILES_DIR"), value is the
-      value for this environment variable
+      {string: string}; a dict; keys are environment variable names, values are
+      the values for these environment variables
     """
-    return self._strategy.EnvVar()
+    return self._strategy.EnvVars()
 
 
 class _ManifestBased(object):
@@ -179,8 +175,23 @@ class _ManifestBased(object):
             result[tokens[0]] = tokens[1]
     return result
 
-  def EnvVar(self):
-    return {"RUNFILES_MANIFEST_FILE": self._path}
+  def _GetRunfilesDir(self):
+    if self._path.endswith("/MANIFEST") or self._path.endswith("\\MANIFEST"):
+      return self._path[:-len("/MANIFEST")]
+    elif self._path.endswith(".runfiles_manifest"):
+      return self._path[:-len("_manifest")]
+    else:
+      return ""
+
+  def EnvVars(self):
+    directory = self._GetRunfilesDir()
+    return {
+        "RUNFILES_MANIFEST_FILE": self._path,
+        "RUNFILES_DIR": directory,
+        # TODO(laszlocsomor): remove JAVA_RUNFILES once the Java launcher can
+        # pick up RUNFILES_DIR.
+        "JAVA_RUNFILES": directory,
+    }
 
 
 class _DirectoryBased(object):
@@ -199,5 +210,10 @@ class _DirectoryBased(object):
     # runfiles strategy on those platforms.
     return posixpath.join(self._runfiles_root, path)
 
-  def EnvVar(self):
-    return {"RUNFILES_DIR": self._runfiles_root}
+  def EnvVars(self):
+    return {
+        "RUNFILES_DIR": self._runfiles_root,
+        # TODO(laszlocsomor): remove JAVA_RUNFILES once the Java launcher can
+        # pick up RUNFILES_DIR.
+        "JAVA_RUNFILES": self._runfiles_root,
+    }

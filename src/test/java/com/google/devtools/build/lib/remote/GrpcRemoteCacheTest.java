@@ -31,7 +31,9 @@ import com.google.devtools.build.lib.actions.ActionInputHelper;
 import com.google.devtools.build.lib.authandtls.AuthAndTLSOptions;
 import com.google.devtools.build.lib.authandtls.GoogleAuthUtils;
 import com.google.devtools.build.lib.clock.JavaClock;
-import com.google.devtools.build.lib.remote.DigestUtil.ActionKey;
+import com.google.devtools.build.lib.remote.util.DigestUtil;
+import com.google.devtools.build.lib.remote.util.DigestUtil.ActionKey;
+import com.google.devtools.build.lib.remote.util.TracingMetadataUtils;
 import com.google.devtools.build.lib.testutil.Scratch;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.vfs.FileSystem;
@@ -121,6 +123,7 @@ public class GrpcRemoteCacheTest {
   @After
   public void tearDown() throws Exception {
     fakeServer.shutdownNow();
+    fakeServer.awaitTermination();
   }
 
   private static class CallCredentialsInterceptor implements ClientInterceptor {

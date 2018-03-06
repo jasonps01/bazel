@@ -15,13 +15,14 @@ package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.rules.cpp.CcCommon.CoptsFilter;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction.DotdFile;
-import com.google.devtools.build.lib.util.FileType;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
@@ -30,28 +31,27 @@ import java.util.Map;
 import javax.annotation.Nullable;
 
 /** The compile command line for the C++ compile action. */
+@AutoCodec
 public final class CompileCommandLine {
-
   private final Artifact sourceFile;
-  private final Artifact outputFile;
-  private final Predicate<String> coptsFilter;
+  private final CoptsFilter coptsFilter;
   private final FeatureConfiguration featureConfiguration;
   private final PathFragment crosstoolTopPathFragment;
   private final CcToolchainFeatures.Variables variables;
   private final String actionName;
   private final DotdFile dotdFile;
 
-  private CompileCommandLine(
+  @AutoCodec.Instantiator
+  @VisibleForSerialization
+  CompileCommandLine(
       Artifact sourceFile,
-      Artifact outputFile,
-      Predicate<String> coptsFilter,
+      CoptsFilter coptsFilter,
       FeatureConfiguration featureConfiguration,
       PathFragment crosstoolTopPathFragment,
       CcToolchainFeatures.Variables variables,
       String actionName,
       DotdFile dotdFile) {
     this.sourceFile = Preconditions.checkNotNull(sourceFile);
-    this.outputFile = Preconditions.checkNotNull(outputFile);
     this.coptsFilter = coptsFilter;
     this.featureConfiguration = Preconditions.checkNotNull(featureConfiguration);
     this.crosstoolTopPathFragment = crosstoolTopPathFragment;
@@ -71,33 +71,32 @@ public final class CompileCommandLine {
     return featureConfiguration.getEnvironmentVariables(actionName, variables);
   }
 
-  protected List<String> getArgv(
-      PathFragment outputFile, CcToolchainFeatures.Variables overwrittenVariables) {
+  /** Returns the tool path for the compilation based on the current feature configuration. */
+  @VisibleForTesting
+  public String getToolPath() {
+    Preconditions.checkArgument(
+        featureConfiguration.actionIsConfigured(actionName),
+        "Expected action_config for '%s' to be configured",
+        actionName);
+    return featureConfiguration
+        .getToolForAction(actionName)
+        .getToolPath(crosstoolTopPathFragment)
+        .getPathString();
+  }
+
+  /**
+   * @param overwrittenVariables: Variables that will overwrite original build variables. When null,
+   *     unmodified original variables are used.
+   */
+  protected List<String> getArguments(
+      @Nullable CcToolchainFeatures.Variables overwrittenVariables) {
     List<String> commandLine = new ArrayList<>();
 
     // first: The command name.
-    Preconditions.checkArgument(
-        featureConfiguration.actionIsConfigured(actionName),
-        String.format("Expected action_config for '%s' to be configured", actionName));
-    commandLine.add(
-        featureConfiguration
-            .getToolForAction(actionName)
-            .getToolPath(crosstoolTopPathFragment)
-            .getPathString());
+    commandLine.add(getToolPath());
 
     // second: The compiler options.
     commandLine.addAll(getCompilerOptions(overwrittenVariables));
-
-    if (!featureConfiguration.isEnabled(CppRuleClasses.COMPILE_ACTION_FLAGS_IN_FLAG_SET)) {
-      // third: The file to compile!
-      commandLine.add("-c");
-      commandLine.add(sourceFile.getExecPathString());
-
-      // finally: The output file. (Prefixed with -o).
-      commandLine.add("-o");
-      commandLine.add(outputFile.getPathString());
-    }
-
     return commandLine;
   }
 
@@ -115,19 +114,6 @@ public final class CompileCommandLine {
     addFilteredOptions(
         options, featureConfiguration.getPerFeatureExpansions(actionName, updatedVariables));
 
-    if (!featureConfiguration.isEnabled("compile_action_flags_in_flag_set")) {
-      if (FileType.contains(outputFile, CppFileTypes.ASSEMBLER, CppFileTypes.PIC_ASSEMBLER)) {
-        options.add("-S");
-      } else if (FileType.contains(
-          outputFile,
-          CppFileTypes.PREPROCESSED_C,
-          CppFileTypes.PREPROCESSED_CPP,
-          CppFileTypes.PIC_PREPROCESSED_C,
-          CppFileTypes.PIC_PREPROCESSED_CPP)) {
-        options.add("-E");
-      }
-    }
-
     return options;
   }
 
@@ -140,7 +126,7 @@ public final class CompileCommandLine {
         continue;
       }
 
-      pair.getSecond().stream().filter(coptsFilter).forEachOrdered(out::add);
+      pair.getSecond().stream().filter(coptsFilter::passesFilter).forEachOrdered(out::add);
     }
   }
 
@@ -164,8 +150,9 @@ public final class CompileCommandLine {
    * explicit attribute, not using platform-dependent garbage bag that copts is).
    */
   public ImmutableList<String> getCopts() {
-    if (variables.isAvailable(CppModel.USER_COMPILE_FLAGS_VARIABLE_NAME)) {
-      return Variables.toStringList(variables, CppModel.USER_COMPILE_FLAGS_VARIABLE_NAME);
+    if (variables.isAvailable(CcCompilationHelper.USER_COMPILE_FLAGS_VARIABLE_NAME)) {
+      return Variables.toStringList(
+          variables, CcCompilationHelper.USER_COMPILE_FLAGS_VARIABLE_NAME);
     } else {
       return ImmutableList.of();
     }
@@ -173,20 +160,17 @@ public final class CompileCommandLine {
 
   public static Builder builder(
       Artifact sourceFile,
-      Artifact outputFile,
-      Predicate<String> coptsFilter,
+      CoptsFilter coptsFilter,
       String actionName,
       PathFragment crosstoolTopPathFragment,
       DotdFile dotdFile) {
-    return new Builder(
-        sourceFile, outputFile, coptsFilter, actionName, crosstoolTopPathFragment, dotdFile);
+    return new Builder(sourceFile, coptsFilter, actionName, crosstoolTopPathFragment, dotdFile);
   }
 
   /** A builder for a {@link CompileCommandLine}. */
   public static final class Builder {
     private final Artifact sourceFile;
-    private final Artifact outputFile;
-    private Predicate<String> coptsFilter;
+    private CoptsFilter coptsFilter;
     private FeatureConfiguration featureConfiguration;
     private CcToolchainFeatures.Variables variables = Variables.EMPTY;
     private final String actionName;
@@ -196,7 +180,6 @@ public final class CompileCommandLine {
     public CompileCommandLine build() {
       return new CompileCommandLine(
           Preconditions.checkNotNull(sourceFile),
-          Preconditions.checkNotNull(outputFile),
           Preconditions.checkNotNull(coptsFilter),
           Preconditions.checkNotNull(featureConfiguration),
           Preconditions.checkNotNull(crosstoolTopPathFragment),
@@ -207,13 +190,11 @@ public final class CompileCommandLine {
 
     private Builder(
         Artifact sourceFile,
-        Artifact outputFile,
-        Predicate<String> coptsFilter,
+        CoptsFilter coptsFilter,
         String actionName,
         PathFragment crosstoolTopPathFragment,
         DotdFile dotdFile) {
       this.sourceFile = sourceFile;
-      this.outputFile = outputFile;
       this.coptsFilter = coptsFilter;
       this.actionName = actionName;
       this.crosstoolTopPathFragment = crosstoolTopPathFragment;
@@ -232,7 +213,7 @@ public final class CompileCommandLine {
     }
 
     @VisibleForTesting
-    Builder setCoptsFilter(Predicate<String> filter) {
+    Builder setCoptsFilter(CoptsFilter filter) {
       this.coptsFilter = Preconditions.checkNotNull(filter);
       return this;
     }

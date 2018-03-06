@@ -17,6 +17,7 @@ import static com.google.devtools.build.lib.packages.Attribute.attr;
 import static com.google.devtools.build.lib.packages.BuildType.LABEL;
 import static com.google.devtools.build.lib.packages.BuildType.LABEL_LIST;
 import static com.google.devtools.build.lib.packages.BuildType.LICENSE;
+import static com.google.devtools.build.lib.packages.BuildType.NODEP_LABEL;
 import static com.google.devtools.build.lib.syntax.Type.BOOLEAN;
 import static com.google.devtools.build.lib.syntax.Type.STRING;
 
@@ -33,6 +34,7 @@ import com.google.devtools.build.lib.packages.RuleClass;
 import com.google.devtools.build.lib.packages.RuleClass.Builder;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.rules.cpp.transitions.LipoContextCollectorTransition;
+import com.google.devtools.build.lib.syntax.Type;
 
 /**
  * Rule definition for compiler definition.
@@ -52,6 +54,12 @@ public final class CcToolchainRule implements RuleDefinition {
           CppConfiguration.class,
           null,
           (rule, attributes, cppConfig) -> cppConfig.getSysrootLabel());
+
+  private static final LabelLateBoundDefault<?> FDO_LABEL =
+      LabelLateBoundDefault.fromTargetConfiguration(
+          CppConfiguration.class,
+          null,
+          (rule, attributes, cppConfig) -> cppConfig.getFdoProfileLabel());
 
   @Override
   public RuleClass build(Builder builder, RuleDefinitionEnvironment env) {
@@ -84,6 +92,8 @@ public final class CcToolchainRule implements RuleDefinition {
                 .legacyAllowAnyFileType()
                 .cfg(HostTransition.INSTANCE)
                 .mandatory())
+        .add(attr("as_files", LABEL).legacyAllowAnyFileType().cfg(HostTransition.INSTANCE))
+        .add(attr("ar_files", LABEL).legacyAllowAnyFileType().cfg(HostTransition.INSTANCE))
         .add(
             attr("linker_files", LABEL)
                 .legacyAllowAnyFileType()
@@ -111,7 +121,7 @@ public final class CcToolchainRule implements RuleDefinition {
                 .singleArtifact()
                 .value(env.getToolsLabel("//tools/cpp:link_dynamic_library")))
         .add(
-            attr(CcToolchain.CC_TOOLCHAIN_TYPE_ATTRIBUTE_NAME, LABEL)
+            attr(CcToolchain.CC_TOOLCHAIN_TYPE_ATTRIBUTE_NAME, NODEP_LABEL)
                 .value(CppRuleClasses.ccToolchainTypeAttribute(env)))
         .add(
             attr(":zipper", LABEL)
@@ -125,11 +135,13 @@ public final class CcToolchainRule implements RuleDefinition {
                         (rule, attributes, cppConfig) ->
                             cppConfig.isLLVMOptimizedFdo() ? zipper : null)))
         .add(attr(":libc_top", LABEL).value(LIBC_TOP))
+        .add(attr(":fdo_optimize", LABEL).singleArtifact().value(FDO_LABEL))
         .add(
             attr(TransitiveLipoInfoProvider.LIPO_CONTEXT_COLLECTOR, LABEL)
                 .cfg(LipoContextCollectorTransition.INSTANCE)
                 .value(CppRuleClasses.LIPO_CONTEXT_COLLECTOR)
                 .skipPrereqValidatorCheck())
+        .add(attr("proto", Type.STRING))
         .build();
   }
 

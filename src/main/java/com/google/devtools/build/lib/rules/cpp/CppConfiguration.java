@@ -22,9 +22,7 @@ import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMap.Builder;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ListMultimap;
-import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Options.MakeVariableSource;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
@@ -43,12 +41,10 @@ import com.google.devtools.build.lib.rules.cpp.CppConfigurationLoader.CppConfigu
 import com.google.devtools.build.lib.rules.cpp.CrosstoolConfigurationLoader.CrosstoolFile;
 import com.google.devtools.build.lib.rules.cpp.transitions.ContextCollectorOwnerTransition;
 import com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition;
-import com.google.devtools.build.lib.skyframe.serialization.InjectingObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
-import com.google.devtools.build.lib.vfs.FileSystemProvider;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig;
@@ -62,7 +58,7 @@ import javax.annotation.Nullable;
  * architecture, target architecture, compiler version, and a standard library version. It has
  * information about the tools locations and the flags required for compiling.
  */
-@AutoCodec(dependency = FileSystemProvider.class)
+@AutoCodec
 @SkylarkModule(
   name = "cpp",
   doc = "A configuration fragment for C++.",
@@ -70,9 +66,6 @@ import javax.annotation.Nullable;
 )
 @Immutable
 public final class CppConfiguration extends BuildConfiguration.Fragment {
-  public static final InjectingObjectCodec<CppConfiguration, FileSystemProvider> CODEC =
-      new CppConfiguration_AutoCodec();
-
   /**
    * String indicating a Mac system, for example when used in a crosstool configuration's host or
    * target system name.
@@ -168,7 +161,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   private final boolean convertLipoToThinLto;
   private final PathFragment crosstoolTopPathFragment;
 
-  private final Path fdoZip;
+  private final Path fdoProfileAbsolutePath;
+  private final Label fdoProfileLabel;
 
   // TODO(bazel-team): All these labels (except for ccCompilerRuleLabel) can be removed once the
   // transition to the cc_compiler rule is complete.
@@ -200,13 +194,14 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   // The dynamic mode for linking.
   private final boolean stripBinaries;
   private final CompilationMode compilationMode;
-  private final boolean useLLVMCoverageMap;
 
   private final boolean shouldProvideMakeVariables;
+  private final boolean dropFullyStaticLinkingMode;
+
 
   /**
-   *  If true, the ConfiguredTarget is only used to get the necessary cross-referenced
-   *  CppCompilationContexts, but registering build actions is disabled.
+   * If true, the ConfiguredTarget is only used to get the necessary cross-referenced {@code
+   * CcCompilationInfo}s, but registering build actions is disabled.
    */
   private final boolean lipoContextCollector;
 
@@ -272,7 +267,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
         Preconditions.checkNotNull(params.commonOptions.cpu),
         cppOptions.convertLipoToThinLto,
         crosstoolTopPathFragment,
-        params.fdoZip,
+        params.fdoProfileAbsolutePath,
+        params.fdoProfileLabel,
         params.ccToolchainLabel,
         params.stlLabel,
         params.sysrootLabel == null
@@ -294,30 +290,22 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
         ImmutableList.copyOf(cppOptions.conlyoptList),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
-                compilationMode,
-                cppOptions.getLipoMode(),
-                LinkingMode.FULLY_STATIC),
+                compilationMode, cppOptions.getLipoMode(), LinkingMode.FULLY_STATIC),
             FlagList.convertOptionalOptions(toolchain.getOptionalLinkerFlagList()),
             ImmutableList.<String>of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
-                compilationMode,
-                cppOptions.getLipoMode(),
-                LinkingMode.MOSTLY_STATIC),
+                compilationMode, cppOptions.getLipoMode(), LinkingMode.MOSTLY_STATIC),
             FlagList.convertOptionalOptions(toolchain.getOptionalLinkerFlagList()),
             ImmutableList.<String>of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
-                compilationMode,
-                cppOptions.getLipoMode(),
-                LinkingMode.MOSTLY_STATIC_LIBRARIES),
+                compilationMode, cppOptions.getLipoMode(), LinkingMode.MOSTLY_STATIC_LIBRARIES),
             FlagList.convertOptionalOptions(toolchain.getOptionalLinkerFlagList()),
             ImmutableList.<String>of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
-                compilationMode,
-                cppOptions.getLipoMode(),
-                LinkingMode.DYNAMIC),
+                compilationMode, cppOptions.getLipoMode(), LinkingMode.DYNAMIC),
             FlagList.convertOptionalOptions(toolchain.getOptionalLinkerFlagList()),
             ImmutableList.<String>of()),
         ImmutableList.copyOf(cppOptions.coptList),
@@ -330,8 +318,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
             || (cppOptions.stripBinaries == StripMode.SOMETIMES
                 && compilationMode == CompilationMode.FASTBUILD)),
         compilationMode,
-        params.commonOptions.useLLVMCoverageMapFormat,
         params.commonOptions.makeVariableSource == MakeVariableSource.CONFIGURATION,
+        cppOptions.dropFullyStaticLinkingMode,
         cppOptions.isLipoContextCollector(),
         cppToolchainInfo);
   }
@@ -343,7 +331,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
       String desiredCpu,
       boolean convertLipoToThinLto,
       PathFragment crosstoolTopPathFragment,
-      Path fdoZip,
+      Path fdoProfileAbsolutePath,
+      Label fdoProfileLabel,
       Label ccToolchainLabel,
       Label stlLabel,
       PathFragment nonConfiguredSysroot,
@@ -364,8 +353,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
       CpuTransformer cpuTransformerEnum,
       boolean stripBinaries,
       CompilationMode compilationMode,
-      boolean useLLVMCoverageMap,
       boolean shouldProvideMakeVariables,
+      boolean dropFullyStaticLinkingMode,
       boolean lipoContextCollector,
       CppToolchainInfo cppToolchainInfo) {
     this.crosstoolTop = crosstoolTop;
@@ -373,7 +362,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     this.desiredCpu = desiredCpu;
     this.convertLipoToThinLto = convertLipoToThinLto;
     this.crosstoolTopPathFragment = crosstoolTopPathFragment;
-    this.fdoZip = fdoZip;
+    this.fdoProfileAbsolutePath = fdoProfileAbsolutePath;
+    this.fdoProfileLabel = fdoProfileLabel;
     this.ccToolchainLabel = ccToolchainLabel;
     this.stlLabel = stlLabel;
     this.nonConfiguredSysroot = nonConfiguredSysroot;
@@ -394,8 +384,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     this.cpuTransformerEnum = cpuTransformerEnum;
     this.stripBinaries = stripBinaries;
     this.compilationMode = compilationMode;
-    this.useLLVMCoverageMap = useLLVMCoverageMap;
     this.shouldProvideMakeVariables = shouldProvideMakeVariables;
+    this.dropFullyStaticLinkingMode = dropFullyStaticLinkingMode;
     this.lipoContextCollector = lipoContextCollector;
     this.cppToolchainInfo = cppToolchainInfo;
   }
@@ -715,6 +705,9 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   }
 
   public boolean hasStaticLinkOption() {
+    if (dropFullyStaticLinkingMode()) {
+      return false;
+    }
     return linkOptions.contains("-static");
   }
 
@@ -880,6 +873,10 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   /** Returns true if lipo should be converted to thinlto. */
   public boolean shouldConvertLipoToThinLto() {
     return convertLipoToThinLto;
+  }
+
+  public boolean dropFullyStaticLinkingMode() {
+    return dropFullyStaticLinkingMode;
   }
 
   public boolean isFdo() {
@@ -1333,63 +1330,28 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     return cppOptions.getFdoInstrument();
   }
 
-  public Path getFdoZip() {
-    return fdoZip;
+  public Path getFdoProfileAbsolutePath() {
+    return fdoProfileAbsolutePath;
   }
 
-  /**
-   * Return set of features enabled by the CppConfiguration, specifically the FDO and LIPO related
-   * features enabled by options.
-   */
-  @Override
-  public ImmutableSet<String> configurationEnabledFeatures(
-      RuleContext ruleContext, ImmutableSet<String> disabledFeatures) {
-    ImmutableSet.Builder<String> requestedFeatures = ImmutableSet.builder();
-    if (cppOptions.getFdoInstrument() != null) {
-      requestedFeatures.add(CppRuleClasses.FDO_INSTRUMENT);
-    }
+  public Label getFdoProfileLabel() {
+    return fdoProfileLabel;
+  }
 
-    boolean isFdo = fdoZip != null && compilationMode == CompilationMode.OPT;
-    if (isFdo && !CppFileTypes.GCC_AUTO_PROFILE.matches(fdoZip)) {
-      requestedFeatures.add(CppRuleClasses.FDO_OPTIMIZE);
-    }
-    if (isFdo && CppFileTypes.GCC_AUTO_PROFILE.matches(fdoZip)) {
-      requestedFeatures.add(CppRuleClasses.AUTOFDO);
-      // For LLVM, support implicit enabling of ThinLTO for AFDO unless it has been
-      // explicitly disabled.
-      if (isLLVMCompiler() && !disabledFeatures.contains(CppRuleClasses.THIN_LTO)) {
-        requestedFeatures.add(CppRuleClasses.ENABLE_AFDO_THINLTO);
-      }
-    }
-    if (isLipoOptimizationOrInstrumentation()) {
-      // Map LIPO to ThinLTO for LLVM builds.
-      if (isLLVMCompiler() && cppOptions.getFdoOptimize() != null) {
-        requestedFeatures.add(CppRuleClasses.THIN_LTO);
-      } else {
-        requestedFeatures.add(CppRuleClasses.LIPO);
-      }
-    }
-    if (ruleContext.getConfiguration().isCodeCoverageEnabled()) {
-      requestedFeatures.add(CppRuleClasses.COVERAGE);
-      if (useLLVMCoverageMap) {
-        requestedFeatures.add(CppRuleClasses.LLVM_COVERAGE_MAP_FORMAT);
-      } else {
-        requestedFeatures.add(CppRuleClasses.GCC_COVERAGE_MAP_FORMAT);
-      }
-    }
-    return requestedFeatures.build();
+  public boolean useLLVMCoverageMapFormat() {
+    return cppOptions.useLLVMCoverageMapFormat;
   }
 
   public static PathFragment computeDefaultSysroot(CToolchain toolchain) {
-    PathFragment defaultSysroot =
-        toolchain.getBuiltinSysroot().length() == 0
-            ? null
-            : PathFragment.create(toolchain.getBuiltinSysroot());
-    if ((defaultSysroot != null) && !defaultSysroot.isNormalized()) {
-      throw new IllegalArgumentException(
-          "The built-in sysroot '" + defaultSysroot + "' is not normalized.");
+    String builtInSysroot = toolchain.getBuiltinSysroot();
+    if (builtInSysroot.isEmpty()) {
+      return null;
     }
-    return defaultSysroot;
+    if (!PathFragment.isNormalized(builtInSysroot)) {
+      throw new IllegalArgumentException(
+          "The built-in sysroot '" + builtInSysroot + "' is not normalized.");
+    }
+    return PathFragment.create(builtInSysroot);
   }
 
   @Override

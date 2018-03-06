@@ -54,11 +54,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
-/**
- * Pluggable Java compilation semantics.
- */
+/** Pluggable Java compilation semantics. */
 public interface JavaSemantics {
-
   LibraryLanguage LANGUAGE = new LibraryLanguage("Java");
 
   SafeImplicitOutputsFunction JAVA_LIBRARY_CLASS_JAR =

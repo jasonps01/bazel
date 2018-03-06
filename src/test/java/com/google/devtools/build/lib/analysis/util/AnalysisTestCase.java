@@ -58,6 +58,7 @@ import com.google.devtools.build.lib.rules.repository.RepositoryDelegatorFunctio
 import com.google.devtools.build.lib.runtime.KeepGoingOption;
 import com.google.devtools.build.lib.runtime.LoadingPhaseThreadsOption;
 import com.google.devtools.build.lib.skyframe.BazelSkyframeExecutorConstants;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
 import com.google.devtools.build.lib.skyframe.SequencedSkyframeExecutor;
@@ -153,7 +154,7 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
             BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY);
     directories =
         new BlazeDirectories(
-            new ServerDirectories(outputBase, outputBase),
+            new ServerDirectories(outputBase, outputBase, outputBase),
             rootDirectory,
             analysisMock.getProductName());
     workspaceStatusActionFactory =
@@ -389,6 +390,23 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     return update(new EventBus(), defaultFlags(), aspects, labels);
   }
 
+  protected ConfiguredTargetAndTarget getConfiguredTargetAndTarget(String label)
+      throws InterruptedException {
+    return getConfiguredTargetAndTarget(label, getTargetConfiguration());
+  }
+
+  protected ConfiguredTargetAndTarget getConfiguredTargetAndTarget(
+      String label, BuildConfiguration config) {
+    ensureUpdateWasCalled();
+    Label parsedLabel;
+    try {
+      parsedLabel = Label.parseAbsolute(label);
+    } catch (LabelSyntaxException e) {
+      throw new AssertionError(e);
+    }
+    return skyframeExecutor.getConfiguredTargetAndTargetForTesting(reporter, parsedLabel, config);
+  }
+
   protected Target getTarget(String label) throws InterruptedException {
     try {
       return SkyframeExecutorTestUtils.getExistingTarget(skyframeExecutor,
@@ -403,6 +421,14 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     return getConfiguredTargetForSkyframe(label, configuration);
   }
 
+  /**
+   * Returns the corresponding configured target, if it exists. Note that this will only return
+   * anything useful after a call to update() with the same label.
+   */
+  protected ConfiguredTarget getConfiguredTarget(String label) throws InterruptedException {
+    return getConfiguredTarget(label, getTargetConfiguration());
+  }
+
   private ConfiguredTarget getConfiguredTargetForSkyframe(String label,
       BuildConfiguration configuration) {
     Label parsedLabel;
@@ -412,14 +438,6 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
       throw new AssertionError(e);
     }
     return skyframeExecutor.getConfiguredTargetForTesting(reporter, parsedLabel, configuration);
-  }
-
-  /**
-   * Returns the corresponding configured target, if it exists. Note that this will only return
-   * anything useful after a call to update() with the same label.
-   */
-  protected ConfiguredTarget getConfiguredTarget(String label) throws InterruptedException {
-    return getConfiguredTarget(label, getTargetConfiguration());
   }
 
   /**
@@ -482,8 +500,21 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
    * Also see {@link AnalysisTestCase#setRulesAndAspectsAvailableInTests(Iterable, Iterable)}.
    */
   protected void setRulesAvailableInTests(RuleDefinition... rules) throws Exception {
+    // Not all of these aspects are needed for all tests, but it makes it simple to offer them all.
     setRulesAndAspectsAvailableInTests(
-        ImmutableList.<NativeAspectClass>of(),
+        ImmutableList.of(
+            TestAspects.SIMPLE_ASPECT,
+            TestAspects.PARAMETRIZED_DEFINITION_ASPECT,
+            TestAspects.ASPECT_REQUIRING_PROVIDER,
+            TestAspects.FALSE_ADVERTISEMENT_ASPECT,
+            TestAspects.ALL_ATTRIBUTES_ASPECT,
+            TestAspects.ALL_ATTRIBUTES_WITH_TOOL_ASPECT,
+            TestAspects.BAR_PROVIDER_ASPECT,
+            TestAspects.EXTRA_ATTRIBUTE_ASPECT,
+            TestAspects.FOO_PROVIDER_ASPECT,
+            TestAspects.ASPECT_REQUIRING_PROVIDER_SETS,
+            TestAspects.WARNING_ASPECT,
+            TestAspects.ERROR_ASPECT),
         ImmutableList.copyOf(rules));
   }
 

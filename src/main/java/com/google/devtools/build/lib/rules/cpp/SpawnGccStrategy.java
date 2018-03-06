@@ -37,30 +37,29 @@ import java.util.List;
 )
 public class SpawnGccStrategy implements CppCompileActionContext {
   @Override
-  public Iterable<Artifact> findAdditionalInputs(
-      CppCompileAction action,
-      ActionExecutionContext actionExecutionContext,
-      IncludeProcessing includeProcessing)
-      throws ExecException, InterruptedException {
-    return null;
-  }
-
-  @Override
   public CppCompileActionResult execWithReply(
       CppCompileAction action, ActionExecutionContext actionExecutionContext)
       throws ExecException, InterruptedException {
-    Iterable<Artifact> inputs = Iterables.concat(action.getInputs(), action.getAdditionalInputs());
-    Spawn spawn = new SimpleSpawn(
-        action,
-        ImmutableList.copyOf(action.getArgv()),
-        ImmutableMap.copyOf(action.getEnvironment()),
-        ImmutableMap.copyOf(action.getExecutionInfo()),
-        EmptyRunfilesSupplier.INSTANCE,
-        ImmutableList.<Artifact>copyOf(inputs),
-        /*tools=*/ImmutableList.<Artifact>of(),
-        /*filesetManifests=*/ImmutableList.<Artifact>of(),
-        action.getOutputs().asList(),
-        action.estimateResourceConsumptionLocal());
+
+    Iterable<Artifact> inputs =
+        Iterables.concat(
+            /**
+             * Intentionally not adding {@link CppCompileAction#inputsForInvalidation}, those are
+             * not needed for execution.
+             */
+            action.getMandatoryInputs(), action.getAdditionalInputs());
+    Spawn spawn =
+        new SimpleSpawn(
+            action,
+            ImmutableList.copyOf(action.getArguments()),
+            ImmutableMap.copyOf(action.getEnvironment()),
+            ImmutableMap.copyOf(action.getExecutionInfo()),
+            EmptyRunfilesSupplier.INSTANCE,
+            ImmutableList.copyOf(inputs),
+            /* tools= */ ImmutableList.of(),
+            /* filesetManifests= */ ImmutableList.of(),
+            action.getOutputs().asList(),
+            action.estimateResourceConsumptionLocal());
 
     List<SpawnResult> spawnResults =
         actionExecutionContext

@@ -132,9 +132,10 @@ public abstract class GlobFunctionTest {
     AtomicReference<ImmutableSet<PackageIdentifier>> deletedPackages =
         new AtomicReference<>(ImmutableSet.<PackageIdentifier>of());
     BlazeDirectories directories =
-        new BlazeDirectories(new ServerDirectories(root, root), root, TestConstants.PRODUCT_NAME);
+        new BlazeDirectories(
+            new ServerDirectories(root, root, root), root, TestConstants.PRODUCT_NAME);
     ExternalFilesHelper externalFilesHelper =
-        new ExternalFilesHelper(
+        ExternalFilesHelper.createForTesting(
             pkgLocator,
             ExternalFileAction.DEPEND_ON_EXTERNAL_PKG_FOR_EXTERNAL_REPO_PATHS,
             directories);

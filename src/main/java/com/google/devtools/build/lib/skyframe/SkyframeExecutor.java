@@ -54,6 +54,7 @@ import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.FileStateType;
 import com.google.devtools.build.lib.actions.ResourceManager;
+import com.google.devtools.build.lib.analysis.AnalysisProtos.ActionGraphContainer;
 import com.google.devtools.build.lib.analysis.AspectCollection;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
@@ -340,7 +341,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
         this,
         (ConfiguredRuleClassProvider) ruleClassProvider);
     this.artifactFactory.set(skyframeBuildView.getArtifactFactory());
-    this.externalFilesHelper = new ExternalFilesHelper(
+    this.externalFilesHelper = ExternalFilesHelper.create(
         pkgLocator, this.externalFileAction, directories);
     this.crossRepositoryLabelViolationStrategy = crossRepositoryLabelViolationStrategy;
     this.buildFilesByPriority = buildFilesByPriority;
@@ -452,8 +453,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
             actionKeyContext, artifactFactory, buildInfoFactories, removeActionsAfterEvaluation));
     map.put(
         SkyFunctions.BUILD_INFO,
-        new WorkspaceStatusFunction(
-            actionKeyContext, removeActionsAfterEvaluation, this::makeWorkspaceStatusAction));
+        new WorkspaceStatusFunction(removeActionsAfterEvaluation, this::makeWorkspaceStatusAction));
     map.put(
         SkyFunctions.COVERAGE_REPORT,
         new CoverageReportFunction(actionKeyContext, removeActionsAfterEvaluation));
@@ -593,6 +593,8 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     }
   }
 
+  public abstract ActionGraphContainer getActionGraphContainer(List<String> actionGraphTargets);
+
   class BuildViewProvider {
     /**
      * Returns the current {@link SkyframeBuildView} instance.
@@ -686,7 +688,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
   }
 
   /** Computes statistics on heap-resident rules and aspects. */
-  public abstract List<RuleStat> getRuleStats();
+  public abstract List<RuleStat> getRuleStats(ExtendedEventHandler eventHandler);
 
   /**
    * Removes ConfigurationFragmentValues from the cache.
@@ -895,7 +897,13 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       throws ToolchainContextException, InterruptedException {
     SkyFunctionEnvironmentForTesting env =
         new SkyFunctionEnvironmentForTesting(buildDriver, eventHandler, this);
-    return ToolchainUtil.createToolchainContext(env, "", requiredToolchains, config);
+    return ToolchainUtil.createToolchainContext(
+        env,
+        "",
+        requiredToolchains,
+        config == null
+            ? null
+            : BuildConfigurationValue.key(config.fragmentClasses(), config.getOptions()));
   }
 
   /**
@@ -1641,12 +1649,24 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     return getConfiguredTargetForTesting(eventHandler, label, configuration, NoTransition.INSTANCE);
   }
 
-  /**
-   * Returns a particular configured target after applying the given transition.
-   */
+  /** Returns a particular configured target after applying the given transition. */
   @VisibleForTesting
   @Nullable
   public ConfiguredTarget getConfiguredTargetForTesting(
+      ExtendedEventHandler eventHandler,
+      Label label,
+      BuildConfiguration configuration,
+      ConfigurationTransition transition) {
+    ConfiguredTargetAndTarget configuredTargetAndTarget =
+        getConfiguredTargetAndTargetForTesting(eventHandler, label, configuration, transition);
+    return configuredTargetAndTarget == null
+        ? null
+        : configuredTargetAndTarget.getConfiguredTarget();
+  }
+
+  @VisibleForTesting
+  @Nullable
+  public ConfiguredTargetAndTarget getConfiguredTargetAndTargetForTesting(
       ExtendedEventHandler eventHandler,
       Label label,
       BuildConfiguration configuration,
@@ -1662,9 +1682,15 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
                         : Dependency.withTransitionAndAspects(
                             label, transition, AspectCollection.EMPTY))),
             null);
-    return configuredTargetAndTarget == null
-        ? null
-        : configuredTargetAndTarget.getConfiguredTarget();
+    return configuredTargetAndTarget;
+  }
+
+  @VisibleForTesting
+  @Nullable
+  public ConfiguredTargetAndTarget getConfiguredTargetAndTargetForTesting(
+      ExtendedEventHandler eventHandler, Label label, BuildConfiguration configuration) {
+    return getConfiguredTargetAndTargetForTesting(
+        eventHandler, label, configuration, NoTransition.INSTANCE);
   }
 
   /**
@@ -1768,11 +1794,6 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     EvaluationResult<SkyValue> evaluationResult =
         buildDriver.evaluate(roots, true, numThreads, eventHandler);
     return evaluationResult;
-  }
-
-  @Override
-  public boolean isUpToDate(Set<SkyKey> roots) {
-    return buildDriver.alreadyEvaluated(roots);
   }
 
   /**

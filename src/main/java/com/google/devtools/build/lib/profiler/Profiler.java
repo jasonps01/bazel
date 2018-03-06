@@ -20,6 +20,7 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.clock.Clock;
+import com.google.devtools.build.lib.collect.Extrema;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadCompatible;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.profiler.PredicateBasedStatRecorder.RecorderAndPredicate;
@@ -30,12 +31,12 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.PriorityQueue;
 import java.util.Queue;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -331,51 +332,40 @@ public final class Profiler {
   /**
    * Aggregator class that keeps track of the slowest tasks of the specified type.
    *
-   * <p><code>priorityQueues</p> is sharded so that all threads need not compete for the same
-   * lock if they do the same operation at the same time. Access to the individual queues is
-   * synchronized on the queue objects themselves.
+   * <p><code>extremaAggregators</p> is sharded so that all threads need not compete for the same
+   * lock if they do the same operation at the same time. Access to an individual {@link Extrema}
+   * is synchronized on the {@link Extrema} instance itself.
    */
   private static final class SlowestTaskAggregator {
     private static final int SHARDS = 16;
     private final int size;
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private final PriorityQueue<SlowTask>[] priorityQueues = new PriorityQueue[SHARDS];
+    private final Extrema<SlowTask>[] extremaAggregators = new Extrema[SHARDS];
 
     SlowestTaskAggregator(int size) {
       this.size = size;
 
       for (int i = 0; i < SHARDS; i++) {
-        priorityQueues[i] = new PriorityQueue<>(size + 1);
+        extremaAggregators[i] = Extrema.max(size);
       }
     }
 
     // @ThreadSafe
     void add(TaskData taskData) {
-      PriorityQueue<SlowTask> queue =
-          priorityQueues[(int) (Thread.currentThread().getId() % SHARDS)];
-      synchronized (queue) {
-        if (queue.size() == size) {
-          // Optimization: check if we are faster than the fastest element. If we are, we would
-          // be the ones to fall off the end of the queue, therefore, we can safely return early.
-          if (queue.peek().getDurationNanos() > taskData.duration) {
-            return;
-          }
-
-          queue.add(new SlowTask(taskData));
-          queue.remove();
-        } else {
-          queue.add(new SlowTask(taskData));
-        }
+      Extrema<SlowTask> extrema =
+          extremaAggregators[(int) (Thread.currentThread().getId() % SHARDS)];
+      synchronized (extrema) {
+        extrema.aggregate(new SlowTask(taskData));
       }
     }
 
     // @ThreadSafe
     void clear() {
       for (int i = 0; i < SHARDS; i++) {
-        PriorityQueue<SlowTask> queue = priorityQueues[i];
-        synchronized (queue) {
-          queue.clear();
+        Extrema<SlowTask> extrema = extremaAggregators[i];
+        synchronized (extrema) {
+          extrema.clear();
         }
       }
     }
@@ -383,19 +373,16 @@ public final class Profiler {
     // @ThreadSafe
     Iterable<SlowTask> getSlowestTasks() {
       // This is slow, but since it only happens during the end of the invocation, it's OK
-      PriorityQueue<SlowTask> merged = new PriorityQueue<>(size * SHARDS);
+      Extrema mergedExtrema = Extrema.max(size * SHARDS);
       for (int i = 0; i < SHARDS; i++) {
-        PriorityQueue<SlowTask> queue = priorityQueues[i];
-        synchronized (queue) {
-          merged.addAll(queue);
+        Extrema<SlowTask> extrema = extremaAggregators[i];
+        synchronized (extrema) {
+          for (SlowTask task : extrema.getExtremeElements()) {
+            mergedExtrema.aggregate(task);
+          }
         }
       }
-
-      while (merged.size() > size) {
-        merged.remove();
-      }
-
-      return merged;
+      return mergedExtrema.getExtremeElements();
     }
   }
 
@@ -779,41 +766,38 @@ public final class Profiler {
   }
 
   /**
-   * Used externally to submit simple task (one that does not have any
-   * subtasks). Depending on the minDuration attribute of the task type, task
-   * may be just aggregated into the parent task and not stored directly.
+   * Used externally to submit simple task (one that does not have any subtasks). Depending on the
+   * minDuration attribute of the task type, task may be just aggregated into the parent task and
+   * not stored directly.
    *
-   * <p>Note that start and stop time must both be acquired from the same clock
-   * instance.
+   * <p>Note that start and stop time must both be acquired from the same clock instance.
    *
-   * @param startTime task start time
-   * @param stopTime task stop time
+   * @param startTimeNanos task start time
+   * @param stopTimeNanos task stop time
    * @param type task type
-   * @param object object associated with that task. Can be String object that
-   *               describes it.
+   * @param object object associated with that task. Can be String object that describes it.
    */
-  public void logSimpleTask(long startTime, long stopTime, ProfilerTask type, Object object) {
+  public void logSimpleTask(
+      long startTimeNanos, long stopTimeNanos, ProfilerTask type, Object object) {
     if (isActive() && isProfiling(type)) {
-      logTask(startTime, stopTime - startTime, type, object);
+      logTask(startTimeNanos, stopTimeNanos - startTimeNanos, type, object);
     }
   }
 
   /**
-   * Used externally to submit simple task (one that does not have any
-   * subtasks). Depending on the minDuration attribute of the task type, task
-   * may be just aggregated into the parent task and not stored directly.
+   * Used externally to submit simple task (one that does not have any subtasks). Depending on the
+   * minDuration attribute of the task type, task may be just aggregated into the parent task and
+   * not stored directly.
    *
-   * @param startTime task start time (obtained through {@link
-   *        Profiler#nanoTimeMaybe()})
+   * @param startTimeNanos task start time (obtained through {@link Profiler#nanoTimeMaybe()})
    * @param duration the duration of the task
    * @param type task type
-   * @param object object associated with that task. Can be String object that
-   *               describes it.
+   * @param object object associated with that task. Can be String object that describes it.
    */
-  public void logSimpleTaskDuration(long startTime, long duration, ProfilerTask type,
-                                    Object object) {
+  public void logSimpleTaskDuration(
+      long startTimeNanos, Duration duration, ProfilerTask type, Object object) {
     if (isActive() && isProfiling(type)) {
-      logTask(startTime, duration, type, object);
+      logTask(startTimeNanos, duration.toNanos(), type, object);
     }
   }
 
@@ -888,10 +872,8 @@ public final class Profiler {
     }
   }
 
-  /**
-   * Convenience method to log phase marker tasks.
-   */
-  public void markPhase(ProfilePhase phase) {
+  /** Convenience method to log phase marker tasks. */
+  public void markPhase(ProfilePhase phase) throws InterruptedException {
     MemoryProfiler.instance().markPhase(phase);
     if (isActive() && isProfiling(ProfilerTask.PHASE)) {
       Preconditions.checkState(taskStack.isEmpty(), "Phase tasks must not be nested");

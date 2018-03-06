@@ -29,6 +29,8 @@ import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.NativeInfo;
 import com.google.devtools.build.lib.packages.NativeProvider;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
@@ -36,6 +38,7 @@ import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.FunctionSignature;
 import com.google.devtools.build.lib.syntax.SkylarkList;
 import com.google.devtools.build.lib.syntax.SkylarkType;
+import com.google.devtools.build.lib.util.Fingerprint;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -49,8 +52,8 @@ import javax.annotation.Nullable;
   category = SkylarkModuleCategory.PROVIDER
 )
 @Immutable
+@AutoCodec
 public class PlatformInfo extends NativeInfo {
-
   /** Name used in Skylark for accessing this provider. */
   public static final String SKYLARK_NAME = "PlatformInfo";
 
@@ -99,27 +102,33 @@ public class PlatformInfo extends NativeInfo {
   private final ImmutableMap<ConstraintSettingInfo, ConstraintValueInfo> constraints;
   private final String remoteExecutionProperties;
 
-  private PlatformInfo(
+  @AutoCodec.Instantiator
+  @VisibleForSerialization
+  PlatformInfo(
       Label label,
-      ImmutableList<ConstraintValueInfo> constraints,
+      ImmutableMap<ConstraintSettingInfo, ConstraintValueInfo> constraints,
       String remoteExecutionProperties,
       Location location) {
     super(
         SKYLARK_CONSTRUCTOR,
-        ImmutableMap.<String, Object>of(
-            "label", label,
-            "constraints", constraints),
         location);
 
     this.label = label;
+    this.constraints = constraints;
     this.remoteExecutionProperties = remoteExecutionProperties;
+  }
 
+  static PlatformInfo create(
+      Label label,
+      ImmutableList<ConstraintValueInfo> constraints,
+      String remoteExecutionProperties,
+      Location location) {
     ImmutableMap.Builder<ConstraintSettingInfo, ConstraintValueInfo> constraintsBuilder =
         new ImmutableMap.Builder<>();
     for (ConstraintValueInfo constraint : constraints) {
       constraintsBuilder.put(constraint.constraint(), constraint);
     }
-    this.constraints = constraintsBuilder.build();
+    return new PlatformInfo(label, constraintsBuilder.build(), remoteExecutionProperties, location);
   }
 
   @SkylarkCallable(
@@ -139,7 +148,7 @@ public class PlatformInfo extends NativeInfo {
     structField = true
   )
   public Iterable<ConstraintValueInfo> constraints() {
-    return constraints.values();
+    return constraints.values().asList();
   }
 
   /**
@@ -163,6 +172,14 @@ public class PlatformInfo extends NativeInfo {
   /** Returns a new {@link Builder} for creating a fresh {@link PlatformInfo} instance. */
   public static Builder builder() {
     return new Builder();
+  }
+
+  /** Add this platform to the given fingerprint. */
+  public void addTo(Fingerprint fp) {
+    fp.addString(label.toString());
+    fp.addNullableString(remoteExecutionProperties);
+    fp.addInt(constraints.size());
+    constraints.values().forEach(constraintValue -> constraintValue.addTo(fp));
   }
 
   /** Builder class to facilitate creating valid {@link PlatformInfo} instances. */
@@ -243,7 +260,7 @@ public class PlatformInfo extends NativeInfo {
      */
     public PlatformInfo build() throws DuplicateConstraintException {
       ImmutableList<ConstraintValueInfo> validatedConstraints = validateConstraints(constraints);
-      return new PlatformInfo(label, validatedConstraints, remoteExecutionProperties, location);
+      return PlatformInfo.create(label, validatedConstraints, remoteExecutionProperties, location);
     }
 
     public static ImmutableList<ConstraintValueInfo> validateConstraints(

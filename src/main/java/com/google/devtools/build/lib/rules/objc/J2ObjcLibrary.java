@@ -50,8 +50,8 @@ public class J2ObjcLibrary implements RuleConfiguredTargetFactory {
     return new ObjcCommon.Builder(ruleContext)
         .setCompilationAttributes(
             CompilationAttributes.Builder.fromRuleContext(ruleContext).build())
-        .addDeps(ruleContext.getPrerequisites("deps", Mode.TARGET))
-        .addDeps(ruleContext.getPrerequisites("jre_deps", Mode.TARGET))
+        .addDeps(ruleContext.getPrerequisiteConfiguredTargetAndTargets("deps", Mode.TARGET))
+        .addDeps(ruleContext.getPrerequisiteConfiguredTargetAndTargets("jre_deps", Mode.TARGET))
         .setIntermediateArtifacts(ObjcRuleClasses.intermediateArtifacts(ruleContext))
         .setHasModuleMap()
         .build();
@@ -130,7 +130,7 @@ public class J2ObjcLibrary implements RuleConfiguredTargetFactory {
     // We add another header search path with gen root if we have generated sources to translate.
     for (Artifact sourceToTranslate : sourcesToTranslate) {
       if (!sourceToTranslate.isSourceArtifact()) {
-        headerSearchPaths.add(PathFragment.create(objcFileRootExecPath, genRoot));
+        headerSearchPaths.add(objcFileRootExecPath.getRelative(genRoot));
         return headerSearchPaths.build();
       }
     }

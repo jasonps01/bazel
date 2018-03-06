@@ -33,9 +33,11 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.SpawnExecException;
 import com.google.devtools.build.lib.exec.SpawnRunner;
-import com.google.devtools.build.lib.remote.DigestUtil.ActionKey;
 import com.google.devtools.build.lib.remote.Retrier.RetryException;
 import com.google.devtools.build.lib.remote.TreeNodeRepository.TreeNode;
+import com.google.devtools.build.lib.remote.util.DigestUtil;
+import com.google.devtools.build.lib.remote.util.DigestUtil.ActionKey;
+import com.google.devtools.build.lib.remote.util.TracingMetadataUtils;
 import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.vfs.Path;
@@ -110,13 +112,18 @@ class RemoteSpawnRunner implements SpawnRunner {
   }
 
   @Override
+  public String getName() {
+    return "remote";
+  }
+
+  @Override
   public SpawnResult exec(Spawn spawn, SpawnExecutionPolicy policy)
       throws ExecException, InterruptedException, IOException {
     if (!Spawns.mayBeExecutedRemotely(spawn) || remoteCache == null) {
       return fallbackRunner.exec(spawn, policy);
     }
 
-    policy.report(ProgressStatus.EXECUTING, "remote");
+    policy.report(ProgressStatus.EXECUTING, getName());
     // Temporary hack: the TreeNodeRepository should be created and maintained upstream!
     ActionInputFileCache inputFileCache = policy.getActionInputFileCache();
     TreeNodeRepository repository = new TreeNodeRepository(execRoot, inputFileCache, digestUtil);
@@ -156,7 +163,9 @@ class RemoteSpawnRunner implements SpawnRunner {
                     + actionKey.getDigest());
           }
           try {
-            return downloadRemoteResults(cachedResult, policy.getFileOutErr());
+            return downloadRemoteResults(cachedResult, policy.getFileOutErr())
+                .setCacheHit(true)
+                .build();
           } catch (CacheNotFoundException e) {
             // No cache hit, so we fall through to local or remote execution.
             // We set acceptCachedResult to false in order to force the action re-execution.
@@ -180,6 +189,7 @@ class RemoteSpawnRunner implements SpawnRunner {
       }
 
       final ActionResult result;
+      boolean remoteCacheHit = false;
       try {
         ExecuteRequest.Builder request =
             ExecuteRequest.newBuilder()
@@ -188,12 +198,16 @@ class RemoteSpawnRunner implements SpawnRunner {
                 .setSkipCacheLookup(!acceptCachedResult);
         ExecuteResponse reply = remoteExecutor.executeRemotely(request.build());
         result = reply.getResult();
+        remoteCacheHit = reply.getCachedResult();
       } catch (IOException e) {
         return execLocallyOrFail(spawn, policy, inputMap, actionKey, uploadLocalResults, e);
       }
 
       try {
-        return downloadRemoteResults(result, policy.getFileOutErr());
+        return downloadRemoteResults(result, policy.getFileOutErr())
+            .setRunnerName(remoteCacheHit ? "" : getName())
+            .setCacheHit(remoteCacheHit)
+            .build();
       } catch (IOException e) {
         return execLocallyOrFail(spawn, policy, inputMap, actionKey, uploadLocalResults, e);
       }
@@ -202,14 +216,13 @@ class RemoteSpawnRunner implements SpawnRunner {
     }
   }
 
-  private SpawnResult downloadRemoteResults(ActionResult result, FileOutErr outErr)
+  private SpawnResult.Builder downloadRemoteResults(ActionResult result, FileOutErr outErr)
       throws ExecException, IOException, InterruptedException {
     remoteCache.download(result, execRoot, outErr);
     int exitCode = result.getExitCode();
     return new SpawnResult.Builder()
         .setStatus(exitCode == 0 ? Status.SUCCESS : Status.NON_ZERO_EXIT)
-        .setExitCode(exitCode)
-        .build();
+        .setExitCode(exitCode);
   }
 
   private SpawnResult execLocallyOrFail(
@@ -237,6 +250,7 @@ class RemoteSpawnRunner implements SpawnRunner {
         out.write(msg.getBytes(StandardCharsets.UTF_8));
       }
       return new SpawnResult.Builder()
+          .setRunnerName(getName())
           .setStatus(Status.TIMEOUT)
           .setExitCode(POSIX_TIMEOUT_EXIT_CODE)
           .build();
@@ -245,7 +259,8 @@ class RemoteSpawnRunner implements SpawnRunner {
     if (exception instanceof RetryException
         && RemoteRetrierUtils.causedByStatus((RetryException) exception, Code.UNAVAILABLE)) {
       status = Status.EXECUTION_FAILED_CATASTROPHICALLY;
-    } else if (cause instanceof CacheNotFoundException) {
+    } else if (exception instanceof CacheNotFoundException
+        || cause instanceof CacheNotFoundException) {
       status = Status.REMOTE_CACHE_FAILED;
     } else {
       status = Status.EXECUTION_FAILED;
@@ -253,6 +268,7 @@ class RemoteSpawnRunner implements SpawnRunner {
     throw new SpawnExecException(
         Throwables.getStackTraceAsString(exception),
         new SpawnResult.Builder()
+            .setRunnerName(getName())
             .setStatus(status)
             .setExitCode(ExitCode.REMOTE_ERROR.getNumericExitCode())
             .build(),
@@ -284,6 +300,7 @@ class RemoteSpawnRunner implements SpawnRunner {
     Collections.sort(outputPaths);
     Collections.sort(outputDirectoryPaths);
     action.addAllOutputFiles(outputPaths);
+    action.addAllOutputDirectories(outputDirectoryPaths);
 
     // Get the remote platform properties.
     if (executionPlatform != null) {

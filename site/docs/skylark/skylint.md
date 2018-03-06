@@ -113,6 +113,8 @@ blank line. Their contents are indented by two spaces.
 Example:
 
 ```
+"""This module contains some docstrings examples."""
+
 def example_function1():
   """Illustrates the usage of a one-line function docstring."""
 
@@ -135,7 +137,7 @@ def example_function2(foo, bar):
   Deprecated:
     This function is deprecated for <reason>. Use <alternative> instead.
   """
-  return 'baz'
+  return "baz"
 ```
 
 #### Indentation
@@ -359,6 +361,11 @@ foo = _foo
 ```
 
 This way, the name is still re-exported but doesn't generate a warning.
+
+### Deprecated API [deprecated-api]
+
+See [documentation](https://docs.bazel.build/versions/master/skylark/lib/ctx.html)
+for more information.
 
 ### Miscellaneous lints
 

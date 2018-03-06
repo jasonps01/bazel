@@ -109,8 +109,8 @@ public class FilesystemValueCheckerTest {
                 BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY));
     BlazeDirectories directories =
         new BlazeDirectories(
-            new ServerDirectories(pkgRoot, pkgRoot), pkgRoot, TestConstants.PRODUCT_NAME);
-    ExternalFilesHelper externalFilesHelper = new ExternalFilesHelper(
+            new ServerDirectories(pkgRoot, pkgRoot, pkgRoot), pkgRoot, TestConstants.PRODUCT_NAME);
+    ExternalFilesHelper externalFilesHelper = ExternalFilesHelper.createForTesting(
         pkgLocator, ExternalFileAction.DEPEND_ON_EXTERNAL_PKG_FOR_EXTERNAL_REPO_PATHS, directories);
     skyFunctions.put(SkyFunctions.FILE_STATE, new FileStateFunction(
         new AtomicReference<TimestampGranularityMonitor>(), externalFilesHelper));
@@ -361,7 +361,7 @@ public class FilesystemValueCheckerTest {
     FileSystemUtils.writeContentAsLatin1(out1.getPath(), "hello");
     FileSystemUtils.writeContentAsLatin1(out2.getPath(), "fizzlepop");
 
-    SkyKey actionLookupKey =
+    ActionLookupKey actionLookupKey =
         new ActionLookupKey() {
           @Override
           public SkyFunctionName functionName() {
@@ -440,7 +440,7 @@ public class FilesystemValueCheckerTest {
     SpecialArtifact last = createTreeArtifact("zzzzzzzzzz");
     FileSystemUtils.createDirectoryAndParents(last.getPath());
 
-    SkyKey actionLookupKey =
+    ActionLookupKey actionLookupKey =
         new ActionLookupKey() {
           @Override
           public SkyFunctionName functionName() {
@@ -620,7 +620,6 @@ public class FilesystemValueCheckerTest {
     outputDir.createDirectory();
     ArtifactRoot derivedRoot = ArtifactRoot.asDerivedRoot(fs.getPath("/"), outputDir);
     return new SpecialArtifact(
-        outputPath,
         derivedRoot,
         derivedRoot.getExecPath().getRelative(derivedRoot.getRoot().relativize(outputPath)),
         ArtifactOwner.NullArtifactOwner.INSTANCE,

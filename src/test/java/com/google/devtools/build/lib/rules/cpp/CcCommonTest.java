@@ -249,7 +249,7 @@ public class CcCommonTest extends BuildViewTestCase {
             "cc_library(name = 'defineslib',",
             "           srcs = ['defines.cc'],",
             "           defines = ['FOO', 'BAR'])");
-    assertThat(isolatedDefines.getProvider(CppCompilationContext.class).getDefines())
+    assertThat(isolatedDefines.get(CcCompilationInfo.PROVIDER).getDefines())
         .containsExactly("FOO", "BAR")
         .inOrder();
   }
@@ -376,19 +376,19 @@ public class CcCommonTest extends BuildViewTestCase {
         "           srcs = [ 'library.cc' ],",
         "           nocopts = '-fPIC')");
 
-    assertThat(getCppCompileAction("//a:pic").getArgv()).contains("-fPIC");
-    assertThat(getCppCompileAction("//a:libpic.so").getArgv()).contains("-fPIC");
-    assertThat(getCppCompileAction("//a:piclib").getArgv()).contains("-fPIC");
-    assertThat(getCppCompileAction("//a:nopic").getArgv()).doesNotContain("-fPIC");
-    assertThat(getCppCompileAction("//a:libnopic.so").getArgv()).doesNotContain("-fPIC");
-    assertThat(getCppCompileAction("//a:nopiclib").getArgv()).doesNotContain("-fPIC");
+    assertThat(getCppCompileAction("//a:pic").getArguments()).contains("-fPIC");
+    assertThat(getCppCompileAction("//a:libpic.so").getArguments()).contains("-fPIC");
+    assertThat(getCppCompileAction("//a:piclib").getArguments()).contains("-fPIC");
+    assertThat(getCppCompileAction("//a:nopic").getArguments()).doesNotContain("-fPIC");
+    assertThat(getCppCompileAction("//a:libnopic.so").getArguments()).doesNotContain("-fPIC");
+    assertThat(getCppCompileAction("//a:nopiclib").getArguments()).doesNotContain("-fPIC");
   }
 
   @Test
   public void testPicModeAssembly() throws Exception {
     useConfiguration("--cpu=k8");
     scratch.file("a/BUILD", "cc_library(name='preprocess', srcs=['preprocess.S'])");
-    List<String> argv = getCppCompileAction("//a:preprocess").getArgv();
+    List<String> argv = getCppCompileAction("//a:preprocess").getArguments();
     assertThat(argv).contains("-fPIC");
   }
 
@@ -415,7 +415,7 @@ public class CcCommonTest extends BuildViewTestCase {
     ConfiguredTarget foo = getConfiguredTarget("//bang:bang");
 
     String includesRoot = "bang/bang_includes";
-    assertThat(foo.getProvider(CppCompilationContext.class).getSystemIncludeDirs())
+    assertThat(foo.get(CcCompilationInfo.PROVIDER).getSystemIncludeDirs())
         .containsAllOf(
             PathFragment.create(includesRoot),
             targetConfig.getGenfilesFragment().getRelative(includesRoot));
@@ -442,11 +442,11 @@ public class CcCommonTest extends BuildViewTestCase {
     String includesRoot = "bang/bang_includes";
     List<PathFragment> expected =
         new ImmutableList.Builder<PathFragment>()
-            .addAll(noIncludes.getProvider(CppCompilationContext.class).getSystemIncludeDirs())
+            .addAll(noIncludes.get(CcCompilationInfo.PROVIDER).getSystemIncludeDirs())
             .add(PathFragment.create(includesRoot))
             .add(targetConfig.getGenfilesFragment().getRelative(includesRoot))
             .build();
-    assertThat(foo.getProvider(CppCompilationContext.class).getSystemIncludeDirs())
+    assertThat(foo.get(CcCompilationInfo.PROVIDER).getSystemIncludeDirs())
         .containsExactlyElementsIn(expected);
   }
 
@@ -855,11 +855,14 @@ public class CcCommonTest extends BuildViewTestCase {
         "cc_library(name='a', hdrs=['v1/b/c.h'], strip_include_prefix='v1', include_prefix='lib')");
 
     ConfiguredTarget lib = getConfiguredTarget("//third_party/a");
-    CppCompilationContext context = lib.getProvider(CppCompilationContext.class);
-    assertThat(ActionsTestUtil.prettyArtifactNames(context.getDeclaredIncludeSrcs()))
+    CcCompilationInfo ccCompilationInfo = lib.get(CcCompilationInfo.PROVIDER);
+    assertThat(ActionsTestUtil.prettyArtifactNames(ccCompilationInfo.getDeclaredIncludeSrcs()))
         .containsExactly("third_party/a/_virtual_includes/a/lib/b/c.h");
-    assertThat(context.getIncludeDirs()).containsExactly(
-        getTargetConfiguration().getBinFragment().getRelative("third_party/a/_virtual_includes/a"));
+    assertThat(ccCompilationInfo.getIncludeDirs())
+        .containsExactly(
+            getTargetConfiguration()
+                .getBinFragment()
+                .getRelative("third_party/a/_virtual_includes/a"));
   }
 
   @Test
@@ -891,10 +894,10 @@ public class CcCommonTest extends BuildViewTestCase {
         "cc_library(name='relative', hdrs=['v1/b.h'], strip_include_prefix='v1')",
         "cc_library(name='absolute', hdrs=['v1/b.h'], strip_include_prefix='/third_party')");
 
-    CppCompilationContext relative = getConfiguredTarget("//third_party/a:relative")
-        .getProvider(CppCompilationContext.class);
-    CppCompilationContext absolute = getConfiguredTarget("//third_party/a:absolute")
-        .getProvider(CppCompilationContext.class);
+    CcCompilationInfo relative =
+        getConfiguredTarget("//third_party/a:relative").get(CcCompilationInfo.PROVIDER);
+    CcCompilationInfo absolute =
+        getConfiguredTarget("//third_party/a:absolute").get(CcCompilationInfo.PROVIDER);
 
     assertThat(ActionsTestUtil.prettyArtifactNames(relative.getDeclaredIncludeSrcs()))
         .containsExactly("third_party/a/_virtual_includes/relative/b.h");
@@ -921,9 +924,9 @@ public class CcCommonTest extends BuildViewTestCase {
         "licenses(['notice'])",
         "cc_library(name='a', hdrs=['a.h'], include_prefix='third_party')");
 
-    CppCompilationContext context =
-        getConfiguredTarget("//third_party:a").getProvider(CppCompilationContext.class);
-    assertThat(ActionsTestUtil.prettyArtifactNames(context.getDeclaredIncludeSrcs()))
+    CcCompilationInfo ccCompilationInfo =
+        getConfiguredTarget("//third_party:a").get(CcCompilationInfo.PROVIDER);
+    assertThat(ActionsTestUtil.prettyArtifactNames(ccCompilationInfo.getDeclaredIncludeSrcs()))
         .doesNotContain("third_party/_virtual_includes/a/third_party/a.h");
   }
 

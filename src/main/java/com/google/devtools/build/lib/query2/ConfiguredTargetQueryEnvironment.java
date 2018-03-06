@@ -52,6 +52,7 @@ import com.google.devtools.build.lib.query2.engine.QueryUtil.UniquifierImpl;
 import com.google.devtools.build.lib.query2.engine.ThreadSafeOutputFormatterCallback;
 import com.google.devtools.build.lib.query2.engine.Uniquifier;
 import com.google.devtools.build.lib.query2.output.QueryOptions;
+import com.google.devtools.build.lib.rules.AliasConfiguredTarget;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetValue;
 import com.google.devtools.build.lib.skyframe.GraphBackedRecursivePackageProvider;
@@ -111,6 +112,11 @@ public class ConfiguredTargetQueryEnvironment
   private static final KeyExtractor<ConfiguredTarget, ConfiguredTargetKey>
       CONFIGURED_TARGET_KEY_EXTRACTOR = ConfiguredTargetKey::of;
 
+  /** Common query functions and cquery specific functions. */
+  public static final ImmutableList<QueryFunction> FUNCTIONS = populateFunctions();
+  /** Cquery specific functions. */
+  public static final ImmutableList<QueryFunction> CQUERY_FUNCTIONS = getCqueryFunctions();
+
   static {
     TargetPattern targetPattern;
     try {
@@ -158,6 +164,17 @@ public class ConfiguredTargetQueryEnvironment
     checkSettings(settings);
   }
 
+  private static ImmutableList<QueryFunction> populateFunctions() {
+    return new ImmutableList.Builder<QueryFunction>()
+        .addAll(QueryEnvironment.DEFAULT_QUERY_FUNCTIONS)
+        .addAll(getCqueryFunctions())
+        .build();
+  }
+
+  private static ImmutableList<QueryFunction> getCqueryFunctions() {
+    return ImmutableList.of(new ConfigFunction());
+  }
+
   // Check to make sure the settings requested are currently supported by this class
   private void checkSettings(Set<Setting> settings) throws QueryException {
     if (settings.contains(Setting.NO_NODEP_DEPS)
@@ -180,18 +197,34 @@ public class ConfiguredTargetQueryEnvironment
   }
 
   private ConfiguredTarget getConfiguredTarget(Label label) throws InterruptedException {
-    // Try with host configuration.
-    ConfiguredTarget configuredTarget =
-        getConfiguredTarget(ConfiguredTargetValue.key(label, hostConfiguration));
+    // Try with target configuration.
+    ConfiguredTarget configuredTarget = getTargetConfiguredTarget(label);
     if (configuredTarget != null) {
       return configuredTarget;
     }
-    configuredTarget =
-        getConfiguredTarget(ConfiguredTargetValue.key(label, defaultTargetConfiguration));
+    // Try with host configuration (even when --nohost_deps is set in the case that top-level
+    // targets are configured in the host configuration so we are doing a host-configuration-only
+    // query).
+    configuredTarget = getHostConfiguredTarget(label);
     if (configuredTarget != null) {
       return configuredTarget;
     }
     // Last chance: source file.
+    return getNullConfiguredTarget(label);
+  }
+
+  @Nullable
+  private ConfiguredTarget getHostConfiguredTarget(Label label) throws InterruptedException {
+    return getConfiguredTarget(ConfiguredTargetValue.key(label, hostConfiguration));
+  }
+
+  @Nullable
+  private ConfiguredTarget getTargetConfiguredTarget(Label label) throws InterruptedException {
+    return getConfiguredTarget(ConfiguredTargetValue.key(label, defaultTargetConfiguration));
+  }
+
+  @Nullable
+  private ConfiguredTarget getNullConfiguredTarget(Label label) throws InterruptedException {
     return getConfiguredTarget(ConfiguredTargetValue.key(label, null));
   }
 
@@ -265,6 +298,61 @@ public class ConfiguredTargetQueryEnvironment
             MoreExecutors.directExecutor()));
   }
 
+  /**
+   * Processes the targets in {@code targets} with the requested {@code configuration}
+   *
+   * @param pattern the original pattern that {@code targets} were parsed from. Used for error
+   *     message.
+   * @param targets the set of {@link ConfiguredTarget}s whose labels represent the targets being
+   *     requested.
+   * @param configuration the configuration to request {@code targets} in.
+   * @param callback the callback to receive the results of this method.
+   * @return {@link QueryTaskCallable} that returns the correctly configured targets.
+   */
+  QueryTaskCallable<Void> getConfiguredTargets(
+      String pattern,
+      ThreadSafeMutableSet<ConfiguredTarget> targets,
+      String configuration,
+      Callback<ConfiguredTarget> callback) {
+    return new QueryTaskCallable<Void>() {
+      @Override
+      public Void call() throws QueryException, InterruptedException {
+        List<ConfiguredTarget> transformedResult = new ArrayList<>();
+        for (ConfiguredTarget target : targets) {
+          Label label = target.getLabel();
+          ConfiguredTarget configuredTarget;
+          switch (configuration) {
+            case "\'host\'":
+              configuredTarget = getHostConfiguredTarget(label);
+              break;
+            case "\'target\'":
+              configuredTarget = getTargetConfiguredTarget(label);
+              break;
+            case "\'null\'":
+              configuredTarget = getNullConfiguredTarget(label);
+              break;
+            default:
+              throw new QueryException(
+                  "the second argument of the config function must be 'target', 'host', or 'null'");
+          }
+          if (configuredTarget != null) {
+            transformedResult.add(configuredTarget);
+          }
+        }
+        if (transformedResult.isEmpty()) {
+          throw new QueryException(
+              "No target (in) "
+                  + pattern
+                  + " could be found in the "
+                  + configuration
+                  + " configuration");
+        }
+        callback.process(transformedResult);
+        return null;
+      }
+    };
+  }
+
   @Override
   public ConfiguredTarget getOrCreate(ConfiguredTarget target) {
     return target;
@@ -288,8 +376,12 @@ public class ConfiguredTargetQueryEnvironment
   private Collection<ConfiguredTarget> filterFwdDeps(
       ConfiguredTarget configTarget, Collection<ConfiguredTarget> rawFwdDeps)
       throws InterruptedException {
-    if (!(configTarget instanceof RuleConfiguredTarget) || settings.isEmpty()) {
+    if (settings.isEmpty()) {
       return rawFwdDeps;
+    }
+    if (configTarget instanceof AliasConfiguredTarget
+        && ((AliasConfiguredTarget) configTarget).getActual() instanceof RuleConfiguredTarget) {
+      return getAllowedDeps(((AliasConfiguredTarget) configTarget).getActual(), rawFwdDeps);
     }
     return getAllowedDeps(configTarget, rawFwdDeps);
   }

@@ -207,7 +207,7 @@ public class AndroidNdkRepositoryFunction extends AndroidRepositoryFunction {
     try {
 
       String hostPlatform = AndroidNdkCrosstools.getHostPlatform(ndkRelease);
-      NdkPaths ndkPaths = new NdkPaths(ruleName, hostPlatform, apiLevel);
+      NdkPaths ndkPaths = new NdkPaths(ruleName, hostPlatform, apiLevel, ndkRelease.majorRevision);
 
       for (StlImpl stlImpl : StlImpls.get(ndkPaths)) {
         CrosstoolRelease crosstoolRelease =
@@ -331,6 +331,9 @@ public class AndroidNdkRepositoryFunction extends AndroidRepositoryFunction {
         toolchainFileGlobPatterns.add(NdkPaths.stripRepositoryPrefix(cxxFlag) + "/**/*");
       }
     }
+
+    // For NDK 15 and up. Unfortunately, the toolchain does not encode the NDK revision number.
+    toolchainFileGlobPatterns.add("ndk/sysroot/**/*");
 
     // If this is a clang toolchain, also add the corresponding gcc toolchain to the globs.
     int gccToolchainIndex = toolchain.getCompilerFlagList().indexOf("-gcc-toolchain");

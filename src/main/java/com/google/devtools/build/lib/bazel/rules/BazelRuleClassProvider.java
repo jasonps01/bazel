@@ -22,7 +22,6 @@ import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider.Builder;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider.RuleSet;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
-import com.google.devtools.build.lib.bazel.rules.BazelToolchainType.BazelToolchainTypeRule;
 import com.google.devtools.build.lib.bazel.rules.android.AndroidNdkRepositoryRule;
 import com.google.devtools.build.lib.bazel.rules.android.AndroidSdkRepositoryRule;
 import com.google.devtools.build.lib.bazel.rules.android.BazelAarImportRule;
@@ -32,7 +31,6 @@ import com.google.devtools.build.lib.bazel.rules.android.BazelAndroidLocalTestRu
 import com.google.devtools.build.lib.bazel.rules.android.BazelAndroidSemantics;
 import com.google.devtools.build.lib.bazel.rules.cpp.BazelCppSemantics;
 import com.google.devtools.build.lib.bazel.rules.cpp.proto.BazelCcProtoAspect;
-import com.google.devtools.build.lib.bazel.rules.genrule.BazelGenRuleRule;
 import com.google.devtools.build.lib.bazel.rules.java.proto.BazelJavaLiteProtoAspect;
 import com.google.devtools.build.lib.bazel.rules.java.proto.BazelJavaLiteProtoLibraryRule;
 import com.google.devtools.build.lib.bazel.rules.java.proto.BazelJavaProtoAspect;
@@ -43,10 +41,6 @@ import com.google.devtools.build.lib.bazel.rules.python.BazelPyRuleClasses;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyRuntimeRule;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyTestRule;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPythonConfiguration;
-import com.google.devtools.build.lib.bazel.rules.sh.BazelShBinaryRule;
-import com.google.devtools.build.lib.bazel.rules.sh.BazelShLibraryRule;
-import com.google.devtools.build.lib.bazel.rules.sh.BazelShRuleClasses;
-import com.google.devtools.build.lib.bazel.rules.sh.BazelShTestRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.GitRepositoryRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.HttpArchiveRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.HttpFileRule;
@@ -59,6 +53,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.Attribute.LabelLateBoundDefault;
 import com.google.devtools.build.lib.rules.android.AarImportBaseRule;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration;
+import com.google.devtools.build.lib.rules.android.AndroidDeviceBrokerInfo;
 import com.google.devtools.build.lib.rules.android.AndroidDeviceRule;
 import com.google.devtools.build.lib.rules.android.AndroidDeviceScriptFixtureRule;
 import com.google.devtools.build.lib.rules.android.AndroidHostServiceFixtureRule;
@@ -66,24 +61,21 @@ import com.google.devtools.build.lib.rules.android.AndroidInstrumentationInfo;
 import com.google.devtools.build.lib.rules.android.AndroidInstrumentationTestRule;
 import com.google.devtools.build.lib.rules.android.AndroidLibraryBaseRule;
 import com.google.devtools.build.lib.rules.android.AndroidLocalTestBaseRule;
+import com.google.devtools.build.lib.rules.android.AndroidLocalTestConfiguration;
+import com.google.devtools.build.lib.rules.android.AndroidNativeLibsInfo;
 import com.google.devtools.build.lib.rules.android.AndroidNeverlinkAspect;
 import com.google.devtools.build.lib.rules.android.AndroidResourcesInfo;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses.AndroidToolsDefaultsJarRule;
 import com.google.devtools.build.lib.rules.android.AndroidSkylarkCommon;
 import com.google.devtools.build.lib.rules.android.ApkInfo;
-import com.google.devtools.build.lib.rules.android.DeviceBrokerInfo;
 import com.google.devtools.build.lib.rules.android.DexArchiveAspect;
 import com.google.devtools.build.lib.rules.config.ConfigRules;
 import com.google.devtools.build.lib.rules.core.CoreRules;
 import com.google.devtools.build.lib.rules.cpp.proto.CcProtoAspect;
 import com.google.devtools.build.lib.rules.cpp.proto.CcProtoLibraryRule;
 import com.google.devtools.build.lib.rules.cpp.transitions.LipoDataTransitionRuleSet;
-import com.google.devtools.build.lib.rules.genrule.GenRuleBaseRule;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
-import com.google.devtools.build.lib.rules.objc.J2ObjcAspect;
-import com.google.devtools.build.lib.rules.objc.J2ObjcLibraryBaseRule;
-import com.google.devtools.build.lib.rules.objc.J2ObjcLibraryRule;
 import com.google.devtools.build.lib.rules.platform.PlatformRules;
 import com.google.devtools.build.lib.rules.proto.BazelProtoLibraryRule;
 import com.google.devtools.build.lib.rules.proto.ProtoConfiguration;
@@ -114,21 +106,6 @@ public class BazelRuleClassProvider {
     }
   }
 
-  public static final RuleSet TOOLCHAIN_RULES =
-      new RuleSet() {
-        @Override
-        public void init(Builder builder) {
-          builder.addRuleDefinition(new BazelToolchainTypeRule());
-          builder.addRuleDefinition(new GenRuleBaseRule());
-          builder.addRuleDefinition(new BazelGenRuleRule());
-        }
-
-        @Override
-        public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of();
-        }
-      };
-
   public static final RuleSet BAZEL_SETUP =
       new RuleSet() {
         @Override
@@ -143,10 +120,6 @@ public class BazelRuleClassProvider {
           builder.addConfigurationFragment(new BazelConfiguration.Loader());
           builder.addConfigurationOptions(BazelConfiguration.Options.class);
           builder.addConfigurationOptions(BuildConfiguration.Options.class);
-          builder.addWorkspaceFileSuffix(
-              "register_toolchains('@bazel_tools//tools/cpp:dummy_cc_toolchain')\n");
-          builder.addWorkspaceFileSuffix(
-              "register_toolchains('@bazel_tools//tools/cpp:dummy_cc_toolchain_type')\n");
         }
 
         @Override
@@ -163,22 +136,6 @@ public class BazelRuleClassProvider {
           builder.addConfigurationFragment(new ProtoConfiguration.Loader());
           builder.addRuleDefinition(new BazelProtoLibraryRule());
           builder.addRuleDefinition(new ProtoLangToolchainRule());
-        }
-
-        @Override
-        public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CoreRules.INSTANCE);
-        }
-      };
-
-  public static final RuleSet SH_RULES =
-      new RuleSet() {
-        @Override
-        public void init(Builder builder) {
-          builder.addRuleDefinition(new BazelShRuleClasses.ShRule());
-          builder.addRuleDefinition(new BazelShLibraryRule());
-          builder.addRuleDefinition(new BazelShBinaryRule());
-          builder.addRuleDefinition(new BazelShTestRule());
         }
 
         @Override
@@ -229,6 +186,9 @@ public class BazelRuleClassProvider {
           String toolsRepository = checkNotNull(builder.getToolsRepository());
 
           builder.addConfig(AndroidConfiguration.Options.class, new AndroidConfiguration.Loader());
+          builder.addConfig(
+              AndroidLocalTestConfiguration.Options.class,
+              new AndroidLocalTestConfiguration.Loader());
 
           AndroidNeverlinkAspect androidNeverlinkAspect = new AndroidNeverlinkAspect();
           DexArchiveAspect dexArchiveAspect = new DexArchiveAspect(toolsRepository);
@@ -259,9 +219,11 @@ public class BazelRuleClassProvider {
           builder.addSkylarkAccessibleTopLevels(
               AndroidInstrumentationInfo.PROVIDER.getName(), AndroidInstrumentationInfo.PROVIDER);
           builder.addSkylarkAccessibleTopLevels(
-              DeviceBrokerInfo.PROVIDER.getName(), DeviceBrokerInfo.PROVIDER);
+              AndroidDeviceBrokerInfo.PROVIDER.getName(), AndroidDeviceBrokerInfo.PROVIDER);
           builder.addSkylarkAccessibleTopLevels(
               AndroidResourcesInfo.PROVIDER.getName(), AndroidResourcesInfo.PROVIDER);
+          builder.addSkylarkAccessibleTopLevels(
+              AndroidNativeLibsInfo.PROVIDER.getName(), AndroidNativeLibsInfo.PROVIDER);
 
           try {
             builder.addWorkspaceFilePrefix(
@@ -299,25 +261,6 @@ public class BazelRuleClassProvider {
         }
       };
 
-  public static final RuleSet J2OBJC_RULES =
-      new RuleSet() {
-        @Override
-        public void init(Builder builder) {
-          String toolsRepository = checkNotNull(builder.getToolsRepository());
-          J2ObjcAspect j2ObjcAspect = new J2ObjcAspect(toolsRepository);
-
-          builder.addNativeAspectClass(j2ObjcAspect);
-          builder.addRuleDefinition(new J2ObjcLibraryBaseRule());
-          builder.addRuleDefinition(new J2ObjcLibraryRule(j2ObjcAspect));
-        }
-
-        @Override
-        public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CoreRules.INSTANCE, CcRules.INSTANCE, JavaRules.INSTANCE,
-              ObjcRules.INSTANCE);
-        }
-      };
-
   public static final RuleSet VARIOUS_WORKSPACE_RULES =
       new RuleSet() {
         @Override
@@ -346,6 +289,7 @@ public class BazelRuleClassProvider {
       ImmutableSet.of(
           // Rules defined before LipoDataTransitionRuleSet will fail when trying to declare a data
           // transition.
+          // TODO(b/73071922): remove this when LIPO support is phased out
           LipoDataTransitionRuleSet.INSTANCE,
           BAZEL_SETUP,
           CoreRules.INSTANCE,
@@ -354,7 +298,7 @@ public class BazelRuleClassProvider {
           ConfigRules.INSTANCE,
           PlatformRules.INSTANCE,
           PROTO_RULES,
-          SH_RULES,
+          ShRules.INSTANCE,
           CcRules.INSTANCE,
           CPP_PROTO_RULES,
           JavaRules.INSTANCE,
@@ -362,10 +306,10 @@ public class BazelRuleClassProvider {
           ANDROID_RULES,
           PYTHON_RULES,
           ObjcRules.INSTANCE,
-          J2OBJC_RULES,
+          J2ObjcRules.INSTANCE,
           TestingSupportRules.INSTANCE,
           VARIOUS_WORKSPACE_RULES,
           // This rule set is a little special: it needs to depend on every configuration fragment
           // that has Make variables, so we put it last.
-          TOOLCHAIN_RULES);
+          ToolchainRules.INSTANCE);
 }

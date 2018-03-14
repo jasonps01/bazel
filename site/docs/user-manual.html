@@ -30,7 +30,7 @@ title: User Manual
     <a href='#help'>help</a>                Prints help for commands, or the index.
     <a href='#info'>info</a>                Displays runtime info about the bazel server.
 
-    <a href='#fetch'>fetch</a>                Fetches all external dependencies of a target.
+    <a href='#fetch'>fetch</a>               Fetches all external dependencies of a target.
     <a href='#mobile-install'>mobile-install</a>      Installs apps on mobile devices.
 
     <a href='#query'>query</a>               Executes a dependency graph query.
@@ -3364,6 +3364,16 @@ adb -s deadbeef install ...
   printed to the console.
 </p>
 
+
+<h3 id='dump'>The <code>dump</code> command</h3>
+
+<p>
+  The <code>dump</code> command prints to stdout a dump of the
+  internal state of the Bazel server.  This command is intended
+  primarily for use by Bazel developers, so the output of this command
+  is not specified, and is subject to change.
+</p>
+
 <p>
   By default, command will just print help message outlining possible
   options to dump specific areas of the Bazel state. In order to dump
@@ -3375,7 +3385,6 @@ adb -s deadbeef install ...
 <ul>
   <li><code class='flag'>--action_cache</code> dumps action cache content.</li>
   <li><code class='flag'>--packages</code> dumps package cache content.</li>
-  <li><code class='flag'>--vfs</code> dumps VFS state.</li>
   <li><code class='flag'>--skyframe</code> dumps state of internal Bazel dependency graph.</li>
   <li><code class='flag'>--rules</code> dumps rule summary for each rule and aspect class,
     including counts and action counts. This includes both native and Skylark rules.

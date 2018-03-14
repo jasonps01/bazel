@@ -51,7 +51,7 @@ import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompileAction;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
-import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.testutil.MoreAsserts;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -71,6 +71,17 @@ import org.junit.runners.JUnit4;
  */
 @RunWith(JUnit4.class)
 public class AndroidBinaryTest extends AndroidBuildViewTestCase {
+
+  @Before
+  public final void turnOffPackageLoadingChecks() throws Exception {
+    // By default, PackageLoader loads every package the test harness loads, in order to verify
+    // the PackageLoader works correctly. In this test, however, PackageLoader sometimes fails to
+    // load packages and causes the test to become flaky.
+    // Since PackageLoader gets generally good coverage from the rest of Bazel's tests, and because
+    // we believe there's nothing special from the point of view of package loading in this test,
+    // we disable this verification here.
+    initializeSkyframeExecutor(/*doPackageLoadingChecks=*/ false);
+  }
 
   @Before
   public void createFiles() throws Exception {
@@ -2045,7 +2056,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "<resources><string name = 'lib_string'>Libs!</string></resources>");
     scratch.file("java/r/android/res/values/strings.xml",
         "<resources><string name = 'hello'>Hello Android!</string></resources>");
-    ConfiguredTargetAndTarget binary = getConfiguredTargetAndTarget("//java/r/android:r");
+    ConfiguredTargetAndData binary = getConfiguredTargetAndTarget("//java/r/android:r");
     Artifact jar = getResourceClassJar(binary);
     assertThat(getGeneratingAction(jar).getMnemonic()).isEqualTo("RClassGenerator");
     List<String> args = getGeneratingSpawnActionArgs(jar);

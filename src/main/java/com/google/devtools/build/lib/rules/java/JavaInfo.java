@@ -55,7 +55,143 @@ import javax.annotation.Nullable;
 /** A Skylark declared provider that encapsulates all providers that are needed by Java rules. */
 @SkylarkModule(
   name = "JavaInfo",
-  doc = "Encapsulates all information provided by Java rules",
+  doc =
+      "Encapsulates all information provided by Java rules. "
+          + "<p>JavaInfo can be created in Skylark by calling constructor "
+          + "<code>JavaInfo(...)</code> "
+          + "with parameters:</p>"
+          + "<table class=\"table table-bordered table-condensed table-params\">"
+          + "  <colgroup>"
+          + "    <col class=\"col-param\">"
+          + "    <col class=\"param-description\">"
+          + "  </colgroup>"
+          + "  <thead>"
+          + "    <tr>"
+          + "      <th>Parameter</th>"
+          + "      <th>Description</th>"
+          + "    </tr>"
+          + "  </thead>"
+          + "  <tbody>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.output_jar\">"
+          + "        <code>output_jar</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"File.html\">File</a></code></p>"
+          + "        <p>The jar that was created as a result of a compilation (e.g. javac, scalac,"
+          + " etc).</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.sources\">"
+          + "        <code>sources</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"list.html\">sequence</a> or "
+          + "<a class=\"anchor\" href=\"depset.html\">depset</a> of "
+          + "<a class=\"anchor\" href=\"File.html\">File</a>s</code></p>"
+          + "        <p>The sources that were used to create the output jar.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.source_jars\">"
+          + "        <code>source_jars</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"list.html\">sequence</a> or "
+          + "<a class=\"anchor\" href=\"depset.html\">depset</a> of "
+          + "<a class=\"anchor\" href=\"File.html\">File</a>s</code></p>"
+          + "        <p>The source jars that were used to create the output jar.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.use_ijar\">"
+          + "        <code>use_ijar</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"bool.html\">bool</a> "
+          + "(default = True, optional)</code></p>"
+          + "        <p>If an ijar of the output jar should be created and stored in the "
+          + "provider. </p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.neverlink\">"
+          + "        <code>neverlink</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"bool.html\">bool</a> "
+          + "(default = False, optional)</code></p>"
+          + "        <p>If true only use this library for compilation and not at runtime.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.deps\">"
+          + "        <code>deps</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"list.html\">sequence</a> or "
+          + "<a class=\"anchor\" href=\"depset.html\">depset</a> of "
+          + "<a class=\"anchor\" href=\"JavaInfo.html\">JavaInfo</a>s</code></p>"
+          + "        <p>Compile time dependencies that were used to create the output jar.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.runtime_deps\">"
+          + "        <code>runtime_deps</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"list.html\">sequence</a> or "
+          + "<a class=\"anchor\" href=\"depset.html\">depset</a> of "
+          + "<a class=\"anchor\" href=\"JavaInfo.html\">JavaInfo</a>s</code></p>"
+          + "        <p>Runtime dependencies that are needed for this library.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.exports\">"
+          + "        <code>exports</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"list.html\">sequence</a> or "
+          + "<a class=\"anchor\" href=\"depset.html\">depset</a> of "
+          + "<a class=\"anchor\" href=\"JavaInfo.html\">JavaInfo</a>s</code></p>"
+          + "        <p>Libraries to make available for users of this library. See also "
+          + "<a class=\"anchor\" "
+          + "href=\"https://docs.bazel.build/versions/master/be/java.html#java_library.exports\">"
+          + "java_library.exports</a>.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.actions\">"
+          + "        <code>actions</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p><code><a class=\"anchor\" href=\"actions.html\">actions</a></code></p>"
+          + "        <p>Used to create the ijar and pack source files to jar actions.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.java_toolchain\">"
+          + "        <code>java_toolchain</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p>Target</p>"
+          + "        <p>The toolchain to be used for retrieving the ijar tool and packing source "
+          + "files to Jar.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "    <tr>"
+          + "      <td id=\"JavaInfo.host_javabase\">"
+          + "        <code>host_javabase</code>"
+          + "      </td>"
+          + "      <td>"
+          + "        <p>Target</p>"
+          + "        <p>The host_javabase to be used for packing source files to Jar.</p>"
+          + "      </td>"
+          + "    </tr>"
+          + "  </tbody>"
+          + "</table>"
+          + "",
   category = SkylarkModuleCategory.PROVIDER
 )
 @Immutable
@@ -88,7 +224,8 @@ public final class JavaInfo extends NativeInfo {
               "runtime_deps",
               "exports",
               "actions",
-              "java_toolchain"),
+              "java_toolchain",
+              "host_javabase"),
 
           /*defaultValues=*/ Arrays.asList(
               SkylarkList.createImmutable(Collections.emptyList()), // sources
@@ -99,8 +236,10 @@ public final class JavaInfo extends NativeInfo {
               SkylarkList.createImmutable(Collections.emptyList()), // runtime_deps
               SkylarkList.createImmutable(Collections.emptyList()), // exports
               Runtime.NONE, // actions
-              Runtime.NONE), // java_toolchain
-          /*types=*/ ImmutableList.of(
+              Runtime.NONE, // java_toolchain
+              Runtime.NONE), // hostJavabase
+
+          /*types=*/ ImmutableList.<SkylarkType>of(
               SkylarkType.of(Artifact.class), // output_jar
               SkylarkType.Union.of(SEQUENCE_OF_ARTIFACTS, LIST_OF_ARTIFACTS), // sources
               SkylarkType.Union.of(SEQUENCE_OF_ARTIFACTS, LIST_OF_ARTIFACTS), // source_jars
@@ -110,7 +249,8 @@ public final class JavaInfo extends NativeInfo {
               SEQUENCE_OF_JAVA_INFO, // runtime_deps
               SEQUENCE_OF_JAVA_INFO, // exports
               SkylarkType.of(SkylarkActionFactory.class), // actions
-              SkylarkType.of(ConfiguredTarget.class))); // java_toolchain
+              SkylarkType.of(ConfiguredTarget.class), // java_toolchain
+              SkylarkType.of(ConfiguredTarget.class))); // hostJavabase
 
   public static final NativeProvider<JavaInfo> PROVIDER =
       new NativeProvider<JavaInfo>(JavaInfo.class, SKYLARK_NAME, SIGNATURE) {
@@ -123,16 +263,17 @@ public final class JavaInfo extends NativeInfo {
           JavaInfo javaInfo =
               JavaInfoBuildHelper.getInstance()
                   .createJavaInfo(
-                      (Artifact) args[0],
-                      (SkylarkList<Artifact>) args[1],
-                      (SkylarkList<Artifact>) args[2],
-                      (Boolean) args[3],
-                      (Boolean) args[4],
-                      (SkylarkList<JavaInfo>) args[5],
-                      (SkylarkList<JavaInfo>) args[6],
-                      (SkylarkList<JavaInfo>) args[7],
-                      args[8],
-                      args[9],
+                      (Artifact) args[0], // output_jar
+                      (SkylarkList<Artifact>) args[1], // sources
+                      (SkylarkList<Artifact>) args[2], // source_jars
+                      (Boolean) args[3], // use_ijar
+                      (Boolean) args[4], // neverlink
+                      (SkylarkList<JavaInfo>) args[5], // deps
+                      (SkylarkList<JavaInfo>) args[6], // runtime_deps
+                      (SkylarkList<JavaInfo>) args[7], // exports
+                      args[8], // actions
+                      args[9], // java_toolchain
+                      args[10], // hostJavabase
                       loc);
 
           return javaInfo;
@@ -174,7 +315,7 @@ public final class JavaInfo extends NativeInfo {
    * in the given list are merged into one provider that is added to the resulting
    * {@link JavaInfo}.
    */
-  public static JavaInfo merge(List<JavaInfo> providers) {
+  public static JavaInfo merge(Iterable<JavaInfo> providers) {
     List<JavaCompilationArgsProvider> javaCompilationArgsProviders =
         JavaInfo.fetchProvidersFromList(providers, JavaCompilationArgsProvider.class);
     List<JavaSourceJarsProvider> javaSourceJarsProviders =
@@ -250,7 +391,7 @@ public final class JavaInfo extends NativeInfo {
     if (provider != null) {
       return provider;
     }
-    JavaInfo javaInfo = (JavaInfo) target.get(JavaInfo.PROVIDER.getKey());
+    JavaInfo javaInfo = getJavaInfo(target);
     if (javaInfo == null) {
       return null;
     }
@@ -297,6 +438,33 @@ public final class JavaInfo extends NativeInfo {
       }
     }
     return providersList.build();
+  }
+
+  public static JavaInfo getJavaInfo(TransitiveInfoCollection target) {
+    return (JavaInfo) target.get(JavaInfo.PROVIDER.getKey());
+  }
+
+  public static List<JavaInfo> getJavaInfo(Iterable<? extends TransitiveInfoCollection> targets) {
+    ImmutableList.Builder<JavaInfo> javaInfos = new ImmutableList.Builder<>();
+    for (TransitiveInfoCollection target : targets) {
+      JavaInfo javaInfo = getJavaInfo(target);
+      if (javaInfo != null) {
+        javaInfos.add(javaInfo);
+      }
+    }
+    return javaInfos.build();
+  }
+
+  public static List<JavaInfo> getJavaInfosFromListOfTargets(
+      Iterable<? extends TransitiveInfoCollection> targets) {
+    List<JavaInfo> providersList = new ArrayList<>();
+    for (TransitiveInfoCollection target : targets) {
+      JavaInfo provider = getJavaInfo(target);
+      if (provider != null) {
+        providersList.add(provider);
+      }
+    }
+    return providersList;
   }
 
   @VisibleForSerialization
@@ -562,3 +730,4 @@ public final class JavaInfo extends NativeInfo {
     }
   }
 }
+

@@ -70,6 +70,8 @@ import com.google.devtools.build.lib.packages.SkylarkExportable;
 import com.google.devtools.build.lib.packages.SkylarkProvider;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.packages.TestSize;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.skylarkinterface.Param;
 import com.google.devtools.build.lib.skylarkinterface.ParamType;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
@@ -237,7 +239,7 @@ public class SkylarkRuleClassFunctions {
             + "<a href='File.html'><code>File</code></a> object representing the file that should "
             + "be executed to run the target. By default it is the predeclared output "
             + "<code>ctx.outputs.executable</code>."
-            + "<li><code>files</code>: A <a href='depset.html'><code>depset<code></a> of "
+            + "<li><code>files</code>: A <a href='depset.html'><code>depset</code></a> of "
             + "<a href='File.html'><code>File</code></a> objects representing the default outputs "
             + "to build when this target is specified on the blaze command line. By default it is "
             + "all predeclared outputs."
@@ -414,29 +416,29 @@ public class SkylarkRuleClassFunctions {
         doc =
             "A schema for defining predeclared outputs. Unlike <a href='attr.html#output'><code>"
                 + "output</code></a> and <a href='attr.html#output_list'><code>output_list</code>"
-                + "</a>attributes, the user does not specify the labels for these files. See the "
+                + "</a> attributes, the user does not specify the labels for these files. See the "
                 + "<a href='../rules.$DOC_EXT#files'>Rules page</a> for more on predeclared "
                 + "outputs."
-                + "<p>The value of this argument is a dictionary. Each entry creates a predeclared "
-                + "output where the key is an identifier and the value helps determine the "
-                + "output's label. In the rule's implementation function, the identifier becomes "
-                + "the field name used to access the output's <a href='File.html'><code>File</code>"
-                + "</a> in <a href='ctx.html#outputs'><code>ctx.outputs</code></a>."
-                + "<p>The output's label has the same package as the rule, and the part after the "
-                + "package is determined by the dict entry's value. If this value is a string, "
-                + "then it is interpreted as a template, where substitution placeholders of the "
-                + "form <code>\"%{ATTR}\"</code> are replaced by the value of the string attribute "
-                + "named <code>ATTR</code>. (For this purpose, the rule's <code>name</code> is "
-                + "also considered an attribute.) For example, the outputs dict "
-                + "<code>{\"bin\": \"%{name}.exe\"} predeclares an output with"
-                + "</code>. <br>"
-                + "The dictionary key becomes an attribute in <code>ctx.outputs</code>. "
-                + "Similar to computed dependency rule attributes, you can also specify the "
-                + "name of a function that returns the dictionary. This function can access "
-                + "all rule attributes that are listed as parameters in its function "
-                + "signature. For example, <code>outputs = _my_func</code> with "
-                + "<code>def _my_func(srcs, deps):</code> has access to the attributes "
-                + "'srcs' and 'deps' (if defined)."
+                + "<p>The value of this argument is either a dictionary or a callback function "
+                + "that produces a dictionary. The callback works similar to computed dependency "
+                + "attributes: The function's parameter names are matched against the rule's "
+                + "attributes, so for example if you pass <code>outputs = _my_func</code> with the "
+                + "definition <code>def _my_func(srcs, deps): ...</code>, the function has access "
+                + "to the attributes <code>srcs</code> and <code>deps</code>. Whether the "
+                + "dictionary is specified directly or via a function, it is interpreted as "
+                + "follows."
+                + "<p>Each entry in the dictionary creates a predeclared output where the key is "
+                + "an identifier and the value is a string template that determines the output's "
+                + "label. In the rule's implementation function, the identifier becomes the field "
+                + "name used to access the output's <a href='File.html'><code>File</code></a> in "
+                + "<a href='ctx.html#outputs'><code>ctx.outputs</code></a>. The output's label has "
+                + "the same package as the rule, and the part after the package is produced by "
+                + "substituting each placeholder of the form <code>\"%{ATTR}\"</code> with the "
+                + "value of the attribute <code>ATTR</code>. In practice, the most common "
+                + "substitution placeholder is <code>\"%{name}\"</code>. For example, for a target "
+                + "named \"foo\", the outputs dict <code>{\"bin\": \"%{name}.exe\"}</code> "
+                + "predeclares an output named <code>foo.exe</code> that is accessable in the "
+                + "implementation function as <code>ctx.outputs.bin</code>."
       ),
       @Param(
         name = "executable",
@@ -844,12 +846,16 @@ public class SkylarkRuleClassFunctions {
               ImmutableSet.copyOf(fragments.getContents(String.class, "fragments")),
               HostTransition.INSTANCE,
               ImmutableSet.copyOf(hostFragments.getContents(String.class, "host_fragments")),
-              collectToolchainLabels(toolchains, ast),
-              funcallEnv);
+              collectToolchainLabels(toolchains, ast));
         }
       };
 
-  /** The implementation for the magic function "rule" that creates Skylark rule classes */
+  /**
+   * The implementation for the magic function "rule" that creates Skylark rule classes.
+   *
+   * <p>Exactly one of {@link #builder} or {@link #ruleClass} is null except inside {@link #export}.
+   */
+  @AutoCodec
   public static final class SkylarkRuleFunction extends BaseFunction
       implements SkylarkExportable, RuleFunction {
     private RuleClass.Builder builder;
@@ -870,6 +876,28 @@ public class SkylarkRuleClassFunctions {
       this.type = type;
       this.attributes = attributes;
       this.definitionLocation = definitionLocation;
+    }
+
+    /** This is for post-export reconstruction for serialization. */
+    @VisibleForSerialization
+    @AutoCodec.Instantiator
+    SkylarkRuleFunction(
+        RuleClass ruleClass,
+        RuleClassType type,
+        Location definitionLocation,
+        Label skylarkLabel
+    ) {
+      super("rule", FunctionSignature.KWARGS);
+      Preconditions.checkNotNull(
+          ruleClass,
+          "RuleClass must be non-null as this SkylarkRuleFunction should have been exported.");
+      Preconditions.checkNotNull(
+          skylarkLabel,
+          "Label must be non-null as this SkylarkRuleFunction should have been exported.");
+      this.ruleClass = ruleClass;
+      this.type = type;
+      this.definitionLocation = definitionLocation;
+      this.skylarkLabel = skylarkLabel;
     }
 
     @Override

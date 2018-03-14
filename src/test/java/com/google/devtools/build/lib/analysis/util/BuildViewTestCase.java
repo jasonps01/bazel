@@ -124,7 +124,7 @@ import com.google.devtools.build.lib.rules.repository.RepositoryDelegatorFunctio
 import com.google.devtools.build.lib.skyframe.AspectValue;
 import com.google.devtools.build.lib.skyframe.BazelSkyframeExecutorConstants;
 import com.google.devtools.build.lib.skyframe.BuildConfigurationValue;
-import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.DiffAwareness;
 import com.google.devtools.build.lib.skyframe.LegacyLoadingPhaseRunner;
@@ -205,6 +205,10 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
   @Before
   public final void initializeSkyframeExecutor() throws Exception {
+    initializeSkyframeExecutor(/*doPackageLoadingChecks=*/ true);
+  }
+
+  public void initializeSkyframeExecutor(boolean doPackageLoadingChecks) throws Exception {
     analysisMock = getAnalysisMock();
     directories =
         new BlazeDirectories(
@@ -227,13 +231,16 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
         PrecomputedValue.injected(
             RepositoryDelegatorFunction.REPOSITORY_OVERRIDES,
             ImmutableMap.<RepositoryName, PathFragment>of()));
-    pkgFactory =
+    PackageFactory.BuilderForTesting pkgFactoryBuilder =
         analysisMock
             .getPackageFactoryBuilderForTesting(directories)
             .setExtraPrecomputeValues(extraPrecomputedValues)
             .setEnvironmentExtensions(getEnvironmentExtensions())
-            .setPlatformSetRegexps(getPlatformSetRegexps())
-            .build(ruleClassProvider, scratch.getFileSystem());
+            .setPlatformSetRegexps(getPlatformSetRegexps());
+    if (!doPackageLoadingChecks) {
+      pkgFactoryBuilder.disableChecks();
+    }
+    pkgFactory = pkgFactoryBuilder.build(ruleClassProvider, scratch.getFileSystem());
     tsgm = new TimestampGranularityMonitor(BlazeClock.instance());
     skyframeExecutor =
         SequencedSkyframeExecutor.create(
@@ -744,20 +751,19 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   }
 
   /**
-   * Returns a ConfiguredTargetAndTarget for the specified label, using the given build
-   * configuration.
+   * Returns a ConfiguredTargetAndData for the specified label, using the given build configuration.
    */
-  protected ConfiguredTargetAndTarget getConfiguredTargetAndTarget(
+  protected ConfiguredTargetAndData getConfiguredTargetAndTarget(
       Label label, BuildConfiguration config) {
     return view.getConfiguredTargetAndTargetForTesting(reporter, label, config);
   }
 
   /**
-   * Returns the ConfiguredTargetAndTarget for the specified label. If the label corresponds to a
+   * Returns the ConfiguredTargetAndData for the specified label. If the label corresponds to a
    * target with a top-level configuration transition, that transition is applied to the given
-   * config in the ConfiguredTargetAndTarget's ConfiguredTarget.
+   * config in the ConfiguredTargetAndData's ConfiguredTarget.
    */
-  public ConfiguredTargetAndTarget getConfiguredTargetAndTarget(String label)
+  public ConfiguredTargetAndData getConfiguredTargetAndTarget(String label)
       throws LabelSyntaxException {
     return getConfiguredTargetAndTarget(Label.parseAbsolute(label), targetConfig);
   }
@@ -836,9 +842,9 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   protected ConfiguredTarget scratchConfiguredTarget(
       String packageName, String ruleName, BuildConfiguration config, String... lines)
       throws IOException, Exception {
-    ConfiguredTargetAndTarget ctat =
+    ConfiguredTargetAndData ctad =
         scratchConfiguredTargetAndTarget(packageName, ruleName, config, lines);
-    return ctat == null ? null : ctat.getConfiguredTarget();
+    return ctad == null ? null : ctad.getConfiguredTarget();
   }
 
   /**
@@ -850,7 +856,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
    * @return the configured tatarget and target instance for the created rule.
    * @throws Exception
    */
-  protected ConfiguredTargetAndTarget scratchConfiguredTargetAndTarget(
+  protected ConfiguredTargetAndData scratchConfiguredTargetAndTarget(
       String packageName, String rulename, String... lines) throws Exception {
     return scratchConfiguredTargetAndTarget(packageName, rulename, targetConfig, lines);
   }
@@ -862,11 +868,11 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
    * @param ruleName the name of the rule.
    * @param config the configuration to use to construct the configured rule.
    * @param lines the text of the rule.
-   * @return the ConfiguredTargetAndTarget instance for the created rule.
+   * @return the ConfiguredTargetAndData instance for the created rule.
    * @throws IOException
    * @throws Exception
    */
-  protected ConfiguredTargetAndTarget scratchConfiguredTargetAndTarget(
+  protected ConfiguredTargetAndData scratchConfiguredTargetAndTarget(
       String packageName, String ruleName, BuildConfiguration config, String... lines)
       throws Exception {
     Target rule = scratchRule(packageName, ruleName, lines);
@@ -1344,10 +1350,10 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   }
 
   protected static ConfiguredAttributeMapper getMapperFromConfiguredTargetAndTarget(
-      ConfiguredTargetAndTarget ctat) {
+      ConfiguredTargetAndData ctad) {
     return ConfiguredAttributeMapper.of(
-        (Rule) ctat.getTarget(),
-        ((RuleConfiguredTarget) ctat.getConfiguredTarget()).getConfigConditions());
+        (Rule) ctad.getTarget(),
+        ((RuleConfiguredTarget) ctad.getConfiguredTarget()).getConfigConditions());
   }
 
   public static Label makeLabel(String label) {
@@ -1580,13 +1586,13 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
    * Returns an attribute value retriever for the given rule for the target configuration.
    */
   protected AttributeMap attributes(RuleConfiguredTarget ct) {
-    ConfiguredTargetAndTarget ctat;
+    ConfiguredTargetAndData ctad;
     try {
-      ctat = getConfiguredTargetAndTarget(ct.getLabel().toString());
+      ctad = getConfiguredTargetAndTarget(ct.getLabel().toString());
     } catch (LabelSyntaxException e) {
       throw new RuntimeException(e);
     }
-    return getMapperFromConfiguredTargetAndTarget(ctat);
+    return getMapperFromConfiguredTargetAndTarget(ctad);
   }
 
   protected AttributeMap attributes(ConfiguredTarget rule) {

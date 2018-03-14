@@ -227,6 +227,7 @@ public final class CcCompilationHelper {
    */
   @SkylarkModule(
     name = "compilation_info",
+    documented = false,
     category = SkylarkModuleCategory.BUILTIN,
     doc = "Helper class containing CC compilation providers."
   )
@@ -783,7 +784,6 @@ public final class CcCompilationHelper {
       ccOutputs =
           new CcCompilationOutputs.Builder()
               .merge(ccOutputs)
-              .addLtoBitcodeFile(ccOutputs.getLtoBitcodeFiles())
               .addObjectFiles(objectFiles)
               .addPicObjectFiles(picObjectFiles)
               .build();

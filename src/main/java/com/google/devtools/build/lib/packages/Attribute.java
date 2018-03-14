@@ -36,6 +36,8 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassNamePredicate;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.syntax.ClassObject;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.EvalUtils;
@@ -55,29 +57,29 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
 /**
- * Metadata of a rule attribute. Contains the attribute name and type, and an
- * default value to be used if none is provided in a rule declaration in a BUILD
- * file. Attributes are immutable, and may be shared by more than one rule (for
- * example, <code>foo_binary</code> and <code>foo_library</code> may share many
- * attributes in common).
+ * Metadata of a rule attribute. Contains the attribute name and type, and an default value to be
+ * used if none is provided in a rule declaration in a BUILD file. Attributes are immutable, and may
+ * be shared by more than one rule (for example, <code>foo_binary</code> and <code>foo_library
+ * </code> may share many attributes in common).
  */
 @Immutable
+@AutoCodec
 public final class Attribute implements Comparable<Attribute> {
 
   public static final RuleClassNamePredicate ANY_RULE = RuleClassNamePredicate.unspecified();
 
   public static final RuleClassNamePredicate NO_RULE = RuleClassNamePredicate.only();
 
-  /**
-   * Wraps the information necessary to construct an Aspect.
-   */
-  private abstract static class RuleAspect<C extends AspectClass> {
+  /** Wraps the information necessary to construct an Aspect. */
+  @VisibleForSerialization
+  abstract static class RuleAspect<C extends AspectClass> {
     protected final C aspectClass;
     protected final Function<Rule, AspectParameters> parametersExtractor;
 
@@ -114,7 +116,8 @@ public final class Attribute implements Comparable<Attribute> {
     }
   }
 
-  private static class SkylarkRuleAspect extends RuleAspect<SkylarkAspectClass> {
+  @AutoCodec
+  static class SkylarkRuleAspect extends RuleAspect<SkylarkAspectClass> {
     private final SkylarkDefinedAspect aspect;
 
     public SkylarkRuleAspect(SkylarkDefinedAspect aspect) {
@@ -149,7 +152,8 @@ public final class Attribute implements Comparable<Attribute> {
     }
   }
 
-  private enum PropertyFlag {
+  @VisibleForSerialization
+  enum PropertyFlag {
     MANDATORY,
     EXECUTABLE,
     UNDOCUMENTED,
@@ -257,6 +261,7 @@ public final class Attribute implements Comparable<Attribute> {
     String checkValid(Rule from, Rule to);
   }
 
+  @AutoCodec
   public static final ValidityPredicate ANY_EDGE =
       new ValidityPredicate() {
         @Override
@@ -296,9 +301,8 @@ public final class Attribute implements Comparable<Attribute> {
     }
   }
 
-  /**
-   * A predicate class to check if the value of the attribute comes from a predefined set.
-   */
+  /** A predicate class to check if the value of the attribute comes from a predefined set. */
+  @AutoCodec
   public static class AllowedValueSet implements PredicateWithMessage<Object> {
 
     private final Set<Object> allowedValues;
@@ -311,6 +315,12 @@ public final class Attribute implements Comparable<Attribute> {
       Preconditions.checkNotNull(values);
       Preconditions.checkArgument(!Iterables.isEmpty(values));
       allowedValues = ImmutableSet.copyOf(values);
+    }
+
+    @AutoCodec.Instantiator
+    @VisibleForSerialization
+    AllowedValueSet(Set<Object> allowedValues) {
+      this.allowedValues = allowedValues;
     }
 
     @Override
@@ -1449,6 +1459,7 @@ public final class Attribute implements Comparable<Attribute> {
    * {@link #getPossibleValues(Type, Rule)} and {@link #getDefault(AttributeMap)} do lookups in that
    * table.
    */
+  @AutoCodec
   static final class SkylarkComputedDefault extends ComputedDefault {
 
     private final List<Type<?>> dependencyTypes;
@@ -1457,17 +1468,17 @@ public final class Attribute implements Comparable<Attribute> {
     /**
      * Creates a new SkylarkComputedDefault containing a lookup table.
      *
-     * @param requiredAttributes A list of all names of other attributes that are accessed by this
+     * @param dependencies A list of all names of other attributes that are accessed by this
      *     attribute.
      * @param dependencyTypes A list of requiredAttributes' types.
      * @param lookupTable An exhaustive mapping from requiredAttributes assignments to values this
      *     computed default evaluates to.
      */
     SkylarkComputedDefault(
-        ImmutableList<String> requiredAttributes,
+        ImmutableList<String> dependencies,
         ImmutableList<Type<?>> dependencyTypes,
         Map<List<Object>, Object> lookupTable) {
-      super(Preconditions.checkNotNull(requiredAttributes));
+      super(Preconditions.checkNotNull(dependencies));
       this.dependencyTypes = Preconditions.checkNotNull(dependencyTypes);
       this.lookupTable = Preconditions.checkNotNull(lookupTable);
     }
@@ -1837,7 +1848,8 @@ public final class Attribute implements Comparable<Attribute> {
    * @param configTransition the configuration transition for this attribute (which must be of type
    *     LABEL, LABEL_LIST, NODEP_LABEL or NODEP_LABEL_LIST).
    */
-  private Attribute(
+  @VisibleForSerialization
+  Attribute(
       String name,
       Type<?> type,
       Set<PropertyFlag> propertyFlags,
@@ -2238,6 +2250,51 @@ public final class Attribute implements Comparable<Attribute> {
   @Override
   public int compareTo(Attribute other) {
     return name.compareTo(other.name);
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    Attribute attribute = (Attribute) o;
+    return Objects.equals(name, attribute.name)
+        && Objects.equals(type, attribute.type)
+        && Objects.equals(propertyFlags, attribute.propertyFlags)
+        && Objects.equals(defaultValue, attribute.defaultValue)
+        && Objects.equals(configTransition, attribute.configTransition)
+        && Objects.equals(splitTransitionProvider, attribute.splitTransitionProvider)
+        && Objects.equals(allowedRuleClassesForLabels, attribute.allowedRuleClassesForLabels)
+        && Objects.equals(
+            allowedRuleClassesForLabelsWarning, attribute.allowedRuleClassesForLabelsWarning)
+        && Objects.equals(allowedFileTypesForLabels, attribute.allowedFileTypesForLabels)
+        && Objects.equals(validityPredicate, attribute.validityPredicate)
+        && Objects.equals(condition, attribute.condition)
+        && Objects.equals(allowedValues, attribute.allowedValues)
+        && Objects.equals(requiredProviders, attribute.requiredProviders)
+        && Objects.equals(aspects, attribute.aspects);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        name,
+        type,
+        propertyFlags,
+        defaultValue,
+        configTransition,
+        splitTransitionProvider,
+        allowedRuleClassesForLabels,
+        allowedRuleClassesForLabelsWarning,
+        allowedFileTypesForLabels,
+        validityPredicate,
+        condition,
+        allowedValues,
+        requiredProviders,
+        aspects);
   }
 
   /**

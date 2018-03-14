@@ -18,6 +18,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
 import com.google.common.base.Splitter;
+import com.google.common.base.Suppliers;
 import com.google.common.base.Verify;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ClassToInstanceMap;
@@ -34,16 +35,14 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.MutableClassToInstanceMap;
 import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
-import com.google.devtools.build.lib.actions.BuildConfigurationInterface;
+import com.google.devtools.build.lib.actions.BuildConfigurationEvent;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.config.transitions.ComposingPatchTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
-import com.google.devtools.build.lib.buildeventstream.BuildEventConverters;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
-import com.google.devtools.build.lib.buildeventstream.GenericBuildEvent;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
@@ -52,12 +51,7 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.packages.Target;
-import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
-import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
-import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
-import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
-import com.google.devtools.build.lib.skyframe.serialization.strings.StringCodecs;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
@@ -75,11 +69,7 @@ import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionMetadataTag;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.TriState;
-import com.google.protobuf.CodedInputStream;
-import com.google.protobuf.CodedOutputStream;
-import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -90,6 +80,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 import javax.annotation.Nullable;
 
 /**
@@ -115,10 +106,14 @@ import javax.annotation.Nullable;
   name = "configuration",
   category = SkylarkModuleCategory.BUILTIN,
   doc =
-      "Data required for the analysis of a target that comes from targets that "
-          + "depend on it and not targets that it depends on."
+      "This object holds information about the environment in which the build is running. See "
+          + "the <a href='../rules.$DOC_EXT#configurations'>Rules page</a> for more on the general "
+          + "concept of configurations."
 )
-public class BuildConfiguration implements BuildConfigurationInterface {
+// TODO(janakr): If overhead of fragments class names is too high, add constructor that just takes
+// fragments and gets names from them.
+@AutoCodec
+public class BuildConfiguration {
   /**
    * Sorts fragments by class name. This produces a stable order which, e.g., facilitates consistent
    * output from buildMnemonic.
@@ -1185,6 +1180,8 @@ public class BuildConfiguration implements BuildConfigurationInterface {
   /** Data for introspecting the options used by this configuration. */
   private final TransitiveOptionDetails transitiveOptionDetails;
 
+  private final Supplier<BuildConfigurationEvent> buildEventSupplier;
+
   /**
    * Returns true if this configuration is semantically equal to the other, with
    * the possible exception that the other has fewer fragments.
@@ -1244,10 +1241,8 @@ public class BuildConfiguration implements BuildConfigurationInterface {
     return hashCode;
   }
 
-  /**
-   * Returns map of all the fragments for this configuration.
-   */
-  public ImmutableMap<Class<? extends Fragment>, Fragment> getAllFragments() {
+  /** Returns map of all the fragments for this configuration. */
+  public ImmutableMap<Class<? extends Fragment>, Fragment> getFragmentsMap() {
     return fragments;
   }
 
@@ -1413,6 +1408,7 @@ public class BuildConfiguration implements BuildConfigurationInterface {
       reservedActionMnemonics.addAll(fragment.getReservedActionMnemonics());
     }
     this.reservedActionMnemonics = reservedActionMnemonics.build();
+    this.buildEventSupplier = Suppliers.memoize(this::createBuildEvent);
   }
 
   /**
@@ -1517,7 +1513,12 @@ public class BuildConfiguration implements BuildConfigurationInterface {
 
   /**
    * The platform string, suitable for use as a key into a MakeEnvironment.
+   *
+   * <p>Is only there for platform-dependent vardefs. Use
+   * {@link com.google.devtools.build.lib.rules.cpp.CcToolchainProvider#getToolchainIdentifier()
+   * instead.
    */
+  @Deprecated
   public String getPlatformName() {
     return platformName;
   }
@@ -2075,62 +2076,27 @@ public class BuildConfiguration implements BuildConfigurationInterface {
     return currentTransition;
   }
 
-  @Override
   public BuildEventId getEventId() {
     return BuildEventId.configurationId(checksum());
   }
 
-  @Override
-  public Collection<BuildEventId> getChildrenEvents() {
-    return ImmutableList.of();
+  public BuildConfigurationEvent toBuildEvent() {
+    return buildEventSupplier.get();
   }
 
-  @Override
-  public BuildEventStreamProtos.BuildEvent asStreamProto(BuildEventConverters converters) {
-    BuildEventStreamProtos.Configuration.Builder builder =
-        BuildEventStreamProtos.Configuration.newBuilder()
-            .setMnemonic(getMnemonic())
-            .setPlatformName(getCpu())
-            .putAllMakeVariable(getMakeEnvironment())
-            .setCpu(getCpu());
-    return GenericBuildEvent.protoChaining(this).setConfiguration(builder.build()).build();
-  }
-
-  private static class BuildConfigurationCodec implements ObjectCodec<BuildConfiguration> {
-    @Override
-    public Class<BuildConfiguration> getEncodedClass() {
-      return BuildConfiguration.class;
-    }
-
-    @Override
-    public void serialize(
-        SerializationContext context,
-        BuildConfiguration obj,
-        CodedOutputStream codedOut)
-        throws SerializationException, IOException {
-      context.serialize(obj.directories, codedOut);
-      codedOut.writeInt32NoTag(obj.fragments.size());
-      for (Fragment fragment : obj.fragments.values()) {
-        context.serialize(fragment, codedOut);
-      }
-      context.serialize(obj.buildOptions, codedOut);
-      StringCodecs.asciiOptimized().serialize(context, obj.repositoryName, codedOut);
-    }
-
-    @Override
-    public BuildConfiguration deserialize(DeserializationContext context, CodedInputStream codedIn)
-        throws SerializationException, IOException {
-      BlazeDirectories blazeDirectories = context.deserialize(codedIn);
-      int length = codedIn.readInt32();
-      ImmutableSortedMap.Builder<Class<? extends Fragment>, Fragment> builder =
-          new ImmutableSortedMap.Builder<>(lexicalFragmentSorter);
-      for (int i = 0; i < length; ++i) {
-        Fragment fragment = context.deserialize(codedIn);
-        builder.put(fragment.getClass(), fragment);
-      }
-      BuildOptions options = context.deserialize(codedIn);
-      String repositoryName = StringCodecs.asciiOptimized().deserialize(context, codedIn);
-      return new BuildConfiguration(blazeDirectories, builder.build(), options, repositoryName);
-    }
+  private BuildConfigurationEvent createBuildEvent() {
+    BuildEventId eventId = getEventId();
+    BuildEventStreamProtos.BuildEvent.Builder builder =
+        BuildEventStreamProtos.BuildEvent.newBuilder();
+    builder
+        .setId(eventId.asStreamProto())
+        .setConfiguration(
+            BuildEventStreamProtos.Configuration.newBuilder()
+                .setMnemonic(getMnemonic())
+                .setPlatformName(getCpu())
+                .putAllMakeVariable(getMakeEnvironment())
+                .setCpu(getCpu())
+                .build());
+    return new BuildConfigurationEvent(eventId, builder.build());
   }
 }

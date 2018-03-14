@@ -158,8 +158,7 @@ public class CppHelper {
             == MakeVariableSource.TOOLCHAIN)
         && (ruleContext
             .getFragment(PlatformConfiguration.class)
-            .getEnabledToolchainTypes()
-            .contains(toolchainType));
+            .isToolchainTypeEnabled(toolchainType));
   }
 
   /**
@@ -527,8 +526,7 @@ public class CppHelper {
     if (toolchainType != null
         && ruleContext
             .getFragment(PlatformConfiguration.class)
-            .getEnabledToolchainTypes()
-            .contains(toolchainType)) {
+            .isToolchainTypeEnabled(toolchainType)) {
       return getToolchainFromPlatformConstraints(ruleContext, toolchainType);
     }
     return getToolchainFromCrosstoolTop(ruleContext, dep);
@@ -630,8 +628,10 @@ public class CppHelper {
         && !prerequisite.isSourceArtifact()
         && CPP_FILETYPES.matches(prerequisite.getFilename())) {
       Artifact scanned = getIncludesOutput(ruleContext, prerequisite);
+      Artifact grepIncludes = ruleContext.getPrerequisiteArtifact("$grep_includes", Mode.HOST);
       ruleContext.registerAction(
-          new ExtractInclusionAction(ruleContext.getActionOwner(), prerequisite, scanned));
+          new ExtractInclusionAction(
+              ruleContext.getActionOwner(), prerequisite, scanned, grepIncludes));
       return scanned;
     }
     return null;

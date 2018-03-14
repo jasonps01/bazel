@@ -50,6 +50,7 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactFactory;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
+import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.FileStateType;
@@ -121,6 +122,7 @@ import com.google.devtools.build.lib.skyframe.DirtinessCheckerUtils.FileDirtines
 import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.ExternalFileAction;
 import com.google.devtools.build.lib.skyframe.PackageFunction.ActionOnIOExceptionReadingBuildFile;
 import com.google.devtools.build.lib.skyframe.PackageFunction.IncrementalityIntent;
+import com.google.devtools.build.lib.skyframe.PackageFunction.LoadedPackageCacheEntry;
 import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
 import com.google.devtools.build.lib.skyframe.SkyframeActionExecutor.ActionCompletedReceiver;
 import com.google.devtools.build.lib.skyframe.SkyframeActionExecutor.ProgressSupplier;
@@ -214,7 +216,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
   // dependencies).
   // TODO(bazel-team): remove this cache once we have skyframe-native package loading
   // [skyframe-loading]
-  private final Cache<PackageIdentifier, PackageFunction.BuilderAndGlobDeps>
+  private final Cache<PackageIdentifier, LoadedPackageCacheEntry>
       packageFunctionCache = newPkgFunctionCache();
   private final Cache<PackageIdentifier, AstParseResult> astCache = newAstCache();
 
@@ -484,7 +486,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       PackageFactory pkgFactory,
       PackageManager packageManager,
       AtomicBoolean showLoadingProgress,
-      Cache<PackageIdentifier, PackageFunction.BuilderAndGlobDeps> packageFunctionCache,
+      Cache<PackageIdentifier, LoadedPackageCacheEntry> packageFunctionCache,
       Cache<PackageIdentifier, AstParseResult> astCache,
       AtomicInteger numPackagesLoaded,
       RuleClassProvider ruleClassProvider,
@@ -593,7 +595,9 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     }
   }
 
-  public abstract ActionGraphContainer getActionGraphContainer(List<String> actionGraphTargets);
+  public abstract ActionGraphContainer getActionGraphContainer(
+      List<String> actionGraphTargets, boolean includeActionCmdLine)
+      throws CommandLineExpansionException;
 
   class BuildViewProvider {
     /**
@@ -800,7 +804,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     }
   }
 
-  protected Cache<PackageIdentifier, PackageFunction.BuilderAndGlobDeps>
+  protected Cache<PackageIdentifier, LoadedPackageCacheEntry>
       newPkgFunctionCache() {
     return CacheBuilder.newBuilder().build();
   }
@@ -1280,7 +1284,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
   }
 
   /**
-   * Returns the {@link ConfiguredTargetAndTarget}s corresponding to the given keys.
+   * Returns the {@link ConfiguredTargetAndData}s corresponding to the given keys.
    *
    * <p>For use for legacy support and tests calling through {@code BuildView} only.
    *
@@ -1288,7 +1292,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
    * returned list.
    */
   @ThreadSafety.ThreadSafe
-  public ImmutableList<ConfiguredTargetAndTarget> getConfiguredTargetsForTesting(
+  public ImmutableList<ConfiguredTargetAndData> getConfiguredTargetsForTesting(
       ExtendedEventHandler eventHandler,
       BuildConfiguration originalConfig,
       Iterable<Dependency> keys) {
@@ -1296,7 +1300,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
   }
 
   /**
-   * Returns a map from {@link Dependency} inputs to the {@link ConfiguredTargetAndTarget}s
+   * Returns a map from {@link Dependency} inputs to the {@link ConfiguredTargetAndData}s
    * corresponding to those dependencies.
    *
    * <p>For use for legacy support and tests calling through {@code BuildView} only.
@@ -1305,7 +1309,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
    * returned list.
    */
   @ThreadSafety.ThreadSafe
-  public ImmutableMultimap<Dependency, ConfiguredTargetAndTarget> getConfiguredTargetMapForTesting(
+  public ImmutableMultimap<Dependency, ConfiguredTargetAndData> getConfiguredTargetMapForTesting(
       ExtendedEventHandler eventHandler,
       BuildConfiguration originalConfig,
       Iterable<Dependency> keys) {
@@ -1343,7 +1347,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       reportCycles(eventHandler, entry.getValue().getCycleInfo(), entry.getKey());
     }
 
-    ImmutableMultimap.Builder<Dependency, ConfiguredTargetAndTarget> cts =
+    ImmutableMultimap.Builder<Dependency, ConfiguredTargetAndData> cts =
         ImmutableMultimap.builder();
 
     // Logic copied from ConfiguredTargetFunction#computeDependencies.
@@ -1395,11 +1399,14 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
           }
 
           try {
+            ConfiguredTarget mergedTarget =
+                MergedConfiguredTarget.of(configuredTarget, configuredAspects);
             cts.put(
                 key,
-                new ConfiguredTargetAndTarget(
-                    MergedConfiguredTarget.of(configuredTarget, configuredAspects),
-                    packageValue.getPackage().getTarget(configuredTarget.getLabel().getName())));
+                new ConfiguredTargetAndData(
+                    mergedTarget,
+                    packageValue.getPackage().getTarget(configuredTarget.getLabel().getName()),
+                    mergedTarget.getConfiguration()));
 
           } catch (DuplicateException | NoSuchTargetException e) {
             throw new IllegalStateException(
@@ -1657,21 +1664,19 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       Label label,
       BuildConfiguration configuration,
       ConfigurationTransition transition) {
-    ConfiguredTargetAndTarget configuredTargetAndTarget =
+    ConfiguredTargetAndData configuredTargetAndData =
         getConfiguredTargetAndTargetForTesting(eventHandler, label, configuration, transition);
-    return configuredTargetAndTarget == null
-        ? null
-        : configuredTargetAndTarget.getConfiguredTarget();
+    return configuredTargetAndData == null ? null : configuredTargetAndData.getConfiguredTarget();
   }
 
   @VisibleForTesting
   @Nullable
-  public ConfiguredTargetAndTarget getConfiguredTargetAndTargetForTesting(
+  public ConfiguredTargetAndData getConfiguredTargetAndTargetForTesting(
       ExtendedEventHandler eventHandler,
       Label label,
       BuildConfiguration configuration,
       ConfigurationTransition transition) {
-    ConfiguredTargetAndTarget configuredTargetAndTarget =
+    ConfiguredTargetAndData configuredTargetAndData =
         Iterables.getFirst(
             getConfiguredTargetsForTesting(
                 eventHandler,
@@ -1682,12 +1687,12 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
                         : Dependency.withTransitionAndAspects(
                             label, transition, AspectCollection.EMPTY))),
             null);
-    return configuredTargetAndTarget;
+    return configuredTargetAndData;
   }
 
   @VisibleForTesting
   @Nullable
-  public ConfiguredTargetAndTarget getConfiguredTargetAndTargetForTesting(
+  public ConfiguredTargetAndData getConfiguredTargetAndTargetForTesting(
       ExtendedEventHandler eventHandler, Label label, BuildConfiguration configuration) {
     return getConfiguredTargetAndTargetForTesting(
         eventHandler, label, configuration, NoTransition.INSTANCE);
@@ -2090,23 +2095,25 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
           buildDriver.evaluate(ImmutableList.of(key), keepGoing, /*numThreads=*/ 10, eventHandler);
       if (evalResult.hasError()) {
         ErrorInfo errorInfo = evalResult.getError(key);
+        TargetParsingException exc;
         if (!Iterables.isEmpty(errorInfo.getCycleInfo())) {
-          String errorMessage = "cycles detected during target parsing";
+          exc = new TargetParsingException("cycles detected during target parsing");
           getCyclesReporter().reportCycles(errorInfo.getCycleInfo(), key, eventHandler);
-          throw new TargetParsingException(errorMessage);
+        } else {
+          // TargetPatternPhaseFunction never directly throws. Thus, the only way
+          // evalResult.hasError() && keepGoing can hold is if there are cycles, which is handled
+          // above.
+          Preconditions.checkState(!keepGoing);
+          // Following SkyframeTargetPatternEvaluator, we convert any exception into a
+          // TargetParsingException.
+          Exception e = Preconditions.checkNotNull(errorInfo.getException());
+          exc =
+              (e instanceof TargetParsingException)
+                  ? (TargetParsingException) e
+                  : new TargetParsingException(e.getMessage(), e);
         }
-        if (errorInfo.getException() != null) {
-          Exception e = errorInfo.getException();
-          Throwables.propagateIfInstanceOf(e, TargetParsingException.class);
-          if (!keepGoing) {
-            // This is the same code as in SkyframeTargetPatternEvaluator; we allow any exception
-            // and turn it into a TargetParsingException here.
-            throw new TargetParsingException(e.getMessage());
-          }
-          throw new IllegalStateException("Unexpected Exception type from TargetPatternPhaseValue "
-              + "for '" + targetPatterns + "'' with root causes: "
-              + Iterables.toString(errorInfo.getRootCauses()), e);
-        }
+        eventHandler.post(PatternExpandingError.failed(targetPatterns, exc.getMessage()));
+        throw exc;
       }
       long timeMillis = timer.stop().elapsed(TimeUnit.MILLISECONDS);
 

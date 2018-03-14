@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.skyframe.serialization.CodecScanningConstants;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.Memoization;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.SerializationCodeGenerator.Marshaller;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.FieldSpec;
@@ -52,7 +53,6 @@ import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.type.TypeVariable;
 import javax.lang.model.util.ElementFilter;
 import javax.tools.Diagnostic;
 
@@ -102,12 +102,13 @@ public class AutoCodecProcessor extends AbstractProcessor {
       if (element instanceof TypeElement) {
         TypeElement encodedType = (TypeElement) element;
         TypeSpec.Builder codecClassBuilder;
+        boolean startMemoizing = annotation.memoization() == Memoization.START_MEMOIZING;
         switch (annotation.strategy()) {
           case INSTANTIATOR:
-            codecClassBuilder = buildClassWithInstantiatorStrategy(encodedType);
+            codecClassBuilder = buildClassWithInstantiatorStrategy(encodedType, startMemoizing);
             break;
           case PUBLIC_FIELDS:
-            codecClassBuilder = buildClassWithPublicFieldsStrategy(encodedType);
+            codecClassBuilder = buildClassWithPublicFieldsStrategy(encodedType, startMemoizing);
             break;
           default:
             throw new IllegalArgumentException("Unknown strategy: " + annotation.strategy());
@@ -161,13 +162,14 @@ public class AutoCodecProcessor extends AbstractProcessor {
                     Modifier.FINAL)
                 .initializer(
                     "$T.$L",
-                    sanitizeTypeParameterOfGenerics(symbol.getEnclosingElement().asType()),
+                    sanitizeTypeParameter(symbol.getEnclosingElement().asType()),
                     symbol.getSimpleName())
                 .build())
         .build();
   }
 
-  private TypeSpec.Builder buildClassWithInstantiatorStrategy(TypeElement encodedType) {
+  private TypeSpec.Builder buildClassWithInstantiatorStrategy(
+      TypeElement encodedType, boolean startMemoizing) {
     ExecutableElement constructor = selectInstantiator(encodedType);
     List<? extends VariableElement> fields = constructor.getParameters();
 
@@ -176,16 +178,17 @@ public class AutoCodecProcessor extends AbstractProcessor {
 
     if (encodedType.getAnnotation(AutoValue.class) == null) {
       initializeUnsafeOffsets(codecClassBuilder, encodedType, fields);
-      codecClassBuilder.addMethod(buildSerializeMethodWithInstantiator(encodedType, fields));
+      codecClassBuilder.addMethod(
+          buildSerializeMethodWithInstantiator(encodedType, fields, startMemoizing));
     } else {
       codecClassBuilder.addMethod(
-          buildSerializeMethodWithInstantiatorForAutoValue(encodedType, fields));
+          buildSerializeMethodWithInstantiatorForAutoValue(encodedType, fields, startMemoizing));
     }
 
     MethodSpec.Builder deserializeBuilder =
-        AutoCodecUtil.initializeDeserializeMethodBuilder(encodedType, env);
+        AutoCodecUtil.initializeDeserializeMethodBuilder(encodedType, startMemoizing, env);
     buildDeserializeBody(deserializeBuilder, fields);
-    addReturnNew(deserializeBuilder, encodedType, constructor, env);
+    addReturnNew(deserializeBuilder, encodedType, constructor, startMemoizing, env);
     codecClassBuilder.addMethod(deserializeBuilder.build());
 
     return codecClassBuilder;
@@ -233,7 +236,10 @@ public class AutoCodecProcessor extends AbstractProcessor {
   }
 
   private Relation findRelationWithGenerics(TypeMirror type1, TypeMirror type2) {
-    if (type1.getKind() == TypeKind.TYPEVAR || type2.getKind() == TypeKind.TYPEVAR) {
+    if (type1.getKind() == TypeKind.TYPEVAR
+        || type1.getKind() == TypeKind.WILDCARD
+        || type2.getKind() == TypeKind.TYPEVAR
+        || type2.getKind() == TypeKind.WILDCARD) {
       return Relation.EQUAL_TO;
     }
     if (env.getTypeUtils().isAssignable(type1, type2)) {
@@ -285,9 +291,9 @@ public class AutoCodecProcessor extends AbstractProcessor {
   }
 
   private MethodSpec buildSerializeMethodWithInstantiator(
-      TypeElement encodedType, List<? extends VariableElement> fields) {
+      TypeElement encodedType, List<? extends VariableElement> fields, boolean startMemoizing) {
     MethodSpec.Builder serializeBuilder =
-        AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, env);
+        AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, startMemoizing, env);
     for (VariableElement parameter : fields) {
       Optional<FieldValueAndClass> hasField =
           getFieldByNameRecursive(encodedType, parameter.getSimpleName().toString());
@@ -303,9 +309,9 @@ public class AutoCodecProcessor extends AbstractProcessor {
         TypeKind typeKind = parameter.asType().getKind();
         serializeBuilder.addStatement(
             "$T unsafe_$L = ($T) $T.getInstance().get$L(input, $L_offset)",
-            sanitizeTypeParameterOfGenerics(parameter.asType()),
+            sanitizeTypeParameter(parameter.asType()),
             parameter.getSimpleName(),
-            sanitizeTypeParameterOfGenerics(parameter.asType()),
+            sanitizeTypeParameter(parameter.asType()),
             UnsafeProvider.class,
             typeKind.isPrimitive() ? firstLetterUpper(typeKind.toString().toLowerCase()) : "Object",
             parameter.getSimpleName());
@@ -319,8 +325,9 @@ public class AutoCodecProcessor extends AbstractProcessor {
     return serializeBuilder.build();
   }
 
-  private TypeMirror sanitizeTypeParameterOfGenerics(TypeMirror type) {
-    if (type instanceof TypeVariable) {
+  // Sanitizes the type parameter. If it's a TypeVariable or WildcardType this will get the erasure.
+  private TypeMirror sanitizeTypeParameter(TypeMirror type) {
+    if (Marshallers.isVariableOrWildcardType(type)) {
       return env.getTypeUtils().erasure(type);
     }
     if (!(type instanceof DeclaredType)) {
@@ -328,7 +335,7 @@ public class AutoCodecProcessor extends AbstractProcessor {
     }
     DeclaredType declaredType = (DeclaredType) type;
     for (TypeMirror typeMirror : declaredType.getTypeArguments()) {
-      if (typeMirror instanceof TypeVariable) {
+      if (Marshallers.isVariableOrWildcardType(typeMirror)) {
         return env.getTypeUtils().erasure(type);
       }
     }
@@ -385,16 +392,17 @@ public class AutoCodecProcessor extends AbstractProcessor {
   }
 
   private MethodSpec buildSerializeMethodWithInstantiatorForAutoValue(
-      TypeElement encodedType, List<? extends VariableElement> fields) {
+      TypeElement encodedType, List<? extends VariableElement> fields, boolean startMemoizing) {
     MethodSpec.Builder serializeBuilder =
-        AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, env);
+        AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, startMemoizing, env);
     for (VariableElement parameter : fields) {
       addSerializeParameterWithGetter(encodedType, parameter, serializeBuilder);
     }
     return serializeBuilder.build();
   }
 
-  private TypeSpec.Builder buildClassWithPublicFieldsStrategy(TypeElement encodedType) {
+  private TypeSpec.Builder buildClassWithPublicFieldsStrategy(
+      TypeElement encodedType, boolean startMemoizing) {
     TypeSpec.Builder codecClassBuilder =
         AutoCodecUtil.initializeCodecClassBuilder(encodedType, env);
     ImmutableList<? extends VariableElement> publicFields =
@@ -402,9 +410,10 @@ public class AutoCodecProcessor extends AbstractProcessor {
             .stream()
             .filter(this::isPublicField)
             .collect(toImmutableList());
-    codecClassBuilder.addMethod(buildSerializeMethodWithPublicFields(encodedType, publicFields));
+    codecClassBuilder.addMethod(
+        buildSerializeMethodWithPublicFields(encodedType, publicFields, startMemoizing));
     MethodSpec.Builder deserializeBuilder =
-        AutoCodecUtil.initializeDeserializeMethodBuilder(encodedType, env);
+        AutoCodecUtil.initializeDeserializeMethodBuilder(encodedType, startMemoizing, env);
     buildDeserializeBody(deserializeBuilder, publicFields);
     addInstantiatePopulateFieldsAndReturn(deserializeBuilder, encodedType, publicFields);
     codecClassBuilder.addMethod(deserializeBuilder.build());
@@ -420,9 +429,9 @@ public class AutoCodecProcessor extends AbstractProcessor {
   }
 
   private MethodSpec buildSerializeMethodWithPublicFields(
-      TypeElement encodedType, List<? extends VariableElement> fields) {
+      TypeElement encodedType, List<? extends VariableElement> fields, boolean startMemoizing) {
     MethodSpec.Builder serializeBuilder =
-        AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, env);
+        AutoCodecUtil.initializeSerializeMethodBuilder(encodedType, startMemoizing, env);
     for (VariableElement parameter : fields) {
       String paramAccessor = "input." + parameter.getSimpleName();
       marshallers.writeSerializationCode(
@@ -456,7 +465,13 @@ public class AutoCodecProcessor extends AbstractProcessor {
       MethodSpec.Builder builder,
       TypeElement type,
       ExecutableElement instantiator,
+      boolean startMemoizing,
       ProcessingEnvironment env) {
+    // TODO(janakr): When injection of additional data and memoizing are separated, rework this so
+    // that mutability isn't deeply embedded in AutoCodec.
+    if (startMemoizing) {
+      builder.addStatement("$L.close()", AutoCodecUtil.MUTABILITY_VARIABLE_NAME);
+    }
     List<? extends TypeMirror> allThrown = instantiator.getThrownTypes();
     if (!allThrown.isEmpty()) {
       builder.beginControlFlow("try");

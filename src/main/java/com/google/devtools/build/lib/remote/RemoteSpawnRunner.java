@@ -19,6 +19,7 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.ActionInputFileCache;
+import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.Spawn;
@@ -233,6 +234,11 @@ class RemoteSpawnRunner implements SpawnRunner {
       boolean uploadLocalResults,
       IOException cause)
       throws ExecException, InterruptedException, IOException {
+    // Regardless of cause, if we are interrupted, we should stop without displaying a user-visible
+    // failure/stack trace.
+    if (Thread.currentThread().isInterrupted()) {
+      throw new InterruptedException();
+    }
     if (options.remoteLocalFallback && !(cause instanceof TimeoutException)) {
       return execLocally(spawn, policy, inputMap, uploadLocalResults, remoteCache, actionKey);
     }
@@ -291,7 +297,7 @@ class RemoteSpawnRunner implements SpawnRunner {
     ArrayList<String> outputDirectoryPaths = new ArrayList<>();
     for (ActionInput output : outputs) {
       String pathString = output.getExecPathString();
-      if (execRoot.getRelative(pathString).isDirectory()) {
+      if (output instanceof Artifact && ((Artifact) output).isTreeArtifact()) {
         outputDirectoryPaths.add(pathString);
       } else {
         outputPaths.add(pathString);

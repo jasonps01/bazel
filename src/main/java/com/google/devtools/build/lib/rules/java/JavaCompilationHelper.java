@@ -28,6 +28,7 @@ import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
+import com.google.devtools.build.lib.analysis.actions.ActionConstructionContext;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
@@ -631,8 +632,14 @@ public final class JavaCompilationHelper {
       resourceJars.add(gensrcJar);
     }
     SingleJarActionBuilder.createSourceJarAction(
-        ruleContext, semantics, attributes.getSourceFiles(),
-        resourceJars.build(), outputJar, javaToolchainProvider, hostJavabase);
+        ruleContext,
+        ruleContext,
+        semantics,
+        attributes.getSourceFiles(),
+        resourceJars.build(),
+        outputJar,
+        javaToolchainProvider,
+        hostJavabase);
   }
 
   public void createSourceJarAction(Artifact outputJar, @Nullable Artifact gensrcJar) {
@@ -712,10 +719,10 @@ public final class JavaCompilationHelper {
   }
 
   static void addDependencyArtifactsToAttributes(
-      JavaTargetAttributes.Builder attributes,
-      Iterable<? extends JavaCompilationArgsProvider> deps) {
+      JavaTargetAttributes.Builder attributes, Iterable<JavaInfo> deps) {
     NestedSetBuilder<Artifact> result = NestedSetBuilder.stableOrder();
-    for (JavaCompilationArgsProvider provider : deps) {
+    for (JavaCompilationArgsProvider provider :
+        JavaInfo.fetchProvidersFromList(deps, JavaCompilationArgsProvider.class)) {
       result.addTransitive(provider.getCompileTimeJavaDependencyArtifacts());
     }
     attributes.addCompileTimeDependencyArtifacts(result.build());
@@ -737,15 +744,7 @@ public final class JavaCompilationHelper {
 
     JavaClasspathMode classpathMode = getJavaConfiguration().getReduceJavaClasspath();
     if (isStrict() && classpathMode != JavaClasspathMode.OFF) {
-      List<JavaCompilationArgsProvider> compilationArgsProviders = new ArrayList<>();
-      for (TransitiveInfoCollection dep : deps) {
-        JavaCompilationArgsProvider provider =
-            JavaInfo.getProvider(JavaCompilationArgsProvider.class, dep);
-        if (provider != null) {
-          compilationArgsProviders.add(provider);
-        }
-      }
-      addDependencyArtifactsToAttributes(attributes, compilationArgsProviders);
+      addDependencyArtifactsToAttributes(attributes, JavaInfo.getJavaInfo(deps));
     }
   }
 
@@ -908,10 +907,10 @@ public final class JavaCompilationHelper {
    * The new artifact will have the same root as the given one.
    */
   static Artifact derivedArtifact(
-      RuleContext ruleContext, Artifact artifact, String prefix, String suffix) {
+      ActionConstructionContext context, Artifact artifact, String prefix, String suffix) {
     PathFragment path = artifact.getRootRelativePath();
     String basename = FileSystemUtils.removeExtension(path.getBaseName()) + suffix;
     path = path.replaceName(prefix + basename);
-    return ruleContext.getDerivedArtifact(path, artifact.getRoot());
+    return context.getDerivedArtifact(path, artifact.getRoot());
   }
 }

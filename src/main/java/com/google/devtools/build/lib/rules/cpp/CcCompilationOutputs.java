@@ -33,6 +33,7 @@ import java.util.Set;
 @SkylarkModule(
   name = "cc_compilation_outputs",
   category = SkylarkModuleCategory.BUILTIN,
+  documented = false,
   doc = "Helper class containing CC compilation outputs."
 )
 public class CcCompilationOutputs {
@@ -149,7 +150,7 @@ public class CcCompilationOutputs {
   public List<IncludeScannable> getLipoScannables() {
     return lipoScannables;
   }
-  
+
   /**
    * Returns the output files that are considered "compiled" by this C++ compile action.
    */
@@ -197,6 +198,7 @@ public class CcCompilationOutputs {
       this.temps.addTransitive(outputs.temps);
       this.headerTokenFiles.addAll(outputs.headerTokenFiles);
       this.lipoScannables.addAll(outputs.lipoScannables);
+      this.ltoBitcodeFiles.putAll(outputs.ltoBitcodeFiles);
       return this;
     }
 
@@ -226,11 +228,6 @@ public class CcCompilationOutputs {
 
     public Builder addLtoBitcodeFile(Artifact fullBitcode, Artifact ltoIndexingBitcode) {
       ltoBitcodeFiles.put(fullBitcode, ltoIndexingBitcode);
-      return this;
-    }
-
-    public Builder addLtoBitcodeFile(ImmutableMap<Artifact, Artifact> artifacts) {
-      ltoBitcodeFiles.putAll(artifacts);
       return this;
     }
 

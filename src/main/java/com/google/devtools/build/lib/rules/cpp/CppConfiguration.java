@@ -187,6 +187,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
 
   private final ImmutableList<String> linkOptions;
   private final ImmutableList<String> ltoindexOptions;
+  private final ImmutableList<String> ltobackendOptions;
 
   private final CppOptions cppOptions;
   private final CpuTransformer cpuTransformerEnum;
@@ -281,37 +282,38 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
             ImmutableList.copyOf(cppOptions.coptList)),
         new FlagList(
             cxxOptsBuilder.build(),
-            FlagList.convertOptionalOptions(toolchain.getOptionalCxxFlagList()),
+            ImmutableList.of(),
             ImmutableList.copyOf(cppOptions.cxxoptList)),
         new FlagList(
             ImmutableList.copyOf(toolchain.getUnfilteredCxxFlagList()),
-            FlagList.convertOptionalOptions(toolchain.getOptionalUnfilteredCxxFlagList()),
-            ImmutableList.<String>of()),
+            ImmutableList.of(),
+            ImmutableList.of()),
         ImmutableList.copyOf(cppOptions.conlyoptList),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.FULLY_STATIC),
-            FlagList.convertOptionalOptions(toolchain.getOptionalLinkerFlagList()),
-            ImmutableList.<String>of()),
+            ImmutableList.of(),
+            ImmutableList.of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.MOSTLY_STATIC),
-            FlagList.convertOptionalOptions(toolchain.getOptionalLinkerFlagList()),
-            ImmutableList.<String>of()),
+            ImmutableList.of(),
+            ImmutableList.of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.MOSTLY_STATIC_LIBRARIES),
-            FlagList.convertOptionalOptions(toolchain.getOptionalLinkerFlagList()),
-            ImmutableList.<String>of()),
+            ImmutableList.of(),
+            ImmutableList.of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.DYNAMIC),
-            FlagList.convertOptionalOptions(toolchain.getOptionalLinkerFlagList()),
-            ImmutableList.<String>of()),
+            ImmutableList.of(),
+            ImmutableList.of()),
         ImmutableList.copyOf(cppOptions.coptList),
         ImmutableList.copyOf(cppOptions.cxxoptList),
         linkoptsBuilder.build(),
         ImmutableList.copyOf(cppOptions.ltoindexoptList),
+        ImmutableList.copyOf(cppOptions.ltobackendoptList),
         cppOptions,
         params.cpuTransformer,
         (cppOptions.stripBinaries == StripMode.ALWAYS
@@ -349,6 +351,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
       ImmutableList<String> cxxopts,
       ImmutableList<String> linkOptions,
       ImmutableList<String> ltoindexOptions,
+      ImmutableList<String> ltobackendOptions,
       CppOptions cppOptions,
       CpuTransformer cpuTransformerEnum,
       boolean stripBinaries,
@@ -380,6 +383,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     this.cxxopts = cxxopts;
     this.linkOptions = linkOptions;
     this.ltoindexOptions = ltoindexOptions;
+    this.ltobackendOptions = ltobackendOptions;
     this.cppOptions = cppOptions;
     this.cpuTransformerEnum = cpuTransformerEnum;
     this.stripBinaries = stripBinaries;
@@ -720,6 +724,11 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     return ltoindexOptions;
   }
 
+  /** Returns the set of command-line LTO backend options. */
+  public ImmutableList<String> getLtoBackendOptions() {
+    return ltobackendOptions;
+  }
+
   /**
    * Returns the immutable list of linker options for fully statically linked outputs. Does not
    * include command-line options passed via --linkopt or --linkopts.
@@ -975,6 +984,14 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   }
 
   /**
+   * Returns the {@link PerLabelOptions} to apply to the LTO Backend command line, if the compiled
+   * object matches the regular expression.
+   */
+  public ImmutableList<PerLabelOptions> getPerFileLtoBackendOpts() {
+    return ImmutableList.copyOf(cppOptions.perFileLtoBackendOpts);
+  }
+
+  /**
    * Returns the LIPO context for this configuration.
    *
    * <p>This only exists for configurations that apply LIPO in LIPO-optimized builds. It does
@@ -1040,6 +1057,10 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
 
   public boolean forceIgnoreDashStatic() {
     return cppOptions.forceIgnoreDashStatic;
+  }
+
+  public boolean shortenObjFilePath() {
+    return cppOptions.shortenObjFilePath;
   }
 
   public boolean legacyWholeArchive() {
@@ -1302,11 +1323,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     return toolchainPrefix + lipoSuffix;
   }
 
-  @Override
-  public String getPlatformName() {
-    return getToolchainIdentifier();
-  }
-
   /**
    * Returns true if we should share identical native libraries between different targets.
    */
@@ -1326,7 +1342,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
         "compiler", getCompiler());
   }
 
-  public PathFragment getFdoInstrument() {
+  public String getFdoInstrument() {
     return cppOptions.getFdoInstrument();
   }
 

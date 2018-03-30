@@ -37,12 +37,42 @@ public class DeprecatedApiCheckerTest {
   @Test
   public void deprecatedCtxMethods() {
     Truth.assertThat(findIssues("ctx.action()").toString())
-        .contains("1:1-1:10: This method is deprecated");
+        .contains("1:1-1:10: ctx.action is deprecated: Use ctx.actions.run");
     Truth.assertThat(findIssues("ctx.empty_action").toString())
-        .contains("1:1-1:16: This method is deprecated");
+        .contains("1:1-1:16: ctx.empty_action is deprecated");
     Truth.assertThat(findIssues("ctx.default_provider()").toString())
-        .contains("1:1-1:20: This method is deprecated");
+        .contains("1:1-1:20: ctx.default_provider is deprecated");
+    Truth.assertThat(findIssues("PACKAGE_NAME").toString())
+        .contains("1:1-1:12: PACKAGE_NAME is deprecated");
+    Truth.assertThat(findIssues("f = ctx.outputs.executable").toString())
+        .contains("1:5-1:26: ctx.outputs.executable is deprecated");
 
     Truth.assertThat(findIssues("ctx.actions()")).isEmpty();
+  }
+
+  @Test
+  public void testRuleImplReturnValue() {
+    Truth.assertThat(
+            findIssues("def _impl(ctx): return struct()", "x = rule(implementation=_impl)")
+                .toString())
+        .contains("1:17-1:31: Avoid using the legacy provider syntax.");
+
+    Truth.assertThat(
+            findIssues(
+                    "def _impl(ctx):",
+                    "  if True: return struct()",
+                    "  return",
+                    "x = rule(_impl, attrs = {})")
+                .toString())
+        .contains("2:12-2:26: Avoid using the legacy provider syntax.");
+
+    Truth.assertThat(
+            findIssues(
+                "def _impl(): return struct()",
+                "def _impl2(): return []",
+                "x = rule(",
+                "  implementation=_impl2,",
+                ")"))
+        .isEmpty();
   }
 }

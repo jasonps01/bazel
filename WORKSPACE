@@ -36,7 +36,8 @@ bind(
 http_archive(
     name = "bazel_j2objc",
     url = "https://github.com/google/j2objc/releases/download/2.0.3/j2objc-2.0.3.zip",
-    sha256 = "529ee99e6f0e3f88edef61aeae4f13dc6e5eb8183993ced191338422b0e1fbeb",
+    # Computed using "shasum -a 256 j2objc-2.0.3.zip"
+    sha256 = "a36bac432d0dbd8c98249e484b2b69dd5720afa4abb58711a3c3def1c0bfa21d",
     strip_prefix = "j2objc-2.0.3",
 )
 
@@ -138,6 +139,17 @@ http_archive(
     ],
     strip_prefix = "re2-2017-12-01",
     sha256 = "62797e7cd7cc959419710cd25b075b5f5b247da0e8214d47bf5af9b32128fb0d",
+)
+
+# We're pinning to a commit because this project does not have a recent release.
+# Nothing special about this commit, though.
+http_archive(
+    name = "com_google_googletest",
+    urls = [
+        "https://github.com/google/googletest/archive/dfa853b63d17c787914b663b50c2095a0c5b706e.tar.gz",
+    ],
+    strip_prefix = "googletest-dfa853b63d17c787914b663b50c2095a0c5b706e",
+    sha256 = "313a16fba8f0be8ee20ba9883e044556044cbd1ae6cea532473d163a843ef991",
 )
 
 # For src/test/shell/bazel:bazel_sandboxing_test

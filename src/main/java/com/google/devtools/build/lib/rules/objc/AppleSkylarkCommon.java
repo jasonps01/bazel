@@ -18,6 +18,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleContext;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -292,18 +293,6 @@ public class AppleSkylarkCommon {
   }
 
   @SkylarkCallable(
-    name = IosDeviceProvider.SKYLARK_NAME,
-    doc =
-        "<b>Deprecated. Use the new Skylark testing rules instead.</b> Returns the provider "
-            + "constructor for IosDeviceProvider. Use this as a key to access the attributes "
-            + "exposed by ios_device.",
-    structField = true
-  )
-  public Provider getIosDeviceProviderConstructor() {
-    return IosDeviceProvider.SKYLARK_CONSTRUCTOR;
-  }
-
-  @SkylarkCallable(
       name = "apple_host_system_env",
       doc =
           "Returns a <a href='dict.html'>dict</a> of environment variables that should be set "
@@ -388,7 +377,7 @@ public class AppleSkylarkCommon {
             Environment environment) {
           boolean disableObjcResourceKeys =
               environment.getSemantics().incompatibleDisableObjcProviderResources();
-          ObjcProvider.Builder resultBuilder = new ObjcProvider.Builder();
+          ObjcProvider.Builder resultBuilder = new ObjcProvider.Builder(environment.getSemantics());
           if (usesSwift) {
             resultBuilder.add(ObjcProvider.FLAG, ObjcProvider.Flag.USES_SWIFT);
           }
@@ -497,7 +486,7 @@ public class AppleSkylarkCommon {
       RuleContext ruleContext = skylarkRuleContext.getRuleContext();
       AppleBinaryOutput appleBinaryOutput = AppleBinary.linkMultiArchBinary(ruleContext);
       return appleBinaryOutput.getBinaryInfoProvider();
-    } catch (RuleErrorException exception) {
+    } catch (RuleErrorException | ActionConflictException exception) {
       throw new EvalException(null, exception);
     }
   }

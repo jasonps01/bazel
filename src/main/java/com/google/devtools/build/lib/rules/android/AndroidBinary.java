@@ -31,8 +31,10 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
 import com.google.devtools.build.lib.actions.CommandLine;
 import com.google.devtools.build.lib.actions.FailAction;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile;
+import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
@@ -93,7 +95,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
 
   @Override
   public ConfiguredTarget create(RuleContext ruleContext)
-      throws InterruptedException, RuleErrorException {
+      throws InterruptedException, RuleErrorException, ActionConflictException {
     CppSemantics cppSemantics = createCppSemantics();
     JavaSemantics javaSemantics = createJavaSemantics();
     AndroidSemantics androidSemantics = createAndroidSemantics();
@@ -182,7 +184,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
     boolean shrinkResources = shouldShrinkResources(ruleContext);
 
     // Retrieve and compile the resources defined on the android_binary rule.
-    LocalResourceContainer.validateRuleContext(ruleContext);
+    AndroidResources.validateRuleContext(ruleContext);
 
     ApplicationManifest applicationManifest =
         androidSemantics.getManifestForRule(ruleContext).mergeWith(ruleContext, resourceDeps);
@@ -1489,7 +1491,8 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
       }
     }
 
-    shardAction.addCommandLine(shardCommandLine.build());
+    shardAction.addCommandLine(
+        shardCommandLine.build(), ParamFileInfo.builder(ParameterFileType.SHELL_QUOTED).build());
     ruleContext.registerAction(shardAction.build(ruleContext));
 
     if (makeDexArchives && proguardedJar != null) {

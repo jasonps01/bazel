@@ -6,12 +6,12 @@ title: Query Language
 
 
 <ul class="toc">
-  <li><a href="#examples">Examples</a></li>
-  <li><a href="#tokens">Tokens: The Lexical Syntax</a></li>
-  <li><a href="#concepts">Bazel Query Language Concepts</a></li>
-  <li><a href="#expressions">Expressions: Syntax and Semantics of the Grammar</a></li>
-  <li><a href="#functions">Functions</a></li>
-  <li><a href="#output-formats">Output Formats</a></li>
+  <li><a href="query.html#examples">Examples</a></li>
+  <li><a href="query.html#tokens">Tokens: The Lexical Syntax</a></li>
+  <li><a href="query.html#concepts">Bazel Query Language Concepts</a></li>
+  <li><a href="query.html#expressions">Expressions: Syntax and Semantics of the Grammar</a></li>
+  <li><a href="query.html#functions">Functions</a></li>
+  <li><a href="query.html#output-formats">Output Formats</a></li>
 </ul>
 
 <p>
@@ -22,6 +22,18 @@ title: Query Language
   formats <code>bazel query</code> supports.
 </p>
 
+<p>
+  If you were looking for a how-to, please see the <a href='query-how-to.md'>Bazel Query How-To</a>.
+</p>
+<h3> bazel cquery </h3>
+<p>Traditional bazel query runs on the post-loading phase target graph and therefore
+  has no concept of configurations and their related concepts. Notably, this means it does not
+  correctly resolve
+  <a href = "https://docs.bazel.build/versions/master/be/functions.html#select">select statements</a>
+  and rather returns all possible resolutions of selects. A newer query environment, cquery,
+  properly handles configurations but doesn't provide all of the functionality of this original
+  query. For more information, see the <a href="cquery.html">Bazel cquery reference</a>.
+</p>
 <h2 id='examples'>Examples</h2>
 
 <p>
@@ -604,7 +616,7 @@ x intersect (y union z)</pre>
   operator, except that the "universe set" is whatever the <code>--universe_scope</code> flag
   evaluated to, instead of being separately specified. Thus, if
   <code>--universe_scope=//foo/...</code> was passed, then <code>allrdeps(//bar)</code> is
-  equivalent to <code>rdeps(//bar, //foo/...)</code>.
+  equivalent to <code>rdeps(//foo/..., //bar)</code>.
 </p>
 
 <h3 id="siblings">Dealing with a target's package: siblings</h3>
@@ -1027,17 +1039,16 @@ genrule(
 </p>
 
 <h3 id="rbuildfiles">Package definition files: rbuildfiles</h3>
-<pre>expr ::= rbuildfiles(<var>expr</var>)</pre>
+<pre>expr ::= rbuildfiles(<var>word</var>, ...)</pre>
 <b>Only available with <a href='#sky-query'>Sky Query</a></b><br/>
 <p>
-  The <code>rbuildfiles(<var>x</var>)</code> operator returns the set of "buildfiles" (BUILD and
-  .bzl files) that depend on <var>x</var>, where <var>x</var> is a list of path fragments for
-  buildfiles. For instance, if <code>//foo</code> is a package, then
-  <code>rbuildfiles(foo/BUILD)</code> will return the <code>//foo:BUILD</code> target. If the
-  <code>foo/BUILD</code> file has <code>load('//bar:file.bzl'...</code> in it, then
-  <code>rbuildfiles(bar/file.bzl)</code> will return the <code>//foo:BUILD</code> target and the
-  <code>//bar:file.bzl</code> target, as well as the targets for any other BUILD files and .bzl
-  files that load <code>//bar:file.bzl</code>
+  The <code>rbuildfiles</code> operator takes a comma-separated list of path fragments and returns
+  the set of BUILD files that transitively depend on these path fragments. For instance, if
+  <code>//foo</code> is a package, then <code>rbuildfiles(foo/BUILD)</code> will return the
+  <code>//foo:BUILD</code> target. If the <code>foo/BUILD</code> file has
+  <code>load('//bar:file.bzl'...</code> in it, then <code>rbuildfiles(bar/file.bzl)</code> will
+  return the <code>//foo:BUILD</code> target, as well as the targets for any other BUILD files that
+  load <code>//bar:file.bzl</code>
 </p>
 
 <p>
@@ -1050,14 +1061,14 @@ genrule(
 </p>
 
 <p>
-  The <code>rbuildfiles</code> operator is morally the inverse of the
+  The <code>rbuildfiles</code> operator is almost morally the inverse of the
   <a href='#buildfiles'><code>buildfiles</code></a> operator. However, this moral inversion
   holds more strongly in one direction: the outputs of <code>rbuildfiles</code> are just like the
-  inputs of <code>buildfiles</code>, since both are targets corresponding to packages and .bzl
-  files. In the other direction, the correspondence is weaker. The outputs of the
-  <code>buildfiles</code> operator are targets corresponding to all packages and .bzl files needed
-  by a given input. However, the inputs of the <code>rbuildfiles</code> operator are not those
-  targets, but rather the path fragments that correspond to those targets.
+  inputs of <code>buildfiles</code>; the former will only contain BUILD file targets in packages,
+  and the latter may contain such targets. In the other direction, the correspondence is weaker. The
+  outputs of the <code>buildfiles</code> operator are targets corresponding to all packages and .bzl
+  files needed by a given input. However, the inputs of the <code>rbuildfiles</code> operator are
+  not those targets, but rather the path fragments that correspond to those targets.
 </p>
 
 <h3 id="loadfiles">Package definition files: loadfiles</h3>

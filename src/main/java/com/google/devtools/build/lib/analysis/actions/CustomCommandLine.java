@@ -208,7 +208,7 @@ public final class CustomCommandLine extends CommandLine {
       }
 
       /** Each argument is mapped using the supplied map function */
-      public MappedVectorArg<T> mapped(CommandLineItem.MapFn<T> mapFn) {
+      public MappedVectorArg<T> mapped(CommandLineItem.MapFn<? super T> mapFn) {
         return new MappedVectorArg<>(this, mapFn);
       }
     }
@@ -216,9 +216,9 @@ public final class CustomCommandLine extends CommandLine {
     /** A vector arg that maps some type T to strings. */
     static class MappedVectorArg<T> extends VectorArg<String> {
       private final Iterable<T> values;
-      private final CommandLineItem.MapFn<T> mapFn;
+      private final CommandLineItem.MapFn<? super T> mapFn;
 
-      private MappedVectorArg(SimpleVectorArg<T> other, CommandLineItem.MapFn<T> mapFn) {
+      private MappedVectorArg(SimpleVectorArg<T> other, CommandLineItem.MapFn<? super T> mapFn) {
         super(
             other.isNestedSet,
             other.isEmpty,
@@ -487,8 +487,9 @@ public final class CustomCommandLine extends CommandLine {
     }
   }
 
-  private static class FormatArg implements ArgvFragment {
-    private static final FormatArg INSTANCE = new FormatArg();
+  @AutoCodec.VisibleForSerialization
+  static class FormatArg implements ArgvFragment {
+    @AutoCodec @AutoCodec.VisibleForSerialization static final FormatArg INSTANCE = new FormatArg();
     private static final UUID FORMAT_UUID = UUID.fromString("377cee34-e947-49e0-94a2-6ab95b396ec4");
 
     private static void push(List<Object> arguments, String formatStr, Object... args) {
@@ -526,8 +527,9 @@ public final class CustomCommandLine extends CommandLine {
     }
   }
 
-  private static class PrefixArg implements ArgvFragment {
-    private static final PrefixArg INSTANCE = new PrefixArg();
+  @AutoCodec.VisibleForSerialization
+  static class PrefixArg implements ArgvFragment {
+    @AutoCodec @AutoCodec.VisibleForSerialization static final PrefixArg INSTANCE = new PrefixArg();
     private static final UUID PREFIX_UUID = UUID.fromString("a95eccdf-4f54-46fc-b925-c8c7e1f50c95");
 
     private static void push(List<Object> arguments, String before, Object arg) {

@@ -35,7 +35,6 @@ import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.ComputedSubstitution;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Substitution;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Template;
-import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.test.TestConfiguration;
 import com.google.devtools.build.lib.bazel.rules.BazelConfiguration;
@@ -44,8 +43,12 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.TargetUtils;
+import com.google.devtools.build.lib.rules.cpp.CcLinkParams;
+import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
+import com.google.devtools.build.lib.rules.cpp.CcLinkParamsStore;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder.Compression;
+import com.google.devtools.build.lib.rules.java.JavaCcLinkParamsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
@@ -578,6 +581,21 @@ public class BazelJavaSemantics implements JavaSemantics {
       ImmutableMap<Artifact, Artifact> compilationToRuntimeJarMap,
       NestedSetBuilder<Artifact> filesBuilder,
       RuleConfiguredTargetBuilder ruleBuilder) {
+    if (!isJavaBinaryOrJavaTest(ruleContext)) {
+      // TODO(plf): Figure out whether we can remove support for C++ dependencies in Bazel.
+      ruleBuilder.addNativeDeclaredProvider(
+          new CcLinkParamsInfo(
+              new CcLinkParamsStore() {
+                @Override
+                protected void collect(
+                    CcLinkParams.Builder builder, boolean linkingStatically, boolean linkShared) {
+                  builder.addTransitiveTargets(
+                      javaCommon.targetsTreatedAsDeps(ClasspathType.BOTH),
+                      JavaCcLinkParamsProvider.TO_LINK_PARAMS,
+                      CcLinkParamsInfo.TO_LINK_PARAMS);
+                }
+              }));
+    }
   }
 
   // TODO(dmarting): simplify that logic when we remove the legacy Bazel java_test behavior.
@@ -736,7 +754,7 @@ public class BazelJavaSemantics implements JavaSemantics {
 
   @Override
   public CustomCommandLine buildSingleJarCommandLine(
-      BuildConfiguration configuration,
+      String toolchainIdentifier,
       Artifact output,
       String mainClass,
       ImmutableList<String> manifestLines,

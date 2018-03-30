@@ -15,6 +15,7 @@ package com.google.devtools.build.lib.rules.android;
 
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
@@ -109,10 +110,11 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
 
   @Override
   public ConfiguredTarget create(RuleContext ruleContext)
-      throws InterruptedException, RuleErrorException {
+      throws InterruptedException, RuleErrorException, ActionConflictException {
     validateRuleContext(ruleContext);
     JavaSemantics javaSemantics = createJavaSemantics();
     AndroidSemantics androidSemantics = createAndroidSemantics();
+    androidSemantics.validateAndroidLibraryRuleContext(ruleContext);
     AndroidSdkProvider.verifyPresence(ruleContext);
     NestedSetBuilder<Aar> transitiveAars = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<Artifact> transitiveAarArtifacts = NestedSetBuilder.stableOrder();
@@ -129,9 +131,9 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
     AndroidCommon androidCommon = new AndroidCommon(javaCommon);
 
     boolean definesLocalResources =
-        LocalResourceContainer.definesAndroidResources(ruleContext.attributes());
+        AndroidResources.definesAndroidResources(ruleContext.attributes());
     if (definesLocalResources) {
-      LocalResourceContainer.validateRuleContext(ruleContext);
+      AndroidResources.validateRuleContext(ruleContext);
     }
 
     // TODO(b/69668042): Always correctly apply neverlinking for resources

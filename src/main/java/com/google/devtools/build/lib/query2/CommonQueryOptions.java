@@ -25,6 +25,19 @@ import java.util.Set;
 
 /** Options shared between blaze query and blaze cquery. */
 public class CommonQueryOptions extends OptionsBase {
+
+  @Option(
+      name = "output",
+      defaultValue = "label",
+      documentationCategory = OptionDocumentationCategory.QUERY,
+      effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
+      help =
+          "The format in which the query results should be printed. Allowed values for query are: "
+              + "build, graph, label, label_kind, locations, maxrank, minrank, package, proto, xml."
+              + "Currently you should never explicitly set this flag for cquery."
+  )
+  public String outputFormat;
+
   @Option(
     name = "universe_scope",
     defaultValue = "",
@@ -66,7 +79,6 @@ public class CommonQueryOptions extends OptionsBase {
   @Option(
     name = "implicit_deps",
     defaultValue = "true",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS},
     help =

@@ -44,7 +44,7 @@ import com.google.devtools.build.lib.events.NullEventHandler;
 import com.google.devtools.build.lib.events.OutputFilter.RegexOutputFilter;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.Rule;
-import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.testutil.Suite;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.testutil.TestSpec;
@@ -92,7 +92,7 @@ public class BuildViewTest extends BuildViewTestBase {
     Rule ruleTarget = (Rule) getTarget("//pkg:foo");
     assertThat(ruleTarget.getRuleClass()).isEqualTo("genrule");
 
-    ConfiguredTargetAndTarget ruleCTAT = getConfiguredTargetAndTarget("//pkg:foo");
+    ConfiguredTargetAndData ruleCTAT = getConfiguredTargetAndTarget("//pkg:foo");
 
     assertThat(ruleCTAT.getTarget()).isSameAs(ruleTarget);
   }
@@ -116,9 +116,9 @@ public class BuildViewTest extends BuildViewTestBase {
     //scratch.file("tests/small_test_1.py");
 
     update("//tests:smallTests");
-    ConfiguredTargetAndTarget test1 = getConfiguredTargetAndTarget("//tests:small_test_1");
-    ConfiguredTargetAndTarget test2 = getConfiguredTargetAndTarget("//tests:small_test_2");
-    ConfiguredTargetAndTarget suite = getConfiguredTargetAndTarget("//tests:smallTests");
+    ConfiguredTargetAndData test1 = getConfiguredTargetAndTarget("//tests:small_test_1");
+    ConfiguredTargetAndData test2 = getConfiguredTargetAndTarget("//tests:small_test_2");
+    ConfiguredTargetAndData suite = getConfiguredTargetAndTarget("//tests:smallTests");
 
     ConfiguredTarget test1CT = test1.getConfiguredTarget();
     ConfiguredTarget test2CT = test2.getConfiguredTarget();
@@ -151,16 +151,15 @@ public class BuildViewTest extends BuildViewTestBase {
   public void testGeneratedArtifact() throws Exception {
     setupDummyRule();
     update("//pkg:a.out");
-    OutputFileConfiguredTarget output =
-        (OutputFileConfiguredTarget) getConfiguredTarget("//pkg:a.out");
+    ConfiguredTargetAndData ctad = getConfiguredTargetAndData("//pkg:a.out");
+    OutputFileConfiguredTarget output = (OutputFileConfiguredTarget) ctad.getConfiguredTarget();
     Artifact outputArtifact = output.getArtifact();
     assertThat(outputArtifact.getRoot())
         .isEqualTo(
-            output
-                .getConfiguration()
+            ctad.getConfiguration()
                 .getBinDirectory(output.getLabel().getPackageIdentifier().getRepository()));
     assertThat(outputArtifact.getExecPath())
-        .isEqualTo(output.getConfiguration().getBinFragment().getRelative("pkg/a.out"));
+        .isEqualTo(ctad.getConfiguration().getBinFragment().getRelative("pkg/a.out"));
     assertThat(outputArtifact.getRootRelativePath()).isEqualTo(PathFragment.create("pkg/a.out"));
 
     Action action = getGeneratingAction(outputArtifact);
@@ -344,7 +343,7 @@ public class BuildViewTest extends BuildViewTestBase {
         "sh_binary(name = 'binary', srcs = ['binary.sh'])");
     ConfiguredTarget ct = Iterables.getOnlyElement(update("//package:binary").getTargetsToBuild());
     BuildConfiguration.Options options =
-        ct.getConfiguration().getOptions().get(BuildConfiguration.Options.class);
+        getConfiguration(ct).getOptions().get(BuildConfiguration.Options.class);
     assertThat(options.hostCpu).isEqualTo("$CONFIG HOOK 1");
   }
 
@@ -358,7 +357,7 @@ public class BuildViewTest extends BuildViewTestBase {
         "sh_binary(name = 'binary', srcs = ['binary.sh'])");
     ConfiguredTarget ct = Iterables.getOnlyElement(update("//package:binary").getTargetsToBuild());
     BuildConfiguration.Options options =
-        ct.getConfiguration().getOptions().get(BuildConfiguration.Options.class);
+        getConfiguration(ct).getOptions().get(BuildConfiguration.Options.class);
     assertThat(options.hostCpu).isEqualTo("$CONFIG HOOK 1$CONFIG HOOK 2");
   }
 
@@ -483,37 +482,8 @@ public class BuildViewTest extends BuildViewTestBase {
         "java_library(name = 'b', srcs = [':src'])");
     reporter.setOutputFilter(RegexOutputFilter.forPattern(Pattern.compile("^//java/a")));
 
-    useConfiguration("--incompatible_show_all_print_messages=true");
     update("//java/a:a");
     assertContainsEvent("DEBUG /workspace/java/b/rules.bzl:2:3: debug in b");
-  }
-
-  @Test
-  public void testOutputFilterWithWarning() throws Exception {
-    scratch.file(
-        "java/a/BUILD",
-        "java_library(name = 'a',",
-        "  srcs = ['A.java'],",
-        "  deps = ['//java/b'])");
-    scratch.file(
-        "java/b/rules.bzl",
-        "def _impl(ctx):",
-        "  print('debug in b')",
-        "  ctx.file_action(",
-        "    output = ctx.outputs.my_output,",
-        "    content = 'foo',",
-        "  )",
-        "gen = rule(implementation = _impl, outputs = {'my_output': 'B.java'})");
-    scratch.file(
-        "java/b/BUILD",
-        "load(':rules.bzl', 'gen')",
-        "gen(name='src')",
-        "java_library(name = 'b', srcs = [':src'])");
-    reporter.setOutputFilter(RegexOutputFilter.forPattern(Pattern.compile("^//java/a")));
-
-    useConfiguration("--incompatible_show_all_print_messages=false");
-    update("//java/a:a");
-    assertDoesNotContainEvent("rules.bzl:2:3: debug in b");
   }
 
   @Test
@@ -1270,7 +1240,7 @@ public class BuildViewTest extends BuildViewTestBase {
     useConfiguration("--experimental_dynamic_configs=on");
     AnalysisResult res = update("//foo:x");
     ConfiguredTarget topLevelTarget = Iterables.getOnlyElement(res.getTargetsToBuild());
-    assertThat(topLevelTarget.getConfiguration().getAllFragments().keySet())
+    assertThat(getConfiguration(topLevelTarget).getFragmentsMap().keySet())
         .containsExactly(ruleClassProvider.getUniversalFragment());
   }
 

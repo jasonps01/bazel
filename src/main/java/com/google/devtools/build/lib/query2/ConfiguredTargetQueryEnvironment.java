@@ -51,14 +51,17 @@ import com.google.devtools.build.lib.query2.engine.QueryUtil.ThreadSafeMutableKe
 import com.google.devtools.build.lib.query2.engine.QueryUtil.UniquifierImpl;
 import com.google.devtools.build.lib.query2.engine.ThreadSafeOutputFormatterCallback;
 import com.google.devtools.build.lib.query2.engine.Uniquifier;
+import com.google.devtools.build.lib.query2.output.CqueryOptions;
 import com.google.devtools.build.lib.query2.output.QueryOptions;
 import com.google.devtools.build.lib.rules.AliasConfiguredTarget;
+import com.google.devtools.build.lib.skyframe.BuildConfigurationValue;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetValue;
 import com.google.devtools.build.lib.skyframe.GraphBackedRecursivePackageProvider;
 import com.google.devtools.build.lib.skyframe.PackageValue;
 import com.google.devtools.build.lib.skyframe.RecursivePackageProviderBackedTargetPatternResolver;
 import com.google.devtools.build.lib.skyframe.SkyFunctions;
+import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.TargetPatternValue;
 import com.google.devtools.build.lib.skyframe.TargetPatternValue.TargetPatternKey;
 import com.google.devtools.build.skyframe.SkyKey;
@@ -66,6 +69,7 @@ import com.google.devtools.build.skyframe.WalkableGraph;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsParsingException;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -104,13 +108,10 @@ public class ConfiguredTargetQueryEnvironment
   private ConfiguredTargetAccessor accessor;
   protected WalkableGraph graph;
 
-  private static final Function<ConfiguredTarget, SkyKey> CT_TO_SKYKEY =
-      target -> ConfiguredTargetValue.key(target.getLabel(), target.getConfiguration());
   private static final Function<SkyKey, ConfiguredTargetKey> SKYKEY_TO_CTKEY =
       skyKey -> (ConfiguredTargetKey) skyKey.argument();
   private static final ImmutableList<TargetPatternKey> ALL_PATTERNS;
-  private static final KeyExtractor<ConfiguredTarget, ConfiguredTargetKey>
-      CONFIGURED_TARGET_KEY_EXTRACTOR = ConfiguredTargetKey::of;
+  private final KeyExtractor<ConfiguredTarget, ConfiguredTargetKey> configuredTargetKeyExtractor;
 
   /** Common query functions and cquery specific functions. */
   public static final ImmutableList<QueryFunction> FUNCTIONS = populateFunctions();
@@ -148,6 +149,20 @@ public class ConfiguredTargetQueryEnvironment
     this.parserPrefix = parserPrefix;
     this.pkgPath = pkgPath;
     this.walkableGraphSupplier = walkableGraphSupplier;
+    this.accessor = new ConfiguredTargetAccessor(walkableGraphSupplier.get());
+    this.configuredTargetKeyExtractor =
+        element -> {
+          try {
+            return ConfiguredTargetKey.of(
+                element,
+                element.getConfigurationKey() == null
+                    ? null
+                    : ((BuildConfigurationValue) graph.getValue(element.getConfigurationKey()))
+                        .getConfiguration());
+          } catch (InterruptedException e) {
+            throw new IllegalStateException("Interruption unexpected in configured query");
+          }
+        };
   }
 
   private void beforeEvaluateQuery() throws InterruptedException, QueryException {
@@ -160,7 +175,6 @@ public class ConfiguredTargetQueryEnvironment
             eventHandler,
             FilteringPolicies.NO_FILTER,
             MultisetSemaphore.unbounded());
-    accessor = new ConfiguredTargetAccessor(walkableGraphSupplier.get());
     checkSettings(settings);
   }
 
@@ -173,6 +187,35 @@ public class ConfiguredTargetQueryEnvironment
 
   private static ImmutableList<QueryFunction> getCqueryFunctions() {
     return ImmutableList.of(new ConfigFunction());
+  }
+
+  public BuildConfiguration getHostConfiguration() {
+    return hostConfiguration;
+  }
+
+  /**
+   * This method has to exist because {@link AliasConfiguredTarget#getLabel()} returns
+   * the label of the "actual" target instead of the alias target. Grr.
+   */
+  public static Label getCorrectLabel(ConfiguredTarget target) {
+    if (target instanceof AliasConfiguredTarget) {
+      return ((AliasConfiguredTarget) target).getOriginalLabel();
+    }
+    return target.getLabel();
+  }
+
+  public ImmutableList<CqueryThreadsafeCallback> getDefaultOutputFormatters(
+      TargetAccessor<ConfiguredTarget> accessor,
+      CqueryOptions options,
+      OutputStream out,
+      SkyframeExecutor skyframeExecutor,
+      BuildConfiguration hostConfiguration) {
+    return new ImmutableList.Builder<CqueryThreadsafeCallback>()
+        .add(new LabelAndConfigurationOutputFormatterCallback(options, out, skyframeExecutor))
+        .add(
+            new TransitionsOutputFormatterCallback(
+                options, out, skyframeExecutor, accessor, hostConfiguration))
+        .build();
   }
 
   // Check to make sure the settings requested are currently supported by this class
@@ -319,7 +362,7 @@ public class ConfiguredTargetQueryEnvironment
       public Void call() throws QueryException, InterruptedException {
         List<ConfiguredTarget> transformedResult = new ArrayList<>();
         for (ConfiguredTarget target : targets) {
-          Label label = target.getLabel();
+          Label label = getCorrectLabel(target);
           ConfiguredTarget configuredTarget;
           switch (configuration) {
             case "\'host\'":
@@ -379,10 +422,6 @@ public class ConfiguredTargetQueryEnvironment
     if (settings.isEmpty()) {
       return rawFwdDeps;
     }
-    if (configTarget instanceof AliasConfiguredTarget
-        && ((AliasConfiguredTarget) configTarget).getActual() instanceof RuleConfiguredTarget) {
-      return getAllowedDeps(((AliasConfiguredTarget) configTarget).getActual(), rawFwdDeps);
-    }
     return getAllowedDeps(configTarget, rawFwdDeps);
   }
 
@@ -397,22 +436,22 @@ public class ConfiguredTargetQueryEnvironment
     // host config. This is somewhat counterintuitive and subject to change in the future but seems
     // like the best option right now.
     if (settings.contains(Setting.NO_HOST_DEPS)) {
-      BuildConfiguration currentConfig = target.getConfiguration();
+      BuildConfiguration currentConfig = getConfiguration(target);
       if (currentConfig != null && currentConfig.isHostConfiguration()) {
         deps =
             deps.stream()
                 .filter(
                     dep ->
-                        dep.getConfiguration() != null
-                            && dep.getConfiguration().isHostConfiguration())
+                        getConfiguration(dep) != null
+                            && getConfiguration(dep).isHostConfiguration())
                 .collect(Collectors.toList());
       } else {
         deps =
             deps.stream()
                 .filter(
                     dep ->
-                        dep.getConfiguration() == null
-                            || !dep.getConfiguration().isHostConfiguration())
+                        getConfiguration(dep) != null
+                            && !getConfiguration(dep).isHostConfiguration())
                 .collect(Collectors.toList());
       }
     }
@@ -423,11 +462,26 @@ public class ConfiguredTargetQueryEnvironment
               .filter(
                   dep ->
                       !implicitDeps.contains(
-                          ConfiguredTargetKey.of(
-                              dep.getLabel(), dep.getConfiguration())))
+                          ConfiguredTargetKey.of(getCorrectLabel(dep), getConfiguration(dep))))
               .collect(Collectors.toList());
     }
     return deps;
+  }
+
+  @Nullable
+  private BuildConfiguration getConfiguration(ConfiguredTarget target) {
+    try {
+      return target.getConfigurationKey() == null
+          ? null
+          : ((BuildConfigurationValue) graph.getValue(target.getConfigurationKey()))
+              .getConfiguration();
+    } catch (InterruptedException e) {
+      throw new IllegalStateException("Unexpected interruption during configured target query");
+    }
+  }
+
+  private ConfiguredTargetKey getSkyKey(ConfiguredTarget target) {
+    return ConfiguredTargetKey.of(target, getConfiguration(target));
   }
 
   @Override
@@ -435,7 +489,7 @@ public class ConfiguredTargetQueryEnvironment
       throws InterruptedException {
     Map<SkyKey, ConfiguredTarget> targetsByKey = new HashMap<>(Iterables.size(targets));
     for (ConfiguredTarget target : targets) {
-      targetsByKey.put(CT_TO_SKYKEY.apply(target), target);
+      targetsByKey.put(getSkyKey(target), target);
     }
     Map<SkyKey, Collection<ConfiguredTarget>> directDeps =
         targetifyValues(graph.getDirectDeps(targetsByKey.keySet()));
@@ -478,7 +532,7 @@ public class ConfiguredTargetQueryEnvironment
       throws InterruptedException {
     Map<SkyKey, ConfiguredTarget> targetsByKey = new HashMap<>(Iterables.size(targets));
     for (ConfiguredTarget target : targets) {
-      targetsByKey.put(CT_TO_SKYKEY.apply(target), target);
+      targetsByKey.put(getSkyKey(target), target);
     }
     Map<SkyKey, Collection<ConfiguredTarget>> reverseDepsByKey =
         targetifyValues(graph.getReverseDeps(targetsByKey.keySet()));
@@ -514,7 +568,8 @@ public class ConfiguredTargetQueryEnvironment
   @Override
   public ImmutableList<ConfiguredTarget> getNodesOnPath(ConfiguredTarget from, ConfiguredTarget to)
       throws InterruptedException {
-    return SkyQueryUtils.getNodesOnPath(from, to, this::getFwdDeps, ConfiguredTargetKey::of);
+    return SkyQueryUtils.getNodesOnPath(
+        from, to, this::getFwdDeps, configuredTargetKeyExtractor::extractKey);
   }
 
   @Override
@@ -539,26 +594,26 @@ public class ConfiguredTargetQueryEnvironment
   @Override
   public ThreadSafeMutableSet<ConfiguredTarget> createThreadSafeMutableSet() {
     return new ThreadSafeMutableKeyExtractorBackedSetImpl<>(
-        CONFIGURED_TARGET_KEY_EXTRACTOR,
+        configuredTargetKeyExtractor,
         ConfiguredTarget.class,
         SkyQueryEnvironment.DEFAULT_THREAD_COUNT);
   }
 
   @Override
   public <V> MutableMap<ConfiguredTarget, V> createMutableMap() {
-    return new MutableKeyExtractorBackedMapImpl<>(CONFIGURED_TARGET_KEY_EXTRACTOR);
+    return new MutableKeyExtractorBackedMapImpl<>(configuredTargetKeyExtractor);
   }
 
   @Override
   public Uniquifier<ConfiguredTarget> createUniquifier() {
     return new UniquifierImpl<>(
-        CONFIGURED_TARGET_KEY_EXTRACTOR, SkyQueryEnvironment.DEFAULT_THREAD_COUNT);
+        configuredTargetKeyExtractor, SkyQueryEnvironment.DEFAULT_THREAD_COUNT);
   }
 
   @Override
   public MinDepthUniquifier<ConfiguredTarget> createMinDepthUniquifier() {
     return new MinDepthUniquifierImpl<>(
-        CONFIGURED_TARGET_KEY_EXTRACTOR, SkyQueryEnvironment.DEFAULT_THREAD_COUNT);
+        configuredTargetKeyExtractor, SkyQueryEnvironment.DEFAULT_THREAD_COUNT);
   }
 
   @Override
@@ -566,7 +621,6 @@ public class ConfiguredTargetQueryEnvironment
       QueryExpression caller,
       ThreadSafeMutableSet<ConfiguredTarget> nodes,
       boolean buildFiles,
-      boolean subincludes,
       boolean loads)
       throws QueryException, InterruptedException {
     throw new QueryException("buildfiles() doesn't make sense for the configured target graph");

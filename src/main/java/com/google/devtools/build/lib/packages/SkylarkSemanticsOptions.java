@@ -133,6 +133,17 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
   public boolean incompatibleDisallowDictPlus;
 
   @Option(
+      name = "incompatible_disallow_three_arg_vardef",
+      defaultValue = "false",
+      category = "incompatible changes",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+      help = "If set to true, three-argument `vardef()` functions are disallowed."
+  )
+  public boolean incompatibleDisallowThreeArgVardef;
+
+  @Option(
     name = "incompatible_disallow_toplevel_if_statement",
     defaultValue = "true",
     category = "incompatible changes",
@@ -146,28 +157,6 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
   public boolean incompatibleDisallowToplevelIfStatement;
 
   @Option(
-    name = "incompatible_disallow_uncalled_set_constructor",
-    defaultValue = "true",
-    category = "incompatible changes",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help = "If set to true, it's not allowed to use `set()` even if that code is never executed."
-  )
-  public boolean incompatibleDisallowUncalledSetConstructor;
-
-  @Option(
-    name = "incompatible_load_argument_is_label",
-    defaultValue = "true",
-    category = "incompatible changes",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help = "no op - will be removed soon"
-  )
-  public boolean incompatibleLoadArgumentIsLabel;
-
-  @Option(
       name = "incompatible_new_actions_api",
       defaultValue = "false",
       category = "incompatible changes",
@@ -178,6 +167,19 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
           + "not on `ctx`."
   )
   public boolean incompatibleNewActionsApi;
+
+  @Option(
+    name = "incompatible_package_name_is_a_function",
+    defaultValue = "false",
+    category = "incompatible changes",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+    help =
+        "If set to true, the values PACKAGE_NAME and REPOSITORY_NAME are not available. "
+            + "Use the package_name() or repository_name() functions instead."
+  )
+  public boolean incompatiblePackageNameIsAFunction;
 
   @Option(
     name = "incompatible_remove_native_git_repository",
@@ -204,20 +206,6 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
             + "will be available"
   )
   public boolean incompatibleRemoveNativeHttpArchive;
-
-  @Option(
-    name = "incompatible_show_all_print_messages",
-    defaultValue = "true",
-    category = "incompatible changes",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help =
-        "If set to true, the print function will generate DEBUG messages that aren't affected by "
-            + "the --output_filter option. Otherwise it will generate filterable WARNING "
-            + "messages."
-  )
-  public boolean incompatibleShowAllPrintMessages;
 
   @Option(
     name = "incompatible_string_is_not_iterable",
@@ -251,13 +239,12 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
         .incompatibleDisableGlobTracking(incompatibleDisableGlobTracking)
         .incompatibleDisableObjcProviderResources(incompatibleDisableObjcProviderResources)
         .incompatibleDisallowDictPlus(incompatibleDisallowDictPlus)
+        .incompatibleDisallowThreeArgVardef(incompatibleDisallowThreeArgVardef)
         .incompatibleDisallowToplevelIfStatement(incompatibleDisallowToplevelIfStatement)
-        .incompatibleDisallowUncalledSetConstructor(incompatibleDisallowUncalledSetConstructor)
-        .incompatibleLoadArgumentIsLabel(incompatibleLoadArgumentIsLabel)
         .incompatibleNewActionsApi(incompatibleNewActionsApi)
+        .incompatiblePackageNameIsAFunction(incompatiblePackageNameIsAFunction)
         .incompatibleRemoveNativeGitRepository(incompatibleRemoveNativeGitRepository)
         .incompatibleRemoveNativeHttpArchive(incompatibleRemoveNativeHttpArchive)
-        .incompatibleShowAllPrintMessages(incompatibleShowAllPrintMessages)
         .incompatibleStringIsNotIterable(incompatibleStringIsNotIterable)
         .internalSkylarkFlagTestCanary(internalSkylarkFlagTestCanary)
         .build();

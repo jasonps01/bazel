@@ -22,6 +22,7 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.devtools.build.lib.analysis.AliasProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
+import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.buildeventstream.BuildEventConverters;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
@@ -67,6 +68,7 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
       summary.shardRunStatuses =
           MultimapBuilder.hashKeys().arrayListValues().build(existingSummary.shardRunStatuses);
       setTarget(existingSummary.target);
+      setConfiguration(existingSummary.configuration);
       setStatus(existingSummary.status);
       addCoverageFiles(existingSummary.coverageFiles);
       addPassedLogs(existingSummary.passedLogs);
@@ -107,6 +109,12 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
     public Builder setTarget(ConfiguredTarget target) {
       checkMutation(target);
       summary.target = target;
+      return this;
+    }
+
+    public Builder setConfiguration(BuildConfiguration configuration) {
+      checkMutation(configuration);
+      summary.configuration = Preconditions.checkNotNull(configuration, summary);
       return this;
     }
 
@@ -299,6 +307,7 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
   }
 
   private ConfiguredTarget target;
+  private BuildConfiguration configuration;
   private BlazeTestStatus status;
   // Currently only populated if --runs_per_test_detects_flakes is enabled.
   private Multimap<Integer, BlazeTestStatus> shardRunStatuses = ArrayListMultimap.create();
@@ -341,6 +350,10 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
 
   public ConfiguredTarget getTarget() {
     return target;
+  }
+
+  public BuildConfiguration getConfiguration() {
+    return configuration;
   }
 
   public BlazeTestStatus getStatus() {
@@ -432,8 +445,8 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
         .compare(getSortKey(this.status), getSortKey(that.status))
         .compare(this.getLabel(), that.getLabel())
         .compare(
-            this.getTarget().getConfiguration().checksum(),
-            that.getTarget().getConfiguration().checksum())
+            this.getTarget().getConfigurationChecksum(),
+            that.getTarget().getConfigurationChecksum())
         .result();
   }
 
@@ -459,7 +472,8 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
   @Override
   public BuildEventId getEventId() {
     return BuildEventId.testSummary(
-        AliasProvider.getDependencyLabel(target), target.getConfiguration().getEventId());
+        AliasProvider.getDependencyLabel(target),
+        BuildEventId.configurationId(target.getConfigurationChecksum()));
   }
 
   @Override
@@ -471,7 +485,8 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
   public Collection<BuildEventId> postedAfter() {
     return ImmutableList.of(
         BuildEventId.targetCompleted(
-            AliasProvider.getDependencyLabel(target), target.getConfiguration().getEventId()));
+            AliasProvider.getDependencyLabel(target),
+            BuildEventId.configurationId(target.getConfigurationChecksum())));
   }
 
   @Override

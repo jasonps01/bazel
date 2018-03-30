@@ -135,6 +135,22 @@ public class ActionExecutionContext implements Closeable {
   }
 
   /**
+   * Returns the path for an ActionInput.
+   *
+   * <p>Notably, in the future, we want any action-scoped artifacts to resolve paths using this
+   * method instead of {@link Artifact#getPath} because that does not allow filesystem injection.
+   *
+   * <p>TODO(shahan): cleanup {@link Action}-scoped references to {@link Artifact.getPath}.
+   */
+  public Path getInputPath(ActionInput input) {
+    if (input instanceof Artifact) {
+      // TODO(shahan): replace this with actual logic once we understand what it is.
+      return ((Artifact) input).getPath();
+    }
+    return executor.getExecRoot().getRelative(input.getExecPath());
+  }
+
+  /**
    * Returns whether failures should have verbose error messages.
    */
   public boolean getVerboseFailures() {
@@ -167,11 +183,9 @@ public class ActionExecutionContext implements Closeable {
     return executor.getContext(type);
   }
 
-  /**
-   * Returns the action context implementation for spawn actions with a given mnemonic.
-   */
-  public SpawnActionContext getSpawnActionContext(String mnemonic) {
-    return executor.getSpawnActionContext(mnemonic);
+  /** Returns the action context implementation for a given spawn action. */
+  public SpawnActionContext getSpawnActionContext(Spawn spawn) {
+    return executor.getSpawnActionContext(spawn);
   }
 
   /**

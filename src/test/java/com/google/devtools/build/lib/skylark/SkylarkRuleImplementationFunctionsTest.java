@@ -67,9 +67,7 @@ import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for SkylarkRuleImplementationFunctions.
- */
+/** Tests for skylark functions relating to rule implemenetation. */
 @RunWith(JUnit4.class)
 public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
   @Rule public ExpectedException thrown = ExpectedException.none();
@@ -299,7 +297,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
   public void testCreateSpawnActionArgumentsBadExecutable() throws Exception {
     checkErrorContains(
         createRuleContext("//foo:foo"),
-        "Cannot convert parameter 'executable' to type File or string, in method "
+        "expected value of type 'File or string' for parameter 'executable', in method call "
             + "run(list inputs, list outputs, list arguments, int executable) of 'actions'",
         "ruleContext.actions.run(",
         "  inputs = ruleContext.files.srcs,",
@@ -355,7 +353,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     SkylarkRuleContext ruleContext = createRuleContext("//foo:foo");
     checkErrorContains(
         ruleContext,
-        "unexpected keyword 'bad_param', in method run("
+        "unexpected keyword 'bad_param', in method call run("
             + "list outputs, string bad_param, File executable) of 'actions'",
         "f = ruleContext.actions.declare_file('foo.sh')",
         "ruleContext.actions.run(outputs=[], bad_param = 'some text', executable = f)");
@@ -433,7 +431,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
 
     checkErrorContains(
         ruleContext,
-        "parameter 'mnemonic' has no default value, in method do_nothing(list inputs) of 'actions'",
+        "parameter 'mnemonic' has no default value, "
+        + "in method call do_nothing(list inputs) of 'actions'",
         "ruleContext.actions.do_nothing(inputs = ruleContext.files.srcs)");
   }
 
@@ -636,7 +635,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     SkylarkRuleContext ruleContext = createRuleContext("//foo:foo");
     checkErrorContains(
         ruleContext,
-        "Cannot convert parameter 'content' to type string or Args",
+        "expected value of type 'string or Args' for parameter 'content'",
         "ruleContext.actions.write(",
         "  output = ruleContext.files.srcs[0],",
         "  content = 1,",
@@ -716,8 +715,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
   @Test
   public void testRunfilesBadSetGenericType() throws Exception {
     checkErrorContains(
-        "expected depset of Files or NoneType for 'transitive_files' while calling runfiles "
-            + "but got depset of ints instead: depset([1, 2, 3])",
+        "expected value of type 'depset of Files or NoneType' for parameter 'transitive_files', "
+            + "in method call runfiles(depset transitive_files) of 'ctx'",
         "ruleContext.runfiles(transitive_files=depset([1, 2, 3]))");
   }
 
@@ -832,7 +831,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     SkylarkRuleContext ruleContext = createRuleContext("//foo:foo");
     checkErrorContains(
         ruleContext,
-        "unexpected keyword 'bad_keyword' in call to runfiles(self: ctx, ",
+        "unexpected keyword 'bad_keyword', in method call runfiles(string bad_keyword) of 'ctx'",
         "ruleContext.runfiles(bad_keyword = '')");
   }
 
@@ -2194,7 +2193,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         assertThrows(AssertionError.class, () -> getConfiguredTarget("//test:main"));
 
     assertThat(expected).hasMessageThat()
-        .contains("argument 'default' has type 'SkylarkLateBoundDefault', but should be 'int'");
+        .contains("expected value of type 'int or function' for parameter 'default', "
+            + "in method call int(SkylarkLateBoundDefault default)");
   }
 
   private void setupThrowFunction(BuiltinFunction func) throws Exception {

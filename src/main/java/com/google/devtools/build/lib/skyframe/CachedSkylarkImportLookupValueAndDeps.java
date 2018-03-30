@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.skyframe;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.skyframe.SkyKey;
@@ -20,6 +21,7 @@ import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 class CachedSkylarkImportLookupValueAndDeps {
   private final SkylarkImportLookupValue value;
@@ -58,6 +60,12 @@ class CachedSkylarkImportLookupValueAndDeps {
     }
 
     @CanIgnoreReturnValue
+    Builder noteException(Exception e) {
+      depsBuilder.noteException(e);
+      return this;
+    }
+
+    @CanIgnoreReturnValue
     Builder addTransitiveDeps(CachedSkylarkImportLookupValueAndDeps transitiveDeps) {
       depsBuilder.addTransitiveDeps(transitiveDeps.deps);
       return this;
@@ -92,6 +100,7 @@ class CachedSkylarkImportLookupValueAndDeps {
 
     static class Builder {
       private final List<Iterable<SkyKey>> deps = new ArrayList<>();
+      private final AtomicReference<Exception> exceptionSeen = new AtomicReference<>(null);
 
       // We only add the ASTFileLookupFunction through this so we don't need to worry about memory
       // optimizations by adding it raw.
@@ -108,12 +117,24 @@ class CachedSkylarkImportLookupValueAndDeps {
       }
 
       @CanIgnoreReturnValue
+      Builder noteException(Exception e) {
+        exceptionSeen.set(e);
+        return this;
+      }
+
+      @CanIgnoreReturnValue
       Builder addTransitiveDeps(CachedSkylarkImportLookupFunctionDeps transitiveDeps) {
         Iterables.addAll(deps, transitiveDeps);
         return this;
       }
 
       CachedSkylarkImportLookupFunctionDeps build() {
+        // We expect that we don't handle any exceptions in SkylarkLookupImportFunction directly.
+        Preconditions.checkState(
+            exceptionSeen.get() == null,
+            "Caching a value in error?: %s %s",
+            deps,
+            exceptionSeen.get());
         return new CachedSkylarkImportLookupFunctionDeps(ImmutableList.copyOf(deps));
       }
     }

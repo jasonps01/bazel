@@ -14,6 +14,7 @@
 package com.google.devtools.build.lib.rules.android;
 
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
@@ -28,16 +29,13 @@ import com.google.devtools.build.lib.collect.nestedset.Order;
  * <p>This rule is a sad, sad way to let people depend on {@code android.jar} when an {@code
  * android_sdk} rule is used. In an ideal world, people would say "depend on the android_jar output
  * group of $config.android_sdk", but, alas, neither depending on labels in the configuration nor
- * depending on a specified output group works.
- *
- * <p>So all this needs to be implemented manually. This rule is injected into the defaults package
- * from {@link AndroidConfiguration.Options#getDefaultsRules()}.
+ * depending on a specified output group works. So all this needs to be implemented manually.
  */
 public class AndroidToolsDefaultsJar implements RuleConfiguredTargetFactory {
 
   @Override
   public ConfiguredTarget create(RuleContext ruleContext)
-      throws InterruptedException, RuleErrorException {
+      throws InterruptedException, RuleErrorException, ActionConflictException {
     Artifact androidJar = AndroidSdkProvider.fromRuleContext(ruleContext).getAndroidJar();
 
     return new RuleConfiguredTargetBuilder(ruleContext)

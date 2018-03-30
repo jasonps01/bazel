@@ -110,9 +110,8 @@ public class RunCommand implements BlazeCommand  {
   public static class RunOptions extends OptionsBase {
     @Option(
       name = "direct_run",
-      category = "run",
       defaultValue = "false",
-      documentationCategory =  OptionDocumentationCategory.OUTPUT_PARAMETERS,
+      documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
       effectTags = {OptionEffectTag.EXECUTION},
       help = "If set, the 'run' command will execute the binary to be executed in the terminal "
           + "where the command was called. Otherwise, it'll be executed as a child of the server "
@@ -123,7 +122,6 @@ public class RunCommand implements BlazeCommand  {
 
     @Option(
       name = "script_path",
-      category = "run",
       defaultValue = "null",
       documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
       effectTags = {OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.EXECUTION},
@@ -212,8 +210,8 @@ public class RunCommand implements BlazeCommand  {
     // on that platform. Also we skip it when writing the command-line to a file instead
     // of executing it directly.
     if (OS.getCurrent() != OS.WINDOWS && runOptions.scriptPath == null) {
-      Preconditions.checkState(ProcessWrapperUtil.isSupported(env),
-          "process-wraper not found in embedded tools");
+      Preconditions.checkState(
+          ProcessWrapperUtil.isSupported(env), "process-wrapper not found in embedded tools");
       cmdLine.add(ProcessWrapperUtil.getProcessWrapper(env).getPathString());
     }
     List<String> prettyCmdLine = new ArrayList<>();
@@ -397,7 +395,9 @@ public class RunCommand implements BlazeCommand  {
       return BlazeCommandResult.exitCode(ExitCode.COMMAND_LINE_ERROR);
     }
 
-    BuildConfiguration configuration = targetToRun.getConfiguration();
+    BuildConfiguration configuration =
+        env.getSkyframeExecutor()
+            .getConfiguration(env.getReporter(), targetToRun.getConfigurationKey());
     if (configuration == null) {
       // The target may be an input file, which doesn't have a configuration. In that case, we
       // choose any target configuration.
@@ -425,9 +425,12 @@ public class RunCommand implements BlazeCommand  {
           runfilesDir, commandLineArgs);
     }
 
-    Map<String, String> runEnvironment;
-    Path workingDir;
+    Map<String, String> runEnvironment = new TreeMap<>();
     List<String> cmdLine = new ArrayList<>();
+    Path workingDir;
+
+    runEnvironment.put("BUILD_WORKSPACE_DIRECTORY", env.getWorkspace().getPathString());
+    runEnvironment.put("BUILD_WORKING_DIRECTORY", env.getWorkingDirectory().getPathString());
 
     if (targetToRun.getProvider(TestProvider.class) != null) {
       // This is a test. Provide it with a reasonable approximation of the actual test environment
@@ -451,12 +454,12 @@ public class RunCommand implements BlazeCommand  {
       PathFragment relativeTmpDir = tmpDirRoot.relativeTo(env.getExecRoot());
       Duration timeout = executionOptions.testTimeout.get(
           testAction.getTestProperties().getTimeout());
-      runEnvironment = StandaloneTestStrategy.DEFAULT_LOCAL_POLICY.computeTestEnvironment(
+      runEnvironment.putAll(StandaloneTestStrategy.DEFAULT_LOCAL_POLICY.computeTestEnvironment(
           testAction,
           env.getClientEnv(),
           timeout,
           settings.getRunfilesDir().relativeTo(env.getExecRoot()),
-          relativeTmpDir.getRelative(TestStrategy.getTmpDirName(testAction)));
+          relativeTmpDir.getRelative(TestStrategy.getTmpDirName(testAction))));
       workingDir = env.getExecRoot();
       try {
         cmdLine.addAll(TestStrategy.getArgs(testAction));
@@ -466,10 +469,6 @@ public class RunCommand implements BlazeCommand  {
         return BlazeCommandResult.exitCode(ExitCode.LOCAL_ENVIRONMENTAL_ERROR);
       }
     } else {
-      runEnvironment = new TreeMap<>();
-      runEnvironment.putAll(env.getClientEnv());
-      runEnvironment.put("BUILD_WORKSPACE_DIRECTORY", env.getWorkspace().getPathString());
-      runEnvironment.put("BUILD_WORKING_DIRECTORY", env.getWorkingDirectory().getPathString());
       workingDir = runfilesDir;
       List<String> prettyCmdLine = new ArrayList<>();
       List<String> args = computeArgs(env, targetToRun, commandLineArgs);
@@ -492,7 +491,12 @@ public class RunCommand implements BlazeCommand  {
         .setWorkingDirectory(
             ByteString.copyFrom(workingDir.getPathString(), StandardCharsets.ISO_8859_1));
 
-    for (String arg : cmdLine) {
+    ImmutableList<String> shellCmdLine = ImmutableList.<String>of(
+        configuration.getShellExecutable().getPathString(),
+        "-c",
+        ShellEscaper.escapeJoinAll(cmdLine));
+
+    for (String arg : shellCmdLine) {
       execDescription.addArgv(ByteString.copyFrom(arg, StandardCharsets.ISO_8859_1));
     }
 
@@ -525,9 +529,11 @@ public class RunCommand implements BlazeCommand  {
     Artifact manifest = Preconditions.checkNotNull(runfilesSupport.getRunfilesManifest());
     PathFragment runfilesDir = runfilesSupport.getRunfilesDirectoryExecPath();
     Path workingDir = env.getExecRoot().getRelative(runfilesDir);
+    BuildConfiguration configuration =
+        env.getSkyframeExecutor().getConfiguration(env.getReporter(), target.getConfigurationKey());
     // On Windows, runfiles tree is disabled.
     // Workspace name directory doesn't exist, so don't add it.
-    if (target.getConfiguration().runfilesEnabled()) {
+    if (configuration.runfilesEnabled()) {
       workingDir = workingDir.getRelative(runfilesSupport.getRunfiles().getSuffix());
     }
 
@@ -543,8 +549,8 @@ public class RunCommand implements BlazeCommand  {
         manifest.getPath(),
         runfilesSupport.getRunfilesDirectory(),
         false);
-    helper.createSymlinksUsingCommand(env.getExecRoot(), target.getConfiguration(),
-        env.getBlazeWorkspace().getBinTools());
+    helper.createSymlinksUsingCommand(
+        env.getExecRoot(), configuration, env.getBlazeWorkspace().getBinTools());
     return workingDir;
   }
 

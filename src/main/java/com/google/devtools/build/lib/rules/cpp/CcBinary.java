@@ -13,6 +13,9 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.cpp;
 
+import static com.google.devtools.build.lib.rules.cpp.CppRuleClasses.DYNAMIC_LINKING_MODE;
+import static com.google.devtools.build.lib.rules.cpp.CppRuleClasses.STATIC_LINKING_MODE;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
@@ -23,6 +26,7 @@ import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ExecutionRequirements;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
@@ -153,20 +157,19 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
       // or header modules.
       builder.addSymlinksToArtifacts(ccCompilationInfo.getAdditionalInputs());
       builder.addSymlinksToArtifacts(
-          ccCompilationInfo.getTransitiveModules(
-              CppHelper.usePic(context, toolchain, !isLinkShared(context))));
+          ccCompilationInfo.getTransitiveModules(usePic(context, toolchain)));
     }
     return builder.build();
   }
 
   @Override
   public ConfiguredTarget create(RuleContext context)
-      throws InterruptedException, RuleErrorException {
+      throws InterruptedException, RuleErrorException, ActionConflictException {
     return CcBinary.init(semantics, context, /*fake =*/ false);
   }
 
   public static ConfiguredTarget init(CppSemantics semantics, RuleContext ruleContext, boolean fake)
-      throws InterruptedException, RuleErrorException {
+      throws InterruptedException, RuleErrorException, ActionConflictException {
     ruleContext.checkSrcsSamePackage(true);
 
     CcCommon common = new CcCommon(ruleContext);
@@ -181,10 +184,6 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     } else {
       ruleContext.initConfigurationMakeVariableContext(new CcFlagsSupplier(ruleContext));
     }
-
-    FdoSupportProvider fdoSupport = common.getFdoSupport();
-    FeatureConfiguration featureConfiguration =
-        CcCommon.configureFeatures(ruleContext, ccToolchain);
     CppConfiguration cppConfiguration = ruleContext.getFragment(CppConfiguration.class);
     PrecompiledFiles precompiledFiles = new PrecompiledFiles(ruleContext);
     LinkTargetType linkType =
@@ -212,6 +211,20 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
       return null;
     }
 
+    List<String> linkopts = common.getLinkopts();
+    LinkStaticness linkStaticness =
+        getLinkStaticness(ruleContext, linkopts, cppConfiguration, ccToolchain);
+    FdoSupportProvider fdoSupport = common.getFdoSupport();
+    FeatureConfiguration featureConfiguration =
+        CcCommon.configureFeatures(
+            ruleContext,
+            /* requestedFeatures= */ ImmutableSet.of(
+                linkStaticness == LinkStaticness.DYNAMIC
+                    ? DYNAMIC_LINKING_MODE
+                    : STATIC_LINKING_MODE),
+            /* unsupportedFeatures= */ ImmutableSet.of(),
+            ccToolchain);
+
     CcCompilationHelper compilationHelper =
         new CcCompilationHelper(
                 ruleContext, semantics, featureConfiguration, ccToolchain, fdoSupport)
@@ -224,9 +237,6 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     CcCompilationInfo ccCompilationInfo = compilationInfo.getCcCompilationInfo();
     CcCompilationOutputs ccCompilationOutputs = compilationInfo.getCcCompilationOutputs();
 
-    List<String> linkopts = common.getLinkopts();
-    LinkStaticness linkStaticness =
-        getLinkStaticness(ruleContext, linkopts, cppConfiguration, ccToolchain);
     // We currently only want link the dynamic library generated for test code separately.
     boolean linkCompileOutputSeparately =
         ruleContext.isTestTarget()
@@ -357,7 +367,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     // Store immutable context for use in other *_binary rules that are implemented by
     // linking the interpreter (Java, Python, etc.) together with native deps.
     CppLinkAction.Context linkContext = new CppLinkAction.Context(linkActionBuilder);
-    boolean usePic = CppHelper.usePic(ruleContext, ccToolchain, !isLinkShared(ruleContext));
+    boolean usePic = usePic(ruleContext, ccToolchain);
 
     if (linkActionBuilder.hasLtoBitcodeInputs()
         && featureConfiguration.isEnabled(CppRuleClasses.THIN_LTO)) {
@@ -574,7 +584,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
         builder.addLibrary(library);
       }
     } else {
-      boolean usePic = CppHelper.usePic(context, toolchain, !isLinkShared(context));
+      boolean usePic = usePic(context, toolchain);
       Iterable<Artifact> objectFiles = compilationOutputs.getObjectFiles(usePic);
 
       if (fake) {
@@ -676,9 +686,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
       CcToolchainProvider toolchain,
       NestedSet<Artifact> picDwoArtifacts,
       NestedSet<Artifact> dwoArtifacts) {
-    return CppHelper.usePic(context, toolchain, !isLinkShared(context))
-        ? picDwoArtifacts
-        : dwoArtifacts;
+    return usePic(context, toolchain) ? picDwoArtifacts : dwoArtifacts;
   }
 
   /**
@@ -882,7 +890,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
         ccCompilationOutputs.getFilesToCompile(
             cppConfiguration.isLipoContextCollector(),
             cppConfiguration.processHeadersInDependencies(),
-            CppHelper.usePic(ruleContext, toolchain, false));
+            CppHelper.usePicForDynamicLibraries(ruleContext, toolchain));
     builder
         .setFilesToBuild(filesToBuild)
         .addNativeDeclaredProvider(ccCompilationInfo)
@@ -951,5 +959,13 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     return cppConfiguration.isLipoContextCollector()
         ? NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER)
         : compilationOutputs.getTemps();
+  }
+
+  private static boolean usePic(RuleContext ruleContext, CcToolchainProvider ccToolchainProvider) {
+    if (isLinkShared(ruleContext)) {
+      return CppHelper.usePicForDynamicLibraries(ruleContext, ccToolchainProvider);
+    } else {
+      return CppHelper.usePicForBinaries(ruleContext, ccToolchainProvider);
+    }
   }
 }

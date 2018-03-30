@@ -185,7 +185,7 @@ public final class PopulateTreeArtifactAction extends AbstractAction {
     try {
       for (ActionInput fileEntry : spawn.getOutputFiles()) {
         FileSystemUtils.createDirectoryAndParents(
-            ((Artifact) fileEntry).getPath().getParentDirectory());
+            actionExecutionContext.getInputPath(((Artifact) fileEntry)).getParentDirectory());
       }
     } catch (IOException e) {
       throw new ActionExecutionException(e, this, false);
@@ -194,7 +194,7 @@ public final class PopulateTreeArtifactAction extends AbstractAction {
     // Execute the spawn.
     List<SpawnResult> spawnResults;
     try {
-      spawnResults = getContext(actionExecutionContext).exec(spawn, actionExecutionContext);
+      spawnResults = getContext(spawn, actionExecutionContext).exec(spawn, actionExecutionContext);
     } catch (ExecException e) {
       throw e.toActionExecutionException(
           getMnemonic() + " action failed for target: " + getOwner().getLabel(),
@@ -233,8 +233,9 @@ public final class PopulateTreeArtifactAction extends AbstractAction {
     return true;
   }
 
-  private SpawnActionContext getContext(ActionExecutionContext actionExecutionContext) {
-    return actionExecutionContext.getSpawnActionContext(getMnemonic());
+  private SpawnActionContext getContext(
+      Spawn spawn, ActionExecutionContext actionExecutionContext) {
+    return actionExecutionContext.getSpawnActionContext(spawn);
   }
 
   /**

@@ -22,10 +22,8 @@ import static com.google.devtools.build.lib.syntax.Type.STRING;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
-import com.google.devtools.build.lib.analysis.RuleDefinition;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigurationResolver;
@@ -35,7 +33,6 @@ import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition
 import com.google.devtools.build.lib.analysis.config.transitions.SplitTransition;
 import com.google.devtools.build.lib.analysis.test.TestConfiguration;
 import com.google.devtools.build.lib.analysis.util.MockRule;
-import com.google.devtools.build.lib.analysis.util.MockRuleDefaults;
 import com.google.devtools.build.lib.analysis.util.TestAspects;
 import com.google.devtools.build.lib.analysis.util.TestAspects.DummyRuleFactory;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -182,7 +179,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         ")",
         "rule_class_transition(name='rule_class')");
     List<ConfiguredTarget> deps = getConfiguredDeps("//a:attribute", "without_transition");
-    BuildConfiguration ruleclass = Iterables.getOnlyElement(deps).getConfiguration();
+    BuildConfiguration ruleclass = getConfiguration(Iterables.getOnlyElement(deps));
     assertThat(ruleclass.getCpu()).isEqualTo("SET BY PATCH");
   }
 
@@ -197,7 +194,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         ")",
         "rule_class_transition(name='rule_class')");
     List<ConfiguredTarget> deps = getConfiguredDeps("//a:attribute", "with_host_cpu_transition");
-    BuildConfiguration ruleclass = Iterables.getOnlyElement(deps).getConfiguration();
+    BuildConfiguration ruleclass = getConfiguration(Iterables.getOnlyElement(deps));
     assertThat(ruleclass.getCpu()).isEqualTo("SET BY PATCH");
     assertThat(ruleclass.getHostCpu()).isEqualTo("SET BY SPLIT");
   }
@@ -213,7 +210,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         ")",
         "rule_class_transition(name='rule_class')");
     List<ConfiguredTarget> deps = getConfiguredDeps("//a:attribute", "with_cpu_transition");
-    BuildConfiguration ruleclass = Iterables.getOnlyElement(deps).getConfiguration();
+    BuildConfiguration ruleclass = getConfiguration(Iterables.getOnlyElement(deps));
     assertThat(ruleclass.getCpu()).isEqualTo("SET BY PATCH");
   }
 
@@ -229,7 +226,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         ")",
         "rule_class_transition(name='rule_class')");
     List<ConfiguredTarget> deps = getConfiguredDeps("//a:empty", "with_empty_transition");
-    BuildConfiguration ruleclass = Iterables.getOnlyElement(deps).getConfiguration();
+    BuildConfiguration ruleclass = getConfiguration(Iterables.getOnlyElement(deps));
     assertThat(ruleclass.getCpu()).isEqualTo("SET BY PATCH");
   }
 
@@ -243,7 +240,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         ")");
     ConfiguredTarget target =
         Iterables.getOnlyElement(update("//a:rule_class").getTargetsToBuild());
-    assertThat(target.getConfiguration().getCpu()).isEqualTo("SET BY PATCH");
+    assertThat(getConfiguration(target).getCpu()).isEqualTo("SET BY PATCH");
   }
 
   @Test
@@ -258,7 +255,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         "simple(name='sim')");
     ConfiguredTarget target =
         Iterables.getOnlyElement(update("//a:sim").getTargetsToBuild());
-    assertThat(target.getConfiguration().getCpu()).isNotEqualTo("SET BY PATCH");
+    assertThat(getConfiguration(target).getCpu()).isNotEqualTo("SET BY PATCH");
   }
 
   @Test
@@ -278,7 +275,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         "   sets_test_filter_to='funkiest',",
         ")");
     List<ConfiguredTarget> deps = getConfiguredDeps("//a:top", "without_transition");
-    BuildConfiguration config = Iterables.getOnlyElement(deps).getConfiguration();
+    BuildConfiguration config = getConfiguration(Iterables.getOnlyElement(deps));
     assertThat(config.getFragment(TestConfiguration.class).getTestFilter())
         .isEqualTo("SET BY PATCH FACTORY: funkiest");
   }
@@ -299,7 +296,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         "   sets_test_filter_to='',",
         ")");
     List<ConfiguredTarget> deps = getConfiguredDeps("//a:top", "without_transition");
-    BuildConfiguration config = Iterables.getOnlyElement(deps).getConfiguration();
+    BuildConfiguration config = getConfiguration(Iterables.getOnlyElement(deps));
     assertThat(config.getFragment(TestConfiguration.class).getTestFilter())
         .isEqualTo("SET ON COMMAND LINE: original and best");
   }
@@ -316,7 +313,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         "   sets_test_filter_to='Maximum Dance',",
         ")");
     ConfiguredTarget target = Iterables.getOnlyElement(update("//a:factory").getTargetsToBuild());
-    assertThat(target.getConfiguration().getFragment(TestConfiguration.class).getTestFilter())
+    assertThat(getConfiguration(target).getFragment(TestConfiguration.class).getTestFilter())
         .isEqualTo("SET BY PATCH FACTORY: Maximum Dance");
   }
 
@@ -336,7 +333,7 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
         reporter,
         Label.parseAbsoluteUnchecked("@//a:factory"),
         getTargetConfiguration());
-    assertThat(target.getConfiguration().getFragment(TestConfiguration.class).getTestFilter())
+    assertThat(getConfiguration(target).getFragment(TestConfiguration.class).getTestFilter())
         .isEqualTo("SET ON COMMAND LINE: original and best");
   }
 
@@ -430,67 +427,5 @@ public class ConfigurationsForTargetsWithTrimmedConfigurationsTest
             newSplitTransition("s"),
             newSplitTransition("t"))))
         .containsExactly("s1t1", "s1t2", "s2t1", "s2t2");
-  }
-
-  /** Sets {@link TestConfiguration.TestOptions#testFilter} to the rule class of the given rule. */
-  private static final RuleTransitionFactory RULE_BASED_TEST_FILTER =
-      rule ->
-          (PatchTransition)
-              buildOptions -> {
-                BuildOptions toOptions = buildOptions.clone();
-                toOptions.get(TestConfiguration.TestOptions.class).testFilter = rule.getRuleClass();
-                return toOptions;
-              };
-
-  private static final RuleDefinition RULE_WITH_OUTGOING_TRANSITION =
-      (MockRule)
-          () ->
-              MockRule.define(
-                  "change_deps",
-                  (builder, env) ->
-                      builder
-                          .add(MockRuleDefaults.DEPS_ATTRIBUTE)
-                          .requiresConfigurationFragments(TestConfiguration.class)
-                          .depsCfg(RULE_BASED_TEST_FILTER));
-
-  @Test
-  public void outgoingRuleTransition() throws Exception {
-    setRulesAvailableInTests(
-        RULE_WITH_OUTGOING_TRANSITION,
-        (MockRule)
-            () ->
-                MockRule.define(
-                    "foo_rule",
-                    (builder, env) ->
-                        builder.requiresConfigurationFragments(TestConfiguration.class)),
-        (MockRule)
-            () ->
-                MockRule.define(
-                    "bar_rule",
-                    (builder, env) ->
-                        builder.requiresConfigurationFragments(TestConfiguration.class)));
-    scratch.file("outgoing/BUILD",
-        "foo_rule(",
-        "    name = 'foolib')",
-        "bar_rule(",
-        "    name = 'barlib')",
-        "change_deps(",
-        "    name = 'bin',",
-        "    deps  = [':foolib', ':barlib'])");
-
-    List<ConfiguredTarget> deps = getConfiguredDeps("//outgoing:bin", "deps");
-    ImmutableMap<String, String> depLabelToTestFilterString =
-        ImmutableMap.of(
-            deps.get(0).getLabel().toString(),
-                deps.get(0).getConfiguration().getFragment(TestConfiguration.class).getTestFilter(),
-            deps.get(1).getLabel().toString(),
-                deps.get(1)
-                    .getConfiguration()
-                    .getFragment(TestConfiguration.class)
-                    .getTestFilter());
-
-    assertThat(depLabelToTestFilterString).containsExactly(
-        "//outgoing:foolib", "foo_rule",
-        "//outgoing:barlib", "bar_rule");
   }
 }

@@ -158,8 +158,7 @@ public class CppHelper {
             == MakeVariableSource.TOOLCHAIN)
         && (ruleContext
             .getFragment(PlatformConfiguration.class)
-            .getEnabledToolchainTypes()
-            .contains(toolchainType));
+            .isToolchainTypeEnabled(toolchainType));
   }
 
   /**
@@ -242,12 +241,13 @@ public class CppHelper {
   }
 
   /**
-   * Returns the default options to use for compiling C, C++, and assembler. This is just the
-   * options that should be used for all three languages. There may be additional C-specific or
-   * C++-specific options that should be used, in addition to the ones returned by this method.
+   * Returns the default options to use for compiling C, C++, and assembler, excluding those
+   * specified on the command line. This is just the options that should be used for all three
+   * languages. There may be additional C-specific or C++-specific options that should be used, in
+   * addition to the ones returned by this method.
    */
-  //TODO(b/70784100): Figure out if these methods can be moved to CcToolchainProvider.
-  public static ImmutableList<String> getCompilerOptions(
+  // TODO(b/70784100): Figure out if these methods can be moved to CcToolchainProvider.
+  public static ImmutableList<String> getCrosstoolCompilerOptions(
       CppConfiguration config, CcToolchainProvider toolchain, Iterable<String> features) {
     ImmutableList.Builder<String> coptsBuilder =
         ImmutableList.<String>builder()
@@ -265,16 +265,30 @@ public class CppHelper {
         new FlagList(
             coptsBuilder.build(),
             FlagList.convertOptionalOptions(toolchain.getOptionalCompilerFlags()),
-            ImmutableList.copyOf(config.getCopts()));
+            ImmutableList.of());
 
     return compilerFlags.evaluate(features);
   }
 
   /**
-   * Returns the list of additional C++-specific options to use for compiling C++. These should be
-   * go on the command line after the common options returned by {@link #getCompilerOptions}.
+   * Returns the default options to use for compiling C, C++, and assembler. This is just the
+   * options that should be used for all three languages. There may be additional C-specific or
+   * C++-specific options that should be used, in addition to the ones returned by this method.
    */
-  public static ImmutableList<String> getCxxOptions(
+  public static ImmutableList<String> getCompilerOptions(
+      CppConfiguration config, CcToolchainProvider toolchain, Iterable<String> features) {
+    return ImmutableList.<String>builder()
+        .addAll(getCrosstoolCompilerOptions(config, toolchain, features))
+        .addAll(config.getCopts())
+        .build();
+  }
+
+  /**
+   * Returns the list of additional C++-specific options to use for compiling C++, excluding those
+   * specified on the command line. These should be go on the command line after the common options
+   * returned by {@link #getCompilerOptions}.
+   */
+  public static ImmutableList<String> getCrosstoolCxxOptions(
       CppConfiguration config, CcToolchainProvider toolchain, Iterable<String> features) {
     ImmutableList.Builder<String> cxxOptsBuilder =
         ImmutableList.<String>builder()
@@ -283,12 +297,21 @@ public class CppHelper {
             .addAll(toolchain.getLipoCxxFlags().get(config.getLipoMode()));
 
     FlagList cxxFlags =
-        new FlagList(
-            cxxOptsBuilder.build(),
-            FlagList.convertOptionalOptions(toolchain.getOptionalCxxFlags()),
-            ImmutableList.copyOf(config.getCxxopts()));
+        new FlagList(cxxOptsBuilder.build(), ImmutableList.of(), ImmutableList.of());
 
     return cxxFlags.evaluate(features);
+  }
+
+  /**
+   * Returns the list of additional C++-specific options to use for compiling C++. These should be
+   * go on the command line after the common options returned by {@link #getCompilerOptions}.
+   */
+  public static ImmutableList<String> getCxxOptions(
+      CppConfiguration config, CcToolchainProvider toolchain, Iterable<String> features) {
+    return ImmutableList.<String>builder()
+        .addAll(getCrosstoolCxxOptions(config, toolchain, features))
+        .addAll(config.getCxxopts())
+        .build();
   }
 
   /**
@@ -527,8 +550,7 @@ public class CppHelper {
     if (toolchainType != null
         && ruleContext
             .getFragment(PlatformConfiguration.class)
-            .getEnabledToolchainTypes()
-            .contains(toolchainType)) {
+            .isToolchainTypeEnabled(toolchainType)) {
       return getToolchainFromPlatformConstraints(ruleContext, toolchainType);
     }
     return getToolchainFromCrosstoolTop(ruleContext, dep);
@@ -630,8 +652,10 @@ public class CppHelper {
         && !prerequisite.isSourceArtifact()
         && CPP_FILETYPES.matches(prerequisite.getFilename())) {
       Artifact scanned = getIncludesOutput(ruleContext, prerequisite);
+      Artifact grepIncludes = ruleContext.getPrerequisiteArtifact("$grep_includes", Mode.HOST);
       ruleContext.registerAction(
-          new ExtractInclusionAction(ruleContext.getActionOwner(), prerequisite, scanned));
+          new ExtractInclusionAction(
+              ruleContext.getActionOwner(), prerequisite, scanned, grepIncludes));
       return scanned;
     }
     return null;
@@ -732,36 +756,28 @@ public class CppHelper {
    * "Provide a way to turn off -fPIC for targets that can't be built that way").
    *
    * @param ruleContext the context of the rule to check
-   * @param forBinary true if compiling for a binary, false if for a shared library
    * @return true if this rule's compilations should apply -fPIC, false otherwise
    */
-  public static boolean usePic(
-      RuleContext ruleContext, CcToolchainProvider toolchain, boolean forBinary) {
-    if (CcCommon.noCoptsMatches("-fPIC", ruleContext)) {
-      return false;
-    }
-    CppConfiguration config = ruleContext.getFragment(CppConfiguration.class);
-    return forBinary ? usePicObjectsForBinaries(config, toolchain) : needsPic(config, toolchain);
+  public static boolean usePicForDynamicLibraries(
+      RuleContext ruleContext, CcToolchainProvider toolchain) {
+    return ruleContext.getFragment(CppConfiguration.class).forcePic()
+        || toolchain.toolchainNeedsPic();
   }
 
   /** Returns whether binaries must be compiled with position independent code. */
-  public static boolean usePicForBinaries(CppConfiguration config, CcToolchainProvider toolchain) {
-    return toolchain.toolchainNeedsPic() && config.getCompilationMode() != CompilationMode.OPT;
-  }
-
-  /** Returns true iff we should use ".pic.o" files when linking executables. */
-  public static boolean usePicObjectsForBinaries(
-      CppConfiguration config, CcToolchainProvider toolchain) {
-    return config.forcePic() || usePicForBinaries(config, toolchain);
+  public static boolean usePicForBinaries(RuleContext ruleContext, CcToolchainProvider toolchain) {
+    CppConfiguration config = ruleContext.getFragment(CppConfiguration.class);
+    if (CcCommon.noCoptsMatches("-fPIC", ruleContext)) {
+      return false;
+    }
+    return config.forcePic()
+        || (toolchain.toolchainNeedsPic() && config.getCompilationMode() != CompilationMode.OPT);
   }
 
   /**
    * Returns true if shared libraries must be compiled with position independent code for the build
    * implied by the given config and toolchain.
    */
-  public static boolean needsPic(CppConfiguration config, CcToolchainProvider toolchain) {
-    return config.forcePic() || toolchain.toolchainNeedsPic();
-  }
 
   /**
    * Returns the LIPO context provider for configured target,
@@ -939,9 +955,9 @@ public class CppHelper {
     Variables variables =
         new Variables.Builder(toolchain.getBuildVariables())
             .addStringVariable(
-                CcCompilationHelper.OUTPUT_FILE_VARIABLE_NAME, output.getExecPathString())
+                StripBuildVariables.OUTPUT_FILE.getVariableName(), output.getExecPathString())
             .addStringSequenceVariable(
-                CcCommon.STRIPOPTS_VARIABLE_NAME, cppConfiguration.getStripOpts())
+                StripBuildVariables.STRIPOPTS.getVariableName(), cppConfiguration.getStripOpts())
             .addStringVariable(CcCommon.INPUT_FILE_VARIABLE_NAME, input.getExecPathString())
             .build();
     ImmutableList<String> commandLine =
@@ -993,17 +1009,17 @@ public class CppHelper {
 
   /** Returns the corresponding compiled TreeArtifact given the source TreeArtifact. */
   public static SpecialArtifact getCompileOutputTreeArtifact(
-      RuleContext ruleContext, Artifact sourceTreeArtifact, boolean usePic) {
+      RuleContext ruleContext, Artifact sourceTreeArtifact, String outputName, boolean usePic) {
     PathFragment objectDir = getObjDirectory(ruleContext.getLabel(), usePic);
-    PathFragment rootRelativePath = sourceTreeArtifact.getRootRelativePath();
+
     return ruleContext.getTreeArtifact(
-        objectDir.getRelative(rootRelativePath), sourceTreeArtifact.getRoot());
+        objectDir.getRelative(outputName), sourceTreeArtifact.getRoot());
   }
 
   /** Returns the corresponding compiled TreeArtifact given the source TreeArtifact. */
   public static Artifact getCompileOutputTreeArtifact(
-      RuleContext ruleContext, Artifact sourceTreeArtifact) {
-    return getCompileOutputTreeArtifact(ruleContext, sourceTreeArtifact, false);
+      RuleContext ruleContext, Artifact sourceTreeArtifact, String outputName) {
+    return getCompileOutputTreeArtifact(ruleContext, sourceTreeArtifact, outputName, false);
   }
 
   static String getArtifactNameForCategory(

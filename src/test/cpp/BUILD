@@ -22,7 +22,7 @@ cc_test(
     deps = [
         "//src/main/cpp:blaze_util",
         "//src/main/cpp/util",
-        "//third_party:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -36,8 +36,21 @@ cc_test(
         "//src/main/cpp:option_processor",
         "//src/main/cpp:workspace_layout",
         "//src/main/cpp/util",
-        "//third_party:gtest",
+        "@com_google_googletest//:gtest_main",
         "@com_googlesource_code_re2//:re2",
+    ],
+)
+
+cc_test(
+    name = "rc_options_test",
+    size = "small",
+    srcs = ["rc_options_test.cc"],
+    deps = [
+        "//src/main/cpp:blaze_util",
+        "//src/main/cpp:option_processor",
+        "//src/main/cpp:workspace_layout",
+        "//src/main/cpp/util",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -49,7 +62,7 @@ cc_test(
         "//src/main/cpp:blaze_util",
         "//src/main/cpp:startup_options",
         "//src/main/cpp:workspace_layout",
-        "//third_party:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -61,7 +74,7 @@ cc_test(
         "//src/main/cpp:blaze_util",
         "//src/main/cpp:workspace_layout",
         "//src/main/cpp/util",
-        "//third_party:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

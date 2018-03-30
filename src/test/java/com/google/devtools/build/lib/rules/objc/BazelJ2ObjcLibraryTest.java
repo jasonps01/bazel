@@ -104,8 +104,9 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
             TestConstants.TOOLS_REPOSITORY_PATH_PREFIX + "third_party/java/j2objc/jre_core.h",
             "java/com/google/dummy/test/_j2objc/test/java/com/google/dummy/test/test.h");
 
-    String execPath = j2objcLibraryTarget.getConfiguration().getBinDirectory(RepositoryName.MAIN)
-        .getExecPath() + "/";
+    String execPath =
+        getConfiguration(j2objcLibraryTarget).getBinDirectory(RepositoryName.MAIN).getExecPath()
+            + "/";
     assertThat(
             Iterables.transform(
                 provider.get(ObjcProvider.INCLUDE), PathFragment::getSafePathString))
@@ -133,7 +134,7 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
 
     ConfiguredTarget target = getConfiguredTarget("//java/com/google/test:transpile");
     ObjcProvider provider = target.get(ObjcProvider.SKYLARK_CONSTRUCTOR);
-    String genfilesFragment = target.getConfiguration().getGenfilesFragment().toString();
+    String genfilesFragment = getConfiguration(target).getGenfilesFragment().toString();
     assertThat(Artifact.toRootRelativePaths(provider.get(ObjcProvider.LIBRARY)))
         .containsExactly(
             TestConstants.TOOLS_REPOSITORY_PATH_PREFIX
@@ -146,8 +147,8 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
                 + genfilesFragment
                 + "/java/com/google/test/test.h");
 
-    String execPath = target.getConfiguration().getBinDirectory(RepositoryName.MAIN)
-        .getExecPath() + "/";
+    String execPath =
+        getConfiguration(target).getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
     assertThat(
             Iterables.transform(
                 provider.get(ObjcProvider.INCLUDE), PathFragment::getSafePathString))
@@ -310,15 +311,18 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
 
     J2ObjcMappingFileProvider provider = target.getProvider(J2ObjcMappingFileProvider.class);
 
-    Artifact classMappingFile = getGenfilesArtifact("test.clsmap.properties", test);
+    Artifact classMappingFile =
+        getGenfilesArtifact("../external/bla/foo/test.clsmap.properties", test);
     assertThat(provider.getClassMappingFiles()).containsExactly(classMappingFile);
 
     ObjcProvider objcProvider = target.get(ObjcProvider.SKYLARK_CONSTRUCTOR);
 
-    Artifact headerFile = getGenfilesArtifact("test.j2objc.pb.h", test);
-    Artifact sourceFile = getGenfilesArtifact("test.j2objc.pb.m", test);
+    Artifact headerFile = getGenfilesArtifact("../external/bla/foo/test.j2objc.pb.h", test);
+    Artifact sourceFile = getGenfilesArtifact("../external/bla/foo/test.j2objc.pb.m", test);
     assertThat(objcProvider.get(ObjcProvider.HEADER)).contains(headerFile);
     assertThat(objcProvider.get(ObjcProvider.SOURCE)).contains(sourceFile);
+    assertThat(objcProvider.get(ObjcProvider.INCLUDE))
+        .contains(getConfiguration(target).getGenfilesFragment().getRelative("external/bla"));
   }
 
   @Test
@@ -470,8 +474,8 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
     Artifact mappingFile = getFirstArtifactEndingWith(
         mappingFileProvider.getHeaderMappingFiles(), "lib1.mapping.j2objc");
     SpawnAction headerMappingAction = (SpawnAction) getGeneratingAction(mappingFile);
-    String execPath = target.getConfiguration().getBinDirectory(RepositoryName.MAIN)
-        .getExecPath() + "/";
+    String execPath =
+        getConfiguration(target).getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
     assertThat(Artifact.toRootRelativePaths(headerMappingAction.getInputs()))
         .containsAllOf(
             "java/com/google/transpile/libOne.java", "java/com/google/transpile/jar.srcjar");
@@ -595,7 +599,7 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
             "java/com/google/dummy/test/_j2objc/test/java/com/google/dummy/test/test.h");
 
     String execPath =
-        objcTarget.getConfiguration().getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
+        getConfiguration(objcTarget).getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
     assertThat(
             Iterables.transform(
                 provider.get(ObjcProvider.INCLUDE), PathFragment::getSafePathString))
@@ -641,7 +645,7 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
             "app/_j2objc/dummyTwo/app/dummyTwo.h");
 
     String execPath =
-        objcTarget.getConfiguration().getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
+        getConfiguration(objcTarget).getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
     assertThat(
             Iterables.transform(
                 provider.get(ObjcProvider.INCLUDE), PathFragment::getSafePathString))
@@ -675,7 +679,7 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
     List<String> linkArgs = normalizeBashArgs(linkAction.getArguments());
     ConfiguredTarget target = getConfiguredTargetInAppleBinaryTransition("//x:test");
     String binDir =
-        target.getConfiguration().getBinDirectory(RepositoryName.MAIN).getExecPathString();
+        getConfiguration(target).getBinDirectory(RepositoryName.MAIN).getExecPathString();
     Artifact fileList = getFirstArtifactEndingWith(linkAction.getInputs(), "test-linker.objlist");
     ParameterFileWriteAction filelistWriteAction =
         (ParameterFileWriteAction) getGeneratingAction(fileList);
@@ -932,7 +936,7 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
     Artifact archiveSourceMappingFile =
         getBinArtifact("test.archive_source_mapping.j2objc", javaTarget);
     String execPath =
-        javaTarget.getConfiguration().getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
+        getConfiguration(javaTarget).getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
 
     ParameterFileWriteAction paramFileAction =
         (ParameterFileWriteAction) getGeneratingAction(paramFile);
@@ -1023,10 +1027,10 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
     ConfiguredTarget j2objcLibraryTarget =
         getConfiguredTarget("//java/com/google/dummy/test:transpile");
     String genfilesFragment =
-        j2objcLibraryTarget.getConfiguration().getGenfilesFragment().toString();
-    String binFragment = j2objcLibraryTarget.getConfiguration().getBinFragment().toString();
+        getConfiguration(j2objcLibraryTarget).getGenfilesFragment().toString();
+    String binFragment = getConfiguration(j2objcLibraryTarget).getBinFragment().toString();
     AppleConfiguration appleConfiguration =
-        j2objcLibraryTarget.getConfiguration().getFragment(AppleConfiguration.class);
+        getConfiguration(j2objcLibraryTarget).getFragment(AppleConfiguration.class);
 
     String commandLine = Joiner.on(" ").join(compileAction.getArguments());
     ImmutableList<String> expectedArgs =

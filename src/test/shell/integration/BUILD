@@ -284,9 +284,16 @@ sh_test(
 )
 
 sh_test(
-    name = "logging_test",
+    name = "server_logging_test",
     size = "medium",
-    srcs = ["logging_test.sh"],
+    srcs = ["server_logging_test.sh"],
+    data = [":test-deps"],
+)
+
+sh_test(
+    name = "client_test",
+    size = "medium",
+    srcs = ["client_test.sh"],
     data = [":test-deps"],
 )
 
@@ -364,6 +371,13 @@ sh_test(
     name = "prelude_test",
     size = "medium",
     srcs = ["prelude_test.sh"],
+    data = [":test-deps"],
+)
+
+sh_test(
+    name = "sandboxfs_test",
+    size = "medium",
+    srcs = ["sandboxfs_test.sh"],
     data = [":test-deps"],
 )
 

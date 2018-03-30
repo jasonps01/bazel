@@ -220,12 +220,10 @@ output*. There are multiple ways for a rule to introduce a predeclared output:
   label is chosen automatically as specified by the entry, usually by
   substituting into a string template. This is the most common way to define
   outputs.
-  [See example](https://github.com/bazelbuild/examples/blob/master/rules/default_outputs/extension.bzl)
 
 * The rule can have an attribute of type [`output`](lib/attr.html#output) or
   [`output_list`](lib/attr.html#output_list). In this case the user explicitly
   chooses the label for the output when they instantiate the rule.
-  [See example](https://github.com/bazelbuild/examples/blob/master/rules/custom_outputs/extension.bzl)
 
 * **(Deprecated)** If the rule is marked
   [`executable`](lib/globals.html#rule.executable) or
@@ -235,10 +233,9 @@ output*. There are multiple ways for a rule to introduce a predeclared output:
   predeclared output.) By default, this file serves as the binary to run if the
   target appears on the command line of a `bazel run` or `bazel test` command.
   See [Executable rules](#executable-rules-and-test-rules) below.
-  [See example](https://github.com/bazelbuild/examples/blob/master/rules/executable/executable.bzl)
 
 All predeclared outputs can be accessed within the rule's implementation
-function under the [`ctx.outputs`](lib/ctx.html#output) struct; see that page
+function under the [`ctx.outputs`](lib/ctx.html#outputs) struct; see that page
 for details and restrictions. Non-predeclared outputs are created during
 analysis using the [`ctx.actions.declare_file`](lib/actions.html#declare_file)
 and [`ctx.actions.declare_directory`](lib/actions.html#declare_directory)
@@ -250,6 +247,8 @@ Although the input files of a target -- those files passed through attributes of
 files that are predeclared using attributes of `attr.output` or
 `attr.output_list` type, `ctx.attr` will only return the label, and you must use
 `ctx.outputs` to get the actual `File` object.
+
+[See example of predeclared outputs](https://github.com/bazelbuild/examples/blob/master/rules/predeclared_outputs/hash.bzl)
 
 ## Actions
 
@@ -429,35 +428,54 @@ Providers are only available during the analysis phase. Examples of usage:
 * [providers with depsets](https://github.com/bazelbuild/examples/blob/master/rules/depsets/foo.bzl)
     This examples shows how a library and a binary rule can pass information.
 
-> *Note:*
-> Historically, Bazel also supported provider instances that are identified by strings and
-> accessed as fields on the `target` object instead of as keys. This style is deprecated
-> but still supported. Return legacy providers as follows:
->
+### Migrating from Legacy Providers
+
+Historically, Bazel providers were simple fields on the `Target` object. They
+were accessed using the dot operator, and they were created by putting the field
+in a struct returned by the rule's implementation function.
+
+*This style is deprecated and should not be used in new code;* see below for
+information that may help you migrate. The new provider mechanism avoids name
+clashes. It also supports data hiding, by requiring any code accessing a
+provider instance to retrieve it using the provider symbol.
+
+For the moment, legacy providers are still supported. A rule can return both
+legacy and modern providers as follows:
+
 ```python
-def rule_implementation(ctx):
+def _myrule_impl(ctx):
   ...
-  modern_provider = TransitiveDataInfo(value=5)
-  # Legacy style.
-  return struct(legacy_provider = struct(...),
-                another_legacy_provider = struct(...),
-                # The `providers` field contains provider instances that can be accessed
-                # the "modern" way.
-                providers = [modern_provider])
+  legacy_data = struct(x="foo", ...)
+  modern_data = MyInfo(y="bar", ...)
+  # When any legacy providers are returned, the top-level returned value is a struct.
+  return struct(
+      # One key = value entry for each legacy provider.
+      legacy_info = legacy_data,
+      ...
+      # All modern providers are put in a list passed to the special "providers" key.
+      providers = [modern_data, ...])
 ```
-> To access legacy providers, use the dot notation.
-> Note that the same target can define both modern and legacy providers:
->
-```python
-def dependent_rule_implementation(ctx):
-  ...
-  n = 0
-  for dep_target in ctx.attr.deps:
-    # n += dep_target.legacy_provider.value   # legacy style
-    n += dep_target[TransitiveDataInfo].value # modern style
-  ...
-```
-> **We recommend using modern providers for all future code.**
+
+If `dep` is the resulting `Target` object for an instance of this rule, the
+providers and their contents can be retrieved as `dep.legacy_info.x` and
+`dep[MyInfo].y`.
+
+In addition to `providers`, the returned struct can also take several other
+fields that have special meaning (and that do not create a corresponding legacy
+provider).
+
+* The fields `files`, `runfiles`, `data_runfiles`, `default_runfiles`, and
+  `executable` correspond to the same-named fields of
+  [`DefaultInfo`](lib/globals.html#DefaultInfo). It is not allowed to specify
+  any of these fields while also returning a `DefaultInfo` modern provider.
+
+* The field `output_groups` takes a struct value and corresponds to an
+  [`OutputGroupInfo`](lib/globals.html#OutputGroupInfo).
+
+* The field `instrumented_files` is for
+  [code coverage instrumentation](#code-coverage-instrumentation). It does not
+  yet have a modern provider equivalent. If you need it, you cannot yet migrate
+  away from legacy providers.
 
 ## Runfiles
 
@@ -667,7 +685,7 @@ specify one using `DefaultInfo`; it must not be used otherwise. This output
 mechanism is deprecated because it does not support customizing the executable
 file's name at analysis time.
 
-See examples of an [executable rule](https://github.com/bazelbuild/examples/blob/master/rules/executable/executable.bzl)
+See examples of an [executable rule](https://github.com/bazelbuild/examples/blob/master/rules/executable/fortune.bzl)
 and a [test rule](https://github.com/bazelbuild/examples/blob/master/rules/test_rule/line_length.bzl).
 
 Test rules inherit the following attributes: `args`, `flaky`, `local`,
@@ -682,35 +700,3 @@ _example_test = rule(
  ...
 )
 ```
-
-## Troubleshooting
-
-### Why is the action never executed?
-
-Bazel executes an action only when at least one of its outputs are requested. If
-the target is built directly, make sure the output you need is in the [default
-outputs](#requesting-output-files).
-
-When the target is used as a dependency, check which providers are used and consumed.
-
-### Why is the implementation function not executed?
-
-Bazel analyzes only the targets that are requested for the build. You should
-either build the target, or build something that depends on the target.
-
-### A file is missing during execution
-
-When you create an action, you need to specify all the inputs. Please
-double-check that you didn't forget anything.
-
-If a binary requires files at runtime, such as dynamic libraries or data files,
-you may need to [specify the runfiles](#runfiles).
-
-### How to choose which files are shown in the output of `bazel build`?
-
-Use the [`DefaultInfo`](lib/globals.html#DefaultInfo) provider to
-[set the default outputs](#requesting-output-files).
-
-### How to run a program in the analysis phase?
-
-It is not possible.

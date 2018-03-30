@@ -15,7 +15,6 @@ package com.google.devtools.build.lib.skyframe;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
-import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Collections2;
@@ -28,12 +27,14 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Range;
 import com.google.common.collect.Sets;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
+import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.analysis.AnalysisProtos.ActionGraphContainer;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.BuildView;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.WorkspaceStatusAction.Factory;
 import com.google.devtools.build.lib.analysis.buildinfo.BuildInfoFactory;
+import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
 import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
@@ -130,7 +131,7 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
   private final RecordingDifferencer recordingDiffer = new SequencedRecordingDifferencer();
   private final DiffAwarenessManager diffAwarenessManager;
   private final Iterable<SkyValueDirtinessChecker> customDirtinessCheckers;
-  private Set<String> previousClientEnvironment = null;
+  private Set<String> previousClientEnvironment = ImmutableSet.of();
 
   private SequencedSkyframeExecutor(
       EvaluatorSupplier evaluatorSupplier,
@@ -147,7 +148,8 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       PathFragment additionalBlacklistedPackagePrefixesFile,
       CrossRepositoryLabelViolationStrategy crossRepositoryLabelViolationStrategy,
       List<BuildFileName> buildFilesByPriority,
-      ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile) {
+      ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile,
+      BuildOptions defaultBuildOptions) {
     super(
         evaluatorSupplier,
         pkgFactory,
@@ -162,7 +164,10 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
         additionalBlacklistedPackagePrefixesFile,
         crossRepositoryLabelViolationStrategy,
         buildFilesByPriority,
-        actionOnIOExceptionReadingBuildFile);
+        actionOnIOExceptionReadingBuildFile,
+        /*shouldUnblockCpuWorkWhenFetchingDeps=*/ false,
+        defaultBuildOptions,
+        new PackageProgressReceiver());
     this.diffAwarenessManager = new DiffAwarenessManager(diffAwarenessFactories);
     this.customDirtinessCheckers = customDirtinessCheckers;
   }
@@ -181,7 +186,8 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       PathFragment additionalBlacklistedPackagePrefixesFile,
       CrossRepositoryLabelViolationStrategy crossRepositoryLabelViolationStrategy,
       List<BuildFileName> buildFilesByPriority,
-      ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile) {
+      ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile,
+      BuildOptions defaultBuildOptions) {
     SequencedSkyframeExecutor skyframeExecutor =
         new SequencedSkyframeExecutor(
             InMemoryMemoizingEvaluator.SUPPLIER,
@@ -198,7 +204,8 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
             additionalBlacklistedPackagePrefixesFile,
             crossRepositoryLabelViolationStrategy,
             buildFilesByPriority,
-            actionOnIOExceptionReadingBuildFile);
+            actionOnIOExceptionReadingBuildFile,
+            defaultBuildOptions);
     skyframeExecutor.init();
     return skyframeExecutor;
   }
@@ -338,25 +345,24 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
     handleClientEnvironmentChanges();
   }
 
-  /** Invalidates entries in the client environment that have changed since last sync. */
+  /** Invalidates entries in the client environment. */
   private void handleClientEnvironmentChanges() {
-    Map<SkyKey, SkyValue> values = memoizingEvaluator.getValues();
-    ImmutableMap.Builder<SkyKey, SkyValue> newValuesBuilder = ImmutableMap.builder();
-    HashSet<String> envToCheck = new HashSet<>();
-    if (previousClientEnvironment != null) {
-      envToCheck.addAll(previousClientEnvironment);
-    }
-    envToCheck.addAll(clientEnv.get().keySet());
+    // Remove deleted client environmental variables.
+    Iterable<SkyKey> deletedKeys =
+        Sets.difference(previousClientEnvironment, clientEnv.get().keySet())
+            .stream()
+            .map(ClientEnvironmentFunction::key)
+            .collect(ImmutableList.toImmutableList());
+    recordingDiffer.invalidate(deletedKeys);
     previousClientEnvironment = clientEnv.get().keySet();
-    for (String env : envToCheck) {
-      SkyKey key = ClientEnvironmentFunction.key(env);
-      if (values.containsKey(key)) {
-        String value = ((ClientEnvironmentValue) values.get(key)).getValue();
-        String newValue = clientEnv.get().get(env);
-        if (!Objects.equal(newValue, value)) {
-          newValuesBuilder.put(key, new ClientEnvironmentValue(newValue));
-        }
-      }
+    // Inject current client environmental values. We can inject unconditionally without fearing
+    // over-invalidation; skyframe will not invalidate an injected key if the key's new value is the
+    // same as the old value.
+    ImmutableMap.Builder<SkyKey, SkyValue> newValuesBuilder = ImmutableMap.builder();
+    for (Map.Entry<String, String> entry : clientEnv.get().entrySet()) {
+      newValuesBuilder.put(
+          ClientEnvironmentFunction.key(entry.getKey()),
+          new ClientEnvironmentValue(entry.getValue()));
     }
     recordingDiffer.inject(newValuesBuilder.build());
   }
@@ -763,8 +769,10 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
   }
 
   @Override
-  public ActionGraphContainer getActionGraphContainer(List<String> actionGraphTargets) {
-    ActionGraphDump actionGraphDump = new ActionGraphDump(actionGraphTargets);
+  public ActionGraphContainer getActionGraphContainer(
+      List<String> actionGraphTargets, boolean includeActionCmdLine)
+      throws CommandLineExpansionException {
+    ActionGraphDump actionGraphDump = new ActionGraphDump(actionGraphTargets, includeActionCmdLine);
     for (Map.Entry<SkyKey, ? extends NodeEntry> skyKeyAndNodeEntry :
         memoizingEvaluator.getGraphMap().entrySet()) {
       NodeEntry entry = skyKeyAndNodeEntry.getValue();

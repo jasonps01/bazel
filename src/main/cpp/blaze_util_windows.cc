@@ -40,6 +40,7 @@
 #include "src/main/cpp/util/exit_code.h"
 #include "src/main/cpp/util/file.h"
 #include "src/main/cpp/util/file_platform.h"
+#include "src/main/cpp/util/logging.h"
 #include "src/main/cpp/util/md5.h"
 #include "src/main/cpp/util/numbers.h"
 #include "src/main/cpp/util/strings.h"
@@ -61,12 +62,11 @@ using bazel::windows::AutoAttributeList;
 using bazel::windows::AutoHandle;
 using bazel::windows::CreateJunction;
 
-// TODO(bazel-team): get rid of die/pdie, handle errors on the caller side.
-// die/pdie are exit points in the code and they make it difficult to follow the
-// control flow, plus it's not clear whether they call destructors on local
-// variables in the call stack.
+// TODO(bazel-team): stop using die, handle errors on the caller side.
+// die calls exit(exitcode), which makes it difficult to follow the control flow
+// and does not call destructors on local variables on the call stack.
 using blaze_util::die;
-using blaze_util::pdie;
+using blaze_util::GetLastErrorString;
 
 using std::string;
 using std::unique_ptr;
@@ -195,8 +195,8 @@ string GetProcessIdAsString() {
 string GetSelfPath() {
   WCHAR buffer[kWindowsPathBufferSize] = {0};
   if (!GetModuleFileNameW(0, buffer, kWindowsPathBufferSize)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "GetSelfPath: GetModuleFileNameW");
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "GetSelfPath: GetModuleFileNameW: %s", GetLastErrorString().c_str());
   }
   return string(blaze_util::WstringToCstring(buffer).get());
 }
@@ -211,8 +211,8 @@ string GetOutputRoot() {
 
   WCHAR buffer[kWindowsPathBufferSize] = {0};
   if (!::GetTempPathW(kWindowsPathBufferSize, buffer)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "GetOutputRoot: GetTempPathW");
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "GetOutputRoot: GetTempPathW: %s", GetLastErrorString().c_str());
   }
   return string(blaze_util::WstringToCstring(buffer).get());
 }
@@ -284,8 +284,9 @@ static void CreateCommandLine(CmdLine* result, const string& exe,
   std::ostringstream cmdline;
   string short_exe;
   if (!blaze_util::AsShortWindowsPath(exe, &short_exe)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "CreateCommandLine: AsShortWindowsPath(%s)", exe.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "CreateCommandLine: AsShortWindowsPath(%s): %s", exe.c_str(),
+        GetLastErrorString().c_str());
   }
   bool first = true;
   for (const auto& s : args_vector) {
@@ -336,8 +337,8 @@ static void CreateCommandLine(CmdLine* result, const string& exe,
 
   string cmdline_str = cmdline.str();
   if (cmdline_str.size() >= MAX_CMDLINE_LENGTH) {
-    pdie(blaze_exit_code::INTERNAL_ERROR, "Command line too long (%d > %d): %s",
-         cmdline_str.size(), MAX_CMDLINE_LENGTH, cmdline_str.c_str());
+    die(blaze_exit_code::INTERNAL_ERROR, "Command line too long (%d > %d): %s",
+        cmdline_str.size(), MAX_CMDLINE_LENGTH, cmdline_str.c_str());
   }
 
   // Copy command line into a mutable buffer.
@@ -347,78 +348,6 @@ static void CreateCommandLine(CmdLine* result, const string& exe,
 }
 
 }  // namespace
-
-string GetJvmVersion(const string& java_exe) {
-  HANDLE pipe_read, pipe_write;
-
-  SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), NULL, TRUE};
-  if (!::CreatePipe(&pipe_read, &pipe_write, &sa, 0)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "GetJvmVersion: CreatePipe");
-  }
-
-  if (!SetHandleInformation(pipe_read, HANDLE_FLAG_INHERIT, 0)) {
-    CloseHandle(pipe_read);
-    CloseHandle(pipe_write);
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "GetJvmVersion: SetHandleInformation");
-  }
-
-  PROCESS_INFORMATION processInfo = {0};
-  STARTUPINFOA startupInfo = {0};
-  startupInfo.hStdError = pipe_write;
-  startupInfo.hStdOutput = pipe_write;
-  startupInfo.dwFlags |= STARTF_USESTDHANDLES;
-
-  string win_java_exe;
-  if (!blaze_util::AsShortWindowsPath(java_exe, &win_java_exe)) {
-    CloseHandle(pipe_read);
-    CloseHandle(pipe_write);
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "GetJvmVersion: AsShortWindowsPath(%s)", java_exe.c_str());
-  }
-  win_java_exe = string("\"") + win_java_exe + "\" -version";
-
-  char cmdline[MAX_CMDLINE_LENGTH];
-  strncpy(cmdline, win_java_exe.c_str(), win_java_exe.size() + 1);
-  BOOL ok = CreateProcessA(
-      /* lpApplicationName */ NULL,
-      /* lpCommandLine */ cmdline,
-      /* lpProcessAttributes */ NULL,
-      /* lpThreadAttributes */ NULL,
-      /* bInheritHandles */ TRUE,
-      /* dwCreationFlags */ 0,
-      /* lpEnvironment */ NULL,
-      /* lpCurrentDirectory */ NULL,
-      /* lpStartupInfo */ &startupInfo,
-      /* lpProcessInformation */ &processInfo);
-
-  if (!ok) {
-    CloseHandle(pipe_read);
-    CloseHandle(pipe_write);
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "RunProgram: CreateProcess(%s)", cmdline);
-  }
-
-  CloseHandle(pipe_write);
-  std::string result = "";
-  DWORD bytes_read;
-  CHAR buf[1024];
-
-  for (;;) {
-    ok = ::ReadFile(pipe_read, buf, 1023, &bytes_read, NULL);
-    if (!ok || bytes_read == 0) {
-      break;
-    }
-    buf[bytes_read] = 0;
-    result = result + buf;
-  }
-
-  CloseHandle(pipe_read);
-  CloseHandle(processInfo.hProcess);
-  CloseHandle(processInfo.hThread);
-  return ReadJvmVersion(result);
-}
 
 static bool GetProcessStartupTime(HANDLE process, uint64_t* result) {
   FILETIME creation_time, dummy1, dummy2, dummy3;
@@ -435,16 +364,17 @@ static bool GetProcessStartupTime(HANDLE process, uint64_t* result) {
 static void WriteProcessStartupTime(const string& server_dir, HANDLE process) {
   uint64_t start_time = 0;
   if (!GetProcessStartupTime(process, &start_time)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "WriteProcessStartupTime(%s): GetProcessStartupTime",
-         server_dir.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "WriteProcessStartupTime(%s): GetProcessStartupTime failed: %s",
+        server_dir.c_str(), GetLastErrorString().c_str());
   }
 
   string start_time_file = blaze_util::JoinPath(server_dir, "server.starttime");
   if (!blaze_util::WriteFile(ToString(start_time), start_time_file)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "WriteProcessStartupTime(%s): WriteFile(%s)", server_dir.c_str(),
-         start_time_file.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "WriteProcessStartupTime(%s): WriteFile(%s) failed: %s",
+        server_dir.c_str(), start_time_file.c_str(),
+        GetLastErrorString().c_str());
   }
 }
 
@@ -515,9 +445,9 @@ int ExecuteDaemon(const string& exe, const std::vector<string>& args_vector,
                   BlazeServerStartup** server_startup) {
   wstring wdaemon_output;
   if (!blaze_util::AsAbsoluteWindowsPath(daemon_output, &wdaemon_output)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ExecuteDaemon(%s): AsAbsoluteWindowsPath(%s)", exe.c_str(),
-         daemon_output.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ExecuteDaemon(%s): AsAbsoluteWindowsPath(%s) failed: %s", exe.c_str(),
+        daemon_output.c_str(), GetLastErrorString().c_str());
   }
 
   SECURITY_ATTRIBUTES sa;
@@ -531,16 +461,17 @@ int ExecuteDaemon(const string& exe, const std::vector<string>& args_vector,
   AutoHandle devnull(::CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ, NULL,
                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL));
   if (!devnull.IsValid()) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ExecuteDaemon(%s): CreateFileA(NUL)", exe.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ExecuteDaemon(%s): CreateFileA(NUL) failed: %s", exe.c_str(),
+        GetLastErrorString().c_str());
   }
 
   AutoHandle stdout_file(CreateJvmOutputFile(wdaemon_output.c_str(), &sa,
                                              daemon_out_append));
   if (!stdout_file.IsValid()) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ExecuteDaemon(%s): CreateJvmOutputFile(%ls)", exe.c_str(),
-         wdaemon_output.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ExecuteDaemon(%s): CreateJvmOutputFile(%ls) failed: %s", exe.c_str(),
+        wdaemon_output.c_str(), GetLastErrorString().c_str());
   }
   HANDLE stderr_handle;
   // We must duplicate the handle to stdout, otherwise "bazel clean --expunge"
@@ -555,9 +486,9 @@ int ExecuteDaemon(const string& exe, const std::vector<string>& args_vector,
           /* dwDesiredAccess */ 0,
           /* bInheritHandle */ TRUE,
           /* dwOptions */ DUPLICATE_SAME_ACCESS)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ExecuteDaemon(%s): DuplicateHandle(%ls)", exe.c_str(),
-         wdaemon_output.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ExecuteDaemon(%s): DuplicateHandle(%ls) failed: %s", exe.c_str(),
+        wdaemon_output.c_str(), GetLastErrorString().c_str());
   }
   AutoHandle stderr_file(stderr_handle);
 
@@ -568,8 +499,9 @@ int ExecuteDaemon(const string& exe, const std::vector<string>& args_vector,
   if (!UpdateProcThreadAttribute(
           lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
           handlesToInherit, 2 * sizeof(HANDLE), NULL, NULL)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ExecuteDaemon(%s): UpdateProcThreadAttribute", exe.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ExecuteDaemon(%s): UpdateProcThreadAttribute failed: %s", exe.c_str(),
+        GetLastErrorString().c_str());
   }
 
   PROCESS_INFORMATION processInfo = {0};
@@ -599,8 +531,9 @@ int ExecuteDaemon(const string& exe, const std::vector<string>& args_vector,
       /* lpProcessInformation */ &processInfo);
 
   if (!ok) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ExecuteDaemon(%s): CreateProcess(%s)", exe.c_str(), cmdline.cmdline);
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ExecuteDaemon(%s): CreateProcess(%s) failed: %s", exe.c_str(),
+        cmdline.cmdline, GetLastErrorString().c_str());
   }
 
   WriteProcessStartupTime(server_dir, processInfo.hProcess);
@@ -644,8 +577,9 @@ void ExecuteProgram(const string& exe, const std::vector<string>& args_vector) {
   if (NestedJobsSupported()) {
     job = CreateJobObject(NULL, NULL);
     if (job == NULL) {
-      pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-           "ExecuteProgram(%s): CreateJobObject", exe.c_str());
+      die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+          "ExecuteProgram(%s): CreateJobObject failed: %s", exe.c_str(),
+          GetLastErrorString().c_str());
     }
 
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_info = {0};
@@ -654,8 +588,9 @@ void ExecuteProgram(const string& exe, const std::vector<string>& args_vector) {
 
     if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
                                  &job_info, sizeof(job_info))) {
-      pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-           "ExecuteProgram(%s): SetInformationJobObject", exe.c_str());
+      die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+          "ExecuteProgram(%s): SetInformationJobObject failed: %s", exe.c_str(),
+          GetLastErrorString().c_str());
     }
   }
 
@@ -672,8 +607,9 @@ void ExecuteProgram(const string& exe, const std::vector<string>& args_vector) {
       /* lpProcessInformation */ &processInfo);
 
   if (!success) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ExecuteProgram(%s): CreateProcess(%s)", exe.c_str(), cmdline.cmdline);
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ExecuteProgram(%s): CreateProcess(%s) failed: %s", exe.c_str(),
+        cmdline.cmdline, GetLastErrorString().c_str());
   }
 
   // On Windows versions that support nested jobs (Windows 8 and above), we
@@ -689,15 +625,17 @@ void ExecuteProgram(const string& exe, const std::vector<string>& args_vector) {
   // subprocesses via the JNI library.
   if (job != INVALID_HANDLE_VALUE) {
     if (!AssignProcessToJobObject(job, processInfo.hProcess)) {
-      pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-           "ExecuteProgram(%s): AssignProcessToJobObject", exe.c_str());
+      die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+          "ExecuteProgram(%s): AssignProcessToJobObject failed: %s",
+          exe.c_str(), GetLastErrorString().c_str());
     }
   }
   // Now that we potentially put the process into a new job object, we can start
   // running it.
   if (ResumeThread(processInfo.hThread) == -1) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ExecuteProgram(%s): ResumeThread", exe.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ExecuteProgram(%s): ResumeThread failed: %s", exe.c_str(),
+        GetLastErrorString().c_str());
   }
 
   WaitForSingleObject(processInfo.hProcess, INFINITE);
@@ -713,8 +651,9 @@ const char kListSeparator = ';';
 string PathAsJvmFlag(const string& path) {
   string spath;
   if (!blaze_util::AsShortWindowsPath(path, &spath)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "PathAsJvmFlag(%s): AsShortWindowsPath", path.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "PathAsJvmFlag(%s): AsShortWindowsPath failed: %s", path.c_str(),
+        GetLastErrorString().c_str());
   }
   // Convert backslashes to forward slashes, in order to avoid the JVM parsing
   // Windows paths as if they contained escaped characters.
@@ -727,8 +666,9 @@ string ConvertPath(const string& path) {
   // The path may not be Windows-style and may not be normalized, so convert it.
   wstring wpath;
   if (!blaze_util::AsAbsoluteWindowsPath(path, &wpath)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "ConvertPath(%s): AsAbsoluteWindowsPath", path.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "ConvertPath(%s): AsAbsoluteWindowsPath failed: %s", path.c_str(),
+        GetLastErrorString().c_str());
   }
   std::transform(wpath.begin(), wpath.end(), wpath.begin(), ::towlower);
   return string(blaze_util::WstringToCstring(
@@ -740,22 +680,24 @@ bool SymlinkDirectories(const string &posix_target, const string &posix_name) {
   wstring name;
   wstring target;
   if (!blaze_util::AsAbsoluteWindowsPath(posix_name, &name)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "SymlinkDirectories(%s, %s): AsAbsoluteWindowsPath(%s)",
-         posix_target.c_str(), posix_name.c_str(), posix_target.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "SymlinkDirectories(%s, %s): AsAbsoluteWindowsPath(%s) failed: %s",
+        posix_target.c_str(), posix_name.c_str(), posix_target.c_str(),
+        GetLastErrorString().c_str());
     return false;
   }
   if (!blaze_util::AsAbsoluteWindowsPath(posix_target, &target)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "SymlinkDirectories(%s, %s): AsAbsoluteWindowsPath(%s)",
-         posix_target.c_str(), posix_name.c_str(), posix_name.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "SymlinkDirectories(%s, %s): AsAbsoluteWindowsPath(%s) failed: %s",
+        posix_target.c_str(), posix_name.c_str(), posix_name.c_str(),
+        GetLastErrorString().c_str());
     return false;
   }
-  wstring error(CreateJunction(name, target));
-  if (!error.empty()) {
-    blaze_util::PrintError("SymlinkDirectories(%s, %s): CreateJunction: %S",
-                           posix_target.c_str(), posix_name.c_str(),
-                           error.c_str());
+  wstring werror(CreateJunction(name, target));
+  if (!werror.empty()) {
+    string error(blaze_util::WstringToCstring(werror.c_str()).get());
+    BAZEL_LOG(ERROR) << "SymlinkDirectories(" << posix_target << ", "
+                     << posix_name << "): CreateJunction: " << error;
     return false;
   }
   return true;
@@ -813,9 +755,9 @@ bool KillServerProcess(int pid, const string& output_base) {
   BOOL result = TerminateProcess(process, /*uExitCode*/ 0);
   if (!result || !AwaitServerProcessTermination(pid, output_base,
                                                 kPostKillGracePeriodSeconds)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "Cannot terminate server process with PID %d, output_base=(%s)", pid,
-         output_base.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "Cannot terminate server process with PID %d, output_base=(%s): %s",
+        pid, output_base.c_str(), GetLastErrorString().c_str());
   }
   return result;
 }
@@ -856,8 +798,8 @@ void CreateSecureOutputRoot(const string& path) {
   // implementation does.
   const char* root = path.c_str();
   if (!blaze_util::MakeDirectories(path, 0755)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "MakeDirectories(%s) failed", root);
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "MakeDirectories(%s) failed: %s", root, GetLastErrorString().c_str());
   }
 
   if (!blaze_util::IsDirectory(path)) {
@@ -949,17 +891,18 @@ void SetupStdStreams() {
 LARGE_INTEGER WindowsClock::GetFrequency() {
   LARGE_INTEGER result;
   if (!QueryPerformanceFrequency(&result)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "WindowsClock::GetFrequency: QueryPerformanceFrequency");
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "WindowsClock::GetFrequency: QueryPerformanceFrequency failed: %s",
+        GetLastErrorString().c_str());
   }
 
   // On ancient Windows versions (pre-XP) and specific hardware the result may
   // be 0. Since this is pre-XP, we don't handle that, just error out.
   if (result.QuadPart <= 0) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "WindowsClock::GetFrequency: QueryPerformanceFrequency returned "
-         "invalid result (%llu)\n",
-         result.QuadPart);
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "WindowsClock::GetFrequency: QueryPerformanceFrequency returned "
+        "invalid result (%llu): %s",
+        result.QuadPart, GetLastErrorString().c_str());
   }
 
   return result;
@@ -969,8 +912,10 @@ LARGE_INTEGER WindowsClock::GetMillisecondsAsLargeInt(
     const LARGE_INTEGER& freq) {
   LARGE_INTEGER counter;
   if (!QueryPerformanceCounter(&counter)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "WindowsClock::GetMillisecondsAsLargeInt: QueryPerformanceCounter");
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "WindowsClock::GetMillisecondsAsLargeInt: QueryPerformanceCounter "
+        "failed: %s",
+        GetLastErrorString().c_str());
   }
 
   LARGE_INTEGER result;
@@ -1002,9 +947,9 @@ uint64_t AcquireLock(const string& output_base, bool batch_mode, bool block,
   string lockfile = blaze_util::JoinPath(output_base, "lock");
   wstring wlockfile;
   if (!blaze_util::AsAbsoluteWindowsPath(lockfile, &wlockfile)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "AcquireLock(%s): AsAbsoluteWindowsPath(%s)", output_base.c_str(),
-         lockfile.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "AcquireLock(%s): AsAbsoluteWindowsPath(%s) failed: %s",
+        output_base.c_str(), lockfile.c_str(), GetLastErrorString().c_str());
   }
 
   blaze_lock->handle = INVALID_HANDLE_VALUE;
@@ -1037,9 +982,9 @@ uint64_t AcquireLock(const string& output_base, bool batch_mode, bool block,
       }
       Sleep(/* dwMilliseconds */ 200);
     } else {
-      pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-           "AcquireLock(%s): CreateFileW(%ls)", lockfile.c_str(),
-           wlockfile.c_str());
+      die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+          "AcquireLock(%s): CreateFileW(%ls) failed: %s", lockfile.c_str(),
+          wlockfile.c_str(), GetLastErrorString().c_str());
     }
   }
   uint64_t wait_time = GetMillisecondsMonotonic() - st;
@@ -1053,9 +998,9 @@ uint64_t AcquireLock(const string& output_base, bool batch_mode, bool block,
           /* nNumberOfBytesToLockLow */ 1,
           /* nNumberOfBytesToLockHigh */ 0,
           /* lpOverlapped */ &overlapped)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "AcquireLock(%s): LockFileEx(%ls)", lockfile.c_str(),
-         wlockfile.c_str());
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
+        "AcquireLock(%s): LockFileEx(%ls) failed: %s", lockfile.c_str(),
+        wlockfile.c_str(), GetLastErrorString().c_str());
   }
   // On other platforms we write some info about this process into the lock file
   // such as the server PID. On Windows we don't do that because the file is
@@ -1081,7 +1026,8 @@ string GetUserName() {
   WCHAR buffer[UNLEN + 1];
   DWORD len = UNLEN + 1;
   if (!::GetUserNameW(buffer, &len)) {
-    pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR, "GetUserNameW");
+    die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR, "GetUserNameW failed: %s",
+        GetLastErrorString().c_str());
   }
   return string(blaze_util::WstringToCstring(buffer).get());
 }
@@ -1166,7 +1112,7 @@ static string GetMsysBash() {
                         KEY_QUERY_VALUE,  // _In_     REGSAM  samDesired,
                     &h_uninstall          // _Out_    PHKEY   phkResult
                     )) {
-    debug_log("Cannot open HKCU\\%s", key);
+    BAZEL_LOG(INFO) << "Cannot open HKCU\\" << key;
     return string();
   }
   AutoHandle auto_uninstall(h_uninstall);
@@ -1191,7 +1137,7 @@ static string GetMsysBash() {
                       0,  // _Out_opt_   LPDWORD   lpcbSecurityDescriptor,
                       0   // _Out_opt_   PFILETIME lpftLastWriteTime
                       )) {
-    debug_log("Cannot query HKCU\\%s", key);
+    BAZEL_LOG(INFO) << "Cannot query HKCU\\" << key;
     return string();
   }
 
@@ -1202,7 +1148,8 @@ static string GetMsysBash() {
                     subkey_name,         // _Out_ LPTSTR lpName,
                     sizeof(subkey_name)  // _In_  DWORD  cchName
                     )) {
-      debug_log("Cannot get %d subkey of HKCU\\%s", key_index, key);
+      BAZEL_LOG(INFO) << "Cannot get " << key_index << " subkey of HKCU\\"
+                      << key;
       continue;  // try next subkey
     }
 
@@ -1213,7 +1160,8 @@ static string GetMsysBash() {
                      KEY_QUERY_VALUE,  // _In_     REGSAM  samDesired,
                      &h_subkey         // _Out_    PHKEY   phkResult
                      )) {
-      debug_log("Failed to open subkey HKCU\\%s\\%s", key, subkey_name);
+      BAZEL_LOG(ERROR) << "Failed to open subkey HKCU\\" << key << "\\"
+                       << subkey_name;
       continue;  // try next subkey
     }
     AutoHandle auto_subkey(h_subkey);
@@ -1229,14 +1177,15 @@ static string GetMsysBash() {
                         value,          // _Out_opt_   LPBYTE  lpData,
                         &value_length   // _Inout_opt_ LPDWORD lpcbData
                         )) {
-      debug_log("Failed to query DisplayName of HKCU\\%s\\%s", key,
-                subkey_name);
+      BAZEL_LOG(ERROR) << "Failed to query DisplayName of HKCU\\" << key << "\\"
+                       << subkey_name;
       continue;  // try next subkey
     }
 
     if (value_type == REG_SZ &&
         0 == memcmp(msys_display_name, value, sizeof(msys_display_name))) {
-      debug_log("Getting install location of HKCU\\%s\\%s", key, subkey_name);
+      BAZEL_LOG(INFO) << "Getting install location of HKCU\\" << key << "\\"
+                      << subkey_name;
       BYTE path[REG_VALUE_BUFFER_SIZE];
       DWORD path_length = sizeof(path);
       DWORD path_type;
@@ -1248,27 +1197,28 @@ static string GetMsysBash() {
               path,               // _Out_opt_   LPBYTE  lpData,
               &path_length        // _Inout_opt_ LPDWORD lpcbData
               )) {
-        debug_log("Failed to query InstallLocation of HKCU\\%s\\%s", key,
-                  subkey_name);
+        BAZEL_LOG(ERROR) << "Failed to query InstallLocation of HKCU\\" << key
+                         << "\\" << subkey_name;
         continue;  // try next subkey
       }
 
       if (path_length == 0 || path_type != REG_SZ) {
-        debug_log("Zero-length (%d) install location or wrong type (%d)",
-                  path_length, path_type);
+        BAZEL_LOG(ERROR) << "Zero-length (" << path_length
+                         << ") install location or wrong type (" << path_type
+                         << ")";
         continue;  // try next subkey
       }
 
-      debug_log("Install location of HKCU\\%s\\%s is %s", key, subkey_name,
-                path);
+      BAZEL_LOG(INFO) << "Install location of HKCU\\" << key << "\\"
+                      << subkey_name << " is " << path;
       string path_as_string(path, path + path_length - 1);
       string bash_exe = path_as_string + "\\usr\\bin\\bash.exe";
       if (!blaze_util::PathExists(bash_exe)) {
-        debug_log("%s does not exist", bash_exe.c_str());
+        BAZEL_LOG(INFO) << bash_exe.c_str() << " does not exist";
         continue;  // try next subkey
       }
 
-      debug_log("Detected msys bash at %s", bash_exe.c_str());
+      BAZEL_LOG(INFO) << "Detected msys bash at " << bash_exe.c_str();
       return bash_exe;
     }
   }
@@ -1288,12 +1238,12 @@ static string GetBashFromGitOnWin() {
                     KEY_QUERY_VALUE,       // _In_     REGSAM  samDesired,
                     &h_GitOnWin_uninstall  // _Out_    PHKEY   phkResult
                     )) {
-    debug_log("Cannot open HKCU\\%s", key);
+    BAZEL_LOG(INFO) << "Cannot open HKCU\\" << key;
     return string();
   }
   AutoHandle auto_h_GitOnWin_uninstall(h_GitOnWin_uninstall);
 
-  debug_log("Getting install location of HKLM\\%s", key);
+  BAZEL_LOG(INFO) << "Getting install location of HKLM\\" << key;
   BYTE path[REG_VALUE_BUFFER_SIZE];
   DWORD path_length = sizeof(path);
   DWORD path_type;
@@ -1304,25 +1254,26 @@ static string GetBashFromGitOnWin() {
                       path,                  // _Out_opt_   LPBYTE  lpData,
                       &path_length           // _Inout_opt_ LPDWORD lpcbData
                       )) {
-    debug_log("Failed to query InstallLocation of HKLM\\%s", key);
+    BAZEL_LOG(ERROR) << "Failed to query InstallLocation of HKLM\\" << key;
     return string();
   }
 
   if (path_length == 0 || path_type != REG_SZ) {
-    debug_log("Zero-length (%d) install location or wrong type (%d)",
-              path_length, path_type);
+    BAZEL_LOG(ERROR) << "Zero-length (" << path_length
+                     << ") install location or wrong type (" << path_type
+                     << ")";
     return string();
   }
 
-  debug_log("Install location of HKLM\\%s is %s", key, path);
+  BAZEL_LOG(INFO) << "Install location of HKLM\\" << key << " is " << path;
   string path_as_string(path, path + path_length - 1);
   string bash_exe = path_as_string + "\\usr\\bin\\bash.exe";
   if (!blaze_util::PathExists(bash_exe)) {
-    debug_log("%s does not exist", bash_exe.c_str());
+    BAZEL_LOG(ERROR) << "%s does not exist", bash_exe.c_str();
     return string();
   }
 
-  debug_log("Detected git-on-Windows bash at %s", bash_exe.c_str());
+  BAZEL_LOG(INFO) << "Detected git-on-Windows bash at " << bash_exe.c_str();
   return bash_exe;
 }
 
@@ -1350,7 +1301,7 @@ static string GetBinaryFromPath(const string& binary_name) {
                     found,                // _Out_     LPTSTR  lpBuffer,
                     0                     // _Out_opt_ LPTSTR  *lpFilePart
                     )) {
-      debug_log("%s found on PATH: %s", binary_name.c_str(), found);
+      BAZEL_LOG(INFO) << binary_name.c_str() << " found on PATH: " << found;
       return string(found);
     }
     if (end == string::npos) {
@@ -1359,7 +1310,7 @@ static string GetBinaryFromPath(const string& binary_name) {
     start = end + 1;
   } while (true);
 
-  debug_log("%s not found on PATH", binary_name.c_str());
+  BAZEL_LOG(ERROR) << binary_name.c_str() << " not found on PATH";
   return string();
 }
 
@@ -1384,13 +1335,15 @@ void DetectBashOrDie() {
 
   string bash = LocateBash();
   uint64_t end = blaze::GetMillisecondsMonotonic();
-  debug_log("BAZEL_SH detection took %lu msec, found %s", end - start,
-            bash.c_str());
+  BAZEL_LOG(INFO) << "BAZEL_SH detection took " << end - start
+                  << " msec, found " << bash.c_str();
 
   if (!bash.empty()) {
     // Set process environment variable.
     blaze::SetEnv("BAZEL_SH", bash);
   } else {
+    // TODO(bazel-team) should this be printed to stderr? If so, it should use
+    // BAZEL_LOG(ERROR)
     printf(
         "Bazel on Windows requires bash.exe and other Unix tools, but we could "
         "not find them.\n"

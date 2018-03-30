@@ -127,11 +127,15 @@ public class TimestampGranularityMonitor {
   @ThreadSafe
   public void notifyDependenceOnFileTime(PathFragment path, long ctimeMillis) {
     if (!this.waitAMillisecond && ctimeMillis == this.commandStartTimeMillis) {
-      logger.info("Will have to wait for a millisecond on completion because of " + path);
+      if (path != null) {
+        logger.info("Will have to wait for a millisecond on completion because of " + path);
+      }
       this.waitAMillisecond = true;
     }
     if (!this.waitASecond && ctimeMillis == this.commandStartTimeMillisRounded) {
-      logger.info("Will have to wait for a second on completion because of " + path);
+      if (path != null) {
+        logger.info("Will have to wait for a second on completion because of " + path);
+      }
       this.waitASecond = true;
     }
   }
@@ -202,5 +206,4 @@ public class TimestampGranularityMonitor {
   private static long roundDown(long millis) {
     return millis / 1000 * 1000;
   }
-
 }

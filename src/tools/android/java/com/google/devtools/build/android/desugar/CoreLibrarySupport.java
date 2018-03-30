@@ -14,7 +14,9 @@
 package com.google.devtools.build.android.desugar;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.stream.Stream.concat;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.base.Splitter;
@@ -23,11 +25,14 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Multimap;
+import com.google.devtools.build.android.desugar.io.BitFlags;
+import com.google.devtools.build.android.desugar.io.CoreLibraryRewriter;
 import com.google.errorprone.annotations.Immutable;
 import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -85,7 +90,8 @@ class CoreLibrarySupport {
     this.emulatedInterfaces = classBuilder.build();
 
     // We can call isRenamed and rename below b/c we initialized the necessary fields above
-    ImmutableMap.Builder<String, String> movesBuilder = ImmutableMap.builder();
+    // Use LinkedHashMap to tolerate identical duplicates
+    LinkedHashMap<String, String> movesBuilder = new LinkedHashMap<>();
     Splitter splitter = Splitter.on("->").trimResults().omitEmptyStrings();
     for (String move : memberMoves) {
       List<String> pair = splitter.splitToList(move);
@@ -99,9 +105,12 @@ class CoreLibrarySupport {
       checkArgument(!this.excludeFromEmulation.contains(pair.get(0)),
           "Retargeted invocation %s shouldn't overlap with excluded", move);
 
-      movesBuilder.put(pair.get(0), renameCoreLibrary(pair.get(1)));
+      String value = renameCoreLibrary(pair.get(1));
+      String existing = movesBuilder.put(pair.get(0), value);
+      checkArgument(existing == null || existing.equals(value),
+          "Two move destinations %s and %s configured for %s", existing, value, pair.get(0));
     }
-    this.memberMoves = movesBuilder.build();
+    this.memberMoves = ImmutableMap.copyOf(movesBuilder);
   }
 
   public boolean isRenamedCoreLibrary(String internalName) {
@@ -161,9 +170,13 @@ class CoreLibrarySupport {
    * core interface, this methods returns that interface.  This is a helper method for
    * {@link CoreLibraryInvocationRewriter}.
    *
-   * <p>Always returns an interface (or {@code null}), even if {@code owner} is a class. Can only
-   * return non-{@code null} if {@code owner} is a core library type.
+   * <p>This method can only return non-{@code null} if {@code owner} is a core library type.
+   * It usually returns an emulated interface, unless the given invocation is a super-call to a
+   * core class's implementation of an emulated method that's being moved (other implementations
+   * of emulated methods in core classes are ignored). In that case the class is returned and the
+   * caller can use {@link #getMoveTarget} to find out where to redirect the invokespecial to.
    */
+  // TODO(kmb): Rethink this API and consider combining it with getMoveTarget().
   @Nullable
   public Class<?> getCoreInterfaceRewritingTarget(
       int opcode, String owner, String name, String desc, boolean itf) {
@@ -171,15 +184,20 @@ class CoreLibrarySupport {
       // Regular desugaring handles generated classes, no emulation is needed
       return null;
     }
-    if (!itf && (opcode == Opcodes.INVOKESTATIC || opcode == Opcodes.INVOKESPECIAL)) {
-      // Ignore staticly dispatched invocations on classes--they never need rewriting
+    if (!itf && opcode == Opcodes.INVOKESTATIC) {
+      // Ignore static invocations on classes--they never need rewriting (unless moved but that's
+      // handled separately).
       return null;
     }
+    if ("<init>".equals(name)) {
+      return null; // Constructors aren't rewritten
+    }
+
     Class<?> clazz;
     if (isRenamedCoreLibrary(owner)) {
       // For renamed invocation targets we just need to do what InterfaceDesugaring does, that is,
       // only worry about invokestatic and invokespecial interface invocations; nothing to do for
-      // invokevirtual and invokeinterface.  InterfaceDesugaring ignores bootclasspath interfaces,
+      // classes and invokeinterface.  InterfaceDesugaring ignores bootclasspath interfaces,
       // so we have to do its work here for renamed interfaces.
       if (itf
           && (opcode == Opcodes.INVOKESTATIC || opcode == Opcodes.INVOKESPECIAL)) {
@@ -209,6 +227,19 @@ class CoreLibrarySupport {
       if (isExcluded(callee)) {
         return null;
       }
+
+      if (!itf && opcode == Opcodes.INVOKESPECIAL) {
+        // See if the invoked implementation is moved; note we ignore all other overrides in classes
+        Class<?> impl = clazz; // we know clazz is not an interface because !itf
+        while (impl != null) {
+          String implName = impl.getName().replace('.', '/');
+          if (getMoveTarget(implName, name) != null) {
+            return impl;
+          }
+          impl = impl.getSuperclass();
+        }
+      }
+
       Class<?> result = callee.getDeclaringClass();
       if (isRenamedCoreLibrary(result.getName().replace('.', '/'))
           || emulatedInterfaces.stream().anyMatch(emulated -> emulated.isAssignableFrom(result))) {
@@ -228,7 +259,7 @@ class CoreLibrarySupport {
       checkState(!roots.hasNext(), "Ambiguous emulation substitute: %s", callee);
       return substitute;
     } else {
-      checkArgument(opcode != Opcodes.INVOKESPECIAL,
+      checkArgument(!itf || opcode != Opcodes.INVOKESPECIAL,
           "Couldn't resolve interface super call %s.super.%s : %s", owner, name, desc);
     }
     return null;
@@ -265,10 +296,13 @@ class CoreLibrarySupport {
       Class<?> root = group
           .stream()
           .map(EmulatedMethod::owner)
-          .max(DefaultMethodClassFixer.InterfaceComparator.INSTANCE)
+          .max(DefaultMethodClassFixer.SubtypeComparator.INSTANCE)
           .get();
       checkState(group.stream().map(m -> m.owner()).allMatch(o -> root.isAssignableFrom(o)),
           "Not a single unique method: %s", group);
+      String methodName = group.stream().findAny().get().name();
+
+      ImmutableList<Class<?>> customOverrides = findCustomOverrides(root, methodName);
 
       for (EmulatedMethod methodDefinition : group) {
         Class<?> owner = methodDefinition.owner();
@@ -288,20 +322,39 @@ class CoreLibrarySupport {
 
         // Types to check for before calling methodDefinition's companion, sub- before super-types
         ImmutableList<Class<?>> typechecks =
-            group
-                .stream()
-                .map(EmulatedMethod::owner)
+            concat(group.stream().map(EmulatedMethod::owner), customOverrides.stream())
                 .filter(o -> o != owner && owner.isAssignableFrom(o))
-                .distinct()  // should already be but just in case
-                .sorted(DefaultMethodClassFixer.InterfaceComparator.INSTANCE)
+                .distinct() // should already be but just in case
+                .sorted(DefaultMethodClassFixer.SubtypeComparator.INSTANCE)
                 .collect(ImmutableList.toImmutableList());
         makeDispatchHelperMethod(dispatchHelper, methodDefinition, typechecks);
       }
     }
   }
 
+  private ImmutableList<Class<?>> findCustomOverrides(Class<?> root, String methodName) {
+    ImmutableList.Builder<Class<?>> customOverrides = ImmutableList.builder();
+    for (ImmutableMap.Entry<String, String> move : memberMoves.entrySet()) {
+      // move.getKey is a string <owner>#<name> which we validated in the constructor.
+      // We need to take the string apart here to compare owner and name separately.
+      if (!methodName.equals(move.getKey().substring(move.getKey().indexOf('#') + 1))) {
+        continue;
+      }
+      Class<?> target =
+          loadFromInternal(
+              rewriter.getPrefix() + move.getKey().substring(0, move.getKey().indexOf('#')));
+      if (!root.isAssignableFrom(target)) {
+        continue;
+      }
+      checkState(!target.isInterface(), "can't move emulated interface method: %s", move);
+      customOverrides.add(target);
+    }
+    return customOverrides.build();
+  }
+
   private void makeDispatchHelperMethod(
       ClassVisitor helper, EmulatedMethod method, ImmutableList<Class<?>> typechecks) {
+    checkArgument(method.owner().isInterface());
     String owner = method.owner().getName().replace('.', '/');
     Type methodType = Type.getMethodType(method.descriptor());
     String companionDesc =
@@ -341,24 +394,27 @@ class CoreLibrarySupport {
       dispatchMethod.visitFrame(Opcodes.F_SAME, 0, EMPTY_FRAME, 0, EMPTY_FRAME);
     }
 
-    // Next, check for emulated subtypes and call their companion methods
+    // Next, check for subtypes with specialized implementations and call them
     for (Class<?> tested : typechecks) {
-      checkState(tested.isInterface(), "Dispatch emulation not supported for classes: %s", tested);
       Label fallthrough = new Label();
-      String emulatedInterface = tested.getName().replace('.', '/');
+      String testedName = tested.getName().replace('.', '/');
+      // In case of a class this must be a member move; for interfaces use the companion.
+      String target =
+          tested.isInterface()
+              ? InterfaceDesugaring.getCompanionClassName(testedName)
+              : checkNotNull(memberMoves.get(rewriter.unprefix(testedName) + '#' + method.name()));
       dispatchMethod.visitVarInsn(Opcodes.ALOAD, 0);  // load "receiver"
-      dispatchMethod.visitTypeInsn(Opcodes.INSTANCEOF, emulatedInterface);
+      dispatchMethod.visitTypeInsn(Opcodes.INSTANCEOF, testedName);
       dispatchMethod.visitJumpInsn(Opcodes.IFEQ, fallthrough);
       dispatchMethod.visitVarInsn(Opcodes.ALOAD, 0);  // load "receiver"
-      dispatchMethod.visitTypeInsn(Opcodes.CHECKCAST, emulatedInterface);  // make verifier happy
+      dispatchMethod.visitTypeInsn(Opcodes.CHECKCAST, testedName);  // make verifier happy
 
       visitLoadArgs(dispatchMethod, methodType, 1 /* receiver already loaded above */);
       dispatchMethod.visitMethodInsn(
           Opcodes.INVOKESTATIC,
-          InterfaceDesugaring.getCompanionClassName(emulatedInterface),
+          target,
           method.name(),
-          InterfaceDesugaring.companionDefaultMethodDescriptor(
-              emulatedInterface, method.descriptor()),
+          InterfaceDesugaring.companionDefaultMethodDescriptor(testedName, method.descriptor()),
           /*itf=*/ false);
       dispatchMethod.visitInsn(methodType.getReturnType().getOpcode(Opcodes.IRETURN));
 
@@ -400,7 +456,7 @@ class CoreLibrarySupport {
     return collectImplementedInterfaces(clazz, new LinkedHashSet<>())
         .stream()
         // search more subtypes before supertypes
-        .sorted(DefaultMethodClassFixer.InterfaceComparator.INSTANCE)
+        .sorted(DefaultMethodClassFixer.SubtypeComparator.INSTANCE)
         .map(itf -> findMethod(itf, name, desc))
         .filter(Objects::nonNull)
         .findFirst()

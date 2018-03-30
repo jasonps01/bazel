@@ -28,7 +28,6 @@ import static com.google.devtools.build.lib.util.FileTypeSet.ANY_FILE;
 import static com.google.devtools.build.lib.util.FileTypeSet.NO_FILE;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Lists;
 import com.google.devtools.build.lib.analysis.BaseRuleClasses;
@@ -37,7 +36,6 @@ import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.HostTransition;
-import com.google.devtools.build.lib.analysis.config.transitions.ConfigurationTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.SplitTransition;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.EventHandler;
@@ -46,11 +44,9 @@ import com.google.devtools.build.lib.packages.Attribute.AllowedValueSet;
 import com.google.devtools.build.lib.packages.Attribute.LabelLateBoundDefault;
 import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SafeImplicitOutputsFunction;
-import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.RuleClass;
 import com.google.devtools.build.lib.packages.RuleClass.Builder;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType;
-import com.google.devtools.build.lib.packages.RuleTransitionFactory;
 import com.google.devtools.build.lib.packages.SkylarkProviderIdentifier;
 import com.google.devtools.build.lib.packages.TriState;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidAaptVersion;
@@ -62,6 +58,7 @@ import com.google.devtools.build.lib.rules.cpp.CppOptions;
 import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
+import com.google.devtools.build.lib.rules.java.JavaRuleClasses;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
 import com.google.devtools.build.lib.rules.java.ProguardHelper;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
@@ -148,8 +145,6 @@ public final class AndroidRuleClasses {
       fromTemplates("%{name}_processed_manifest/AndroidManifest.xml");
   public static final SafeImplicitOutputsFunction MOBILE_INSTALL_STUB_APPLICATION_MANIFEST =
       fromTemplates("%{name}_files/mobile_install/AndroidManifest.xml");
-  public static final SafeImplicitOutputsFunction INSTANT_RUN_STUB_APPLICATION_MANIFEST =
-      fromTemplates("%{name}_files/instant_run/AndroidManifest.xml");
   public static final SafeImplicitOutputsFunction FULL_DEPLOY_MARKER =
       fromTemplates("%{name}_files/full_deploy_marker");
   public static final SafeImplicitOutputsFunction INCREMENTAL_DEPLOY_MARKER =
@@ -290,25 +285,6 @@ public final class AndroidRuleClasses {
     }
   }
 
-  /**
-   * Turns off dynamic resource filtering for non-Android targets. This prevents unnecessary build
-   * graph bloat. For example, there's no point analyzing distinct cc_library targets for different
-   * resource filter configurations because cc_library semantics doesn't care about filters.
-   */
-  public static final RuleTransitionFactory REMOVE_DYNAMIC_RESOURCE_FILTERING =
-      new RuleTransitionFactory() {
-        /** Dependencies of these rule class types need to keep resource filtering info. */
-        private final ImmutableSet<String> keepFilterRuleClasses =
-            ImmutableSet.of("android_binary", "android_library");
-
-        @Override
-        public ConfigurationTransition buildTransitionFor(Rule depRule) {
-          return keepFilterRuleClasses.contains(depRule.getRuleClass())
-              ? null
-              : ResourceFilterFactory.REMOVE_DYNAMICALLY_CONFIGURED_RESOURCE_FILTERING_TRANSITION;
-        }
-      };
-
   public static final FileType ANDROID_IDL = FileType.of(".aidl");
 
   public static final String[] ALLOWED_DEPENDENCIES = {
@@ -374,7 +350,7 @@ public final class AndroidRuleClasses {
               AndroidRuleClasses.ANDROID_LIBRARY_SOURCE_JAR,
               AndroidRuleClasses.ANDROID_LIBRARY_AAR);
 
-          if (LocalResourceContainer.definesAndroidResources(attributes)) {
+          if (AndroidResources.definesAndroidResources(attributes)) {
             implicitOutputs.add(
                 AndroidRuleClasses.ANDROID_JAVA_SOURCE_JAR,
                 AndroidRuleClasses.ANDROID_R_TXT,
@@ -636,6 +612,11 @@ public final class AndroidRuleClasses {
                   .cfg(HostTransition.INSTANCE)
                   .exec()
                   .value(env.getToolsLabel(DEFAULT_RESOURCES_BUSYBOX)))
+          .add(
+              attr("$import_deps_checker", LABEL)
+                  .cfg(HostTransition.INSTANCE)
+                  .exec()
+                  .value(env.getToolsLabel("//tools/android:aar_import_deps_checker")))
           .build();
     }
 
@@ -700,6 +681,7 @@ public final class AndroidRuleClasses {
                   .cfg(ANDROID_SPLIT_TRANSITION)
                   .allowedRuleClasses(ALLOWED_DEPENDENCIES)
                   .allowedFileTypes()
+                  .mandatoryProviders(JavaRuleClasses.CONTAINS_JAVA_PROVIDER)
                   .aspect(androidNeverlinkAspect)
                   .aspect(dexArchiveAspect, DexArchiveAspect.PARAM_EXTRACTOR))
           /* <!-- #BLAZE_RULE($android_binary_base).ATTRIBUTE(debug_key) -->
@@ -707,8 +689,6 @@ public final class AndroidRuleClasses {
           want to use a key other than the default key, so this attribute should be omitted.
           <p><em class="harmful">WARNING: Do not use your production keys, they should be
           strictly safeguarded and not kept in your source tree</em>.</p>
-          <p>This keystore must contain a single key named "AndroidDebugKey", and
-          have a keystore password of "android".
           <!-- #END_BLAZE_RULE.ATTRIBUTE --> */
           .add(
               attr("debug_key", LABEL)
@@ -1000,11 +980,10 @@ public final class AndroidRuleClasses {
           Possible values:
           <ul>
               <li><code>aapt_version = "aapt"</code>: Use aapt. This is the current default
-                behaviour, and should be used for production binaries. The android_sdk rule must
-                have an aapt binary to use this option.</li>
+                behaviour, and should be used for production binaries.</li>
               <li><code>aapt_version = "aapt2"</code>: Use aapt2. This is the new resource
                packaging system that provides improved incremental resource processing, smaller apks
-               and more. The android_sdk rule must have the aapt2 binary to use this option.</li>
+               and more.</li>
               <li><code>aapt_version = "auto"</code>: aapt is controlled by the
                 --android_aapt flag.</li>
           </ul>

@@ -41,21 +41,8 @@ public class QueryOptions extends CommonQueryOptions {
   }
 
   @Option(
-    name = "output",
-    defaultValue = "label",
-    category = "query",
-    documentationCategory = OptionDocumentationCategory.QUERY,
-    effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
-    help =
-        "The format in which the query results should be printed. Allowed values are: "
-            + "build, graph, label, label_kind, locations, maxrank, minrank, package, proto, xml."
-  )
-  public String outputFormat;
-
-  @Option(
     name = "null",
     defaultValue = "null",
-    category = "query",
     expansion = {"--line_terminator_null=true"},
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
@@ -66,7 +53,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "line_terminator_null",
     defaultValue = "false",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help = "Whether each format is terminated with \0 instead of newline."
@@ -76,7 +62,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "order_results",
     defaultValue = "null",
-    category = "query",
     deprecationWarning = "Please use --order_output=auto or --order_output=no instead of this flag",
     expansion = {"--order_output=auto"},
     documentationCategory = OptionDocumentationCategory.QUERY,
@@ -91,7 +76,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "noorder_results",
     defaultValue = "null",
-    category = "query",
     deprecationWarning = "Please use --order_output=no or --order_output=auto instead of this flag",
     expansion = {"--order_output=no"},
     documentationCategory = OptionDocumentationCategory.QUERY,
@@ -115,7 +99,6 @@ public class QueryOptions extends CommonQueryOptions {
     name = "order_output",
     converter = OrderOutputConverter.class,
     defaultValue = "auto",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help =
@@ -131,7 +114,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "graph:node_limit",
     defaultValue = "512",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help =
@@ -144,7 +126,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "graph:factored",
     defaultValue = "true",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help =
@@ -157,7 +138,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "proto:default_values",
     defaultValue = "true",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help =
@@ -170,7 +150,6 @@ public class QueryOptions extends CommonQueryOptions {
     name = "proto:output_rule_attrs",
     converter = CommaSeparatedOptionListConverter.class,
     defaultValue = "all",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help =
@@ -183,7 +162,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "xml:line_numbers",
     defaultValue = "true",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help =
@@ -195,7 +173,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "xml:default_values",
     defaultValue = "false",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help =
@@ -207,7 +184,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "strict_test_suite",
     defaultValue = "false",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS, OptionEffectTag.EAGERNESS_TO_EXIT},
     help =
@@ -219,7 +195,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "relative_locations",
     defaultValue = "false",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
     help =
@@ -234,7 +209,6 @@ public class QueryOptions extends CommonQueryOptions {
     name = "aspect_deps",
     converter = AspectResolutionModeConverter.class,
     defaultValue = "conservative",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS},
     help =
@@ -253,7 +227,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "query_file",
     defaultValue = "",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.CHANGES_INPUTS},
     help =
@@ -274,7 +247,6 @@ public class QueryOptions extends CommonQueryOptions {
   @Option(
     name = "proto:flatten_selects",
     defaultValue = "true",
-    category = "query",
     documentationCategory = OptionDocumentationCategory.QUERY,
     effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS},
     help =

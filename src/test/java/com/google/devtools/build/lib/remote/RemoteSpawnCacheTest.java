@@ -165,7 +165,7 @@ public class RemoteSpawnCacheTest {
             ImmutableMap.of("VARIABLE", "value"),
             /*executionInfo=*/ ImmutableMap.<String, String>of(),
             /*inputs=*/ ImmutableList.of(ActionInputHelper.fromPath("input")),
-            /*outputs=*/ ImmutableList.<ActionInput>of(),
+            /*outputs=*/ ImmutableList.of(ActionInputHelper.fromPath("/random/file")),
             ResourceSet.ZERO);
 
     Path stdout = fs.getPath("/tmp/stdout");
@@ -248,7 +248,12 @@ public class RemoteSpawnCacheTest {
   public void cacheMiss() throws Exception {
     CacheHandle entry = cache.lookup(simpleSpawn, simplePolicy);
     assertThat(entry.hasResult()).isFalse();
-    SpawnResult result = new SpawnResult.Builder().setExitCode(0).setStatus(Status.SUCCESS).build();
+    SpawnResult result =
+        new SpawnResult.Builder()
+            .setExitCode(0)
+            .setStatus(Status.SUCCESS)
+            .setRunnerName("test")
+            .build();
     ImmutableList<Path> outputFiles = ImmutableList.of(fs.getPath("/random/file"));
     Mockito.doAnswer(
             new Answer<Void>() {
@@ -262,7 +267,7 @@ public class RemoteSpawnCacheTest {
             })
         .when(remoteCache)
         .upload(any(ActionKey.class), any(Path.class), eq(outputFiles), eq(outErr), eq(true));
-    entry.store(result, outputFiles);
+    entry.store(result);
     verify(remoteCache)
         .upload(any(ActionKey.class), any(Path.class), eq(outputFiles), eq(outErr), eq(true));
   }
@@ -272,21 +277,27 @@ public class RemoteSpawnCacheTest {
     // Checks that spawns that have mayBeCached false are not looked up in the remote cache,
     // and also that their result is not uploaded to the remote cache. The artifacts, however,
     // are uploaded.
-    SimpleSpawn uncacheableSpawn = new SimpleSpawn(
-        new FakeOwner("foo", "bar"),
-        /*arguments=*/ ImmutableList.of(),
-        /*environment=*/ ImmutableMap.of(),
-        ImmutableMap.of(ExecutionRequirements.NO_CACHE, ""),
-        /*inputs=*/ ImmutableList.of(),
-        /*outputs=*/ ImmutableList.<ActionInput>of(),
-        ResourceSet.ZERO);
+    SimpleSpawn uncacheableSpawn =
+        new SimpleSpawn(
+            new FakeOwner("foo", "bar"),
+            /*arguments=*/ ImmutableList.of(),
+            /*environment=*/ ImmutableMap.of(),
+            ImmutableMap.of(ExecutionRequirements.NO_CACHE, ""),
+            /*inputs=*/ ImmutableList.of(),
+            /*outputs=*/ ImmutableList.of(ActionInputHelper.fromPath("/random/file")),
+            ResourceSet.ZERO);
     CacheHandle entry = cache.lookup(uncacheableSpawn, simplePolicy);
     verify(remoteCache, never())
         .getCachedActionResult(any(ActionKey.class));
     assertThat(entry.hasResult()).isFalse();
-    SpawnResult result = new SpawnResult.Builder().setExitCode(0).setStatus(Status.SUCCESS).build();
+    SpawnResult result =
+        new SpawnResult.Builder()
+            .setExitCode(0)
+            .setStatus(Status.SUCCESS)
+            .setRunnerName("test")
+            .build();
+    entry.store(result);
     ImmutableList<Path> outputFiles = ImmutableList.of(fs.getPath("/random/file"));
-    entry.store(result, outputFiles);
     verify(remoteCache)
         .upload(any(ActionKey.class), any(Path.class), eq(outputFiles), eq(outErr), eq(false));
   }
@@ -299,9 +310,13 @@ public class RemoteSpawnCacheTest {
     verify(remoteCache).getCachedActionResult(any(ActionKey.class));
     assertThat(entry.hasResult()).isFalse();
     SpawnResult result =
-        new SpawnResult.Builder().setExitCode(1).setStatus(Status.NON_ZERO_EXIT).build();
+        new SpawnResult.Builder()
+            .setExitCode(1)
+            .setStatus(Status.NON_ZERO_EXIT)
+            .setRunnerName("test")
+            .build();
     ImmutableList<Path> outputFiles = ImmutableList.of(fs.getPath("/random/file"));
-    entry.store(result, outputFiles);
+    entry.store(result);
     verify(remoteCache)
         .upload(any(ActionKey.class), any(Path.class), eq(outputFiles), eq(outErr), eq(false));
   }
@@ -310,14 +325,19 @@ public class RemoteSpawnCacheTest {
   public void printWarningIfUploadFails() throws Exception {
     CacheHandle entry = cache.lookup(simpleSpawn, simplePolicy);
     assertThat(entry.hasResult()).isFalse();
-    SpawnResult result = new SpawnResult.Builder().setExitCode(0).setStatus(Status.SUCCESS).build();
+    SpawnResult result =
+        new SpawnResult.Builder()
+            .setExitCode(0)
+            .setStatus(Status.SUCCESS)
+            .setRunnerName("test")
+            .build();
     ImmutableList<Path> outputFiles = ImmutableList.of(fs.getPath("/random/file"));
 
     doThrow(new IOException("cache down"))
         .when(remoteCache)
         .upload(any(ActionKey.class), any(Path.class), eq(outputFiles), eq(outErr), eq(true));
 
-    entry.store(result, outputFiles);
+    entry.store(result);
     verify(remoteCache)
         .upload(any(ActionKey.class), any(Path.class), eq(outputFiles), eq(outErr), eq(true));
 

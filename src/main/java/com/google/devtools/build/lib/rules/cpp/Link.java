@@ -60,11 +60,10 @@ public abstract class Link {
       CppFileTypes.ALWAYS_LINK_LIBRARY,
       CppFileTypes.ALWAYS_LINK_PIC_LIBRARY);
 
-
   /** The set of object files */
-  public static final FileTypeSet OBJECT_FILETYPES = FileTypeSet.of(
-      CppFileTypes.OBJECT_FILE,
-      CppFileTypes.PIC_OBJECT_FILE);
+  public static final FileTypeSet OBJECT_FILETYPES =
+      FileTypeSet.of(
+          CppFileTypes.OBJECT_FILE, CppFileTypes.PIC_OBJECT_FILE, CppFileTypes.CLIF_OUTPUT_PROTO);
 
   /**
    * Prefix that is prepended to command line entries that refer to the output
@@ -152,7 +151,7 @@ public abstract class Link {
     PIC_STATIC_LIBRARY(
         ".pic.a",
         Staticness.STATIC,
-        "c++-link-pic-static-library",
+        "c++-link-static-library",
         Picness.PIC,
         ArtifactCategory.STATIC_LIBRARY,
         Executable.NOT_EXECUTABLE),
@@ -187,7 +186,7 @@ public abstract class Link {
     ALWAYS_LINK_STATIC_LIBRARY(
         ".lo",
         Staticness.STATIC,
-        "c++-link-alwayslink-static-library",
+        "c++-link-static-library",
         Picness.NOPIC,
         ArtifactCategory.ALWAYSLINK_STATIC_LIBRARY,
         Executable.NOT_EXECUTABLE),
@@ -196,7 +195,7 @@ public abstract class Link {
     ALWAYS_LINK_PIC_STATIC_LIBRARY(
         ".pic.lo",
         Staticness.STATIC,
-        "c++-link-alwayslink-pic-static-library",
+        "c++-link-static-library",
         Picness.PIC,
         ArtifactCategory.ALWAYSLINK_STATIC_LIBRARY,
         Executable.NOT_EXECUTABLE),

@@ -59,9 +59,9 @@ public class CompileBuildVariablesTest extends BuildViewTestCase {
 
     Variables variables = getCompileBuildVariables("//x:bin", "bin");
 
-    assertThat(variables.getStringVariable(CcCompilationHelper.SOURCE_FILE_VARIABLE_NAME))
+    assertThat(variables.getStringVariable(CompileBuildVariables.SOURCE_FILE.getVariableName()))
         .contains("x/bin.cc");
-    assertThat(variables.getStringVariable(CcCompilationHelper.OUTPUT_FILE_VARIABLE_NAME))
+    assertThat(variables.getStringVariable(CompileBuildVariables.OUTPUT_FILE.getVariableName()))
         .contains("x/bin");
   }
 
@@ -76,8 +76,30 @@ public class CompileBuildVariablesTest extends BuildViewTestCase {
     Variables variables = getCompileBuildVariables("//x:bin", "bin");
 
     ImmutableList<String> copts =
-        Variables.toStringList(variables, CcCompilationHelper.LEGACY_COMPILE_FLAGS_VARIABLE_NAME);
+        Variables.toStringList(
+            variables, CompileBuildVariables.LEGACY_COMPILE_FLAGS.getVariableName());
     assertThat(copts).contains("-foo");
+  }
+
+  @Test
+  public void testPresenceOfConfigurationCompileFlags() throws Exception {
+    AnalysisMock.get().ccSupport().setupCrosstool(mockToolsConfig);
+    useConfiguration("--copt=-foo");
+
+    scratch.file("x/BUILD", "cc_binary(name = 'bin', srcs = ['bin.cc'], copts = ['-bar'],)");
+    scratch.file("x/bin.cc");
+
+    Variables variables = getCompileBuildVariables("//x:bin", "bin");
+
+    ImmutableList<String> userCopts =
+        Variables.toStringList(
+            variables, CompileBuildVariables.USER_COMPILE_FLAGS.getVariableName());
+    assertThat(userCopts).containsAllIn(ImmutableList.<String>of("-foo", "-bar")).inOrder();
+
+    ImmutableList<String> legacyCopts =
+        Variables.toStringList(
+            variables, CompileBuildVariables.LEGACY_COMPILE_FLAGS.getVariableName());
+    assertThat(legacyCopts).doesNotContain("-foo");
   }
 
   @Test
@@ -91,7 +113,8 @@ public class CompileBuildVariablesTest extends BuildViewTestCase {
     Variables variables = getCompileBuildVariables("//x:bin", "bin");
 
     ImmutableList<String> copts =
-        Variables.toStringList(variables, CcCompilationHelper.USER_COMPILE_FLAGS_VARIABLE_NAME);
+        Variables.toStringList(
+            variables, CompileBuildVariables.USER_COMPILE_FLAGS.getVariableName());
     assertThat(copts).contains("-foo");
   }
 
@@ -109,7 +132,7 @@ public class CompileBuildVariablesTest extends BuildViewTestCase {
 
     ImmutableList<String> unfilteredCompileFlags =
         Variables.toStringList(
-            variables, CcCompilationHelper.UNFILTERED_COMPILE_FLAGS_VARIABLE_NAME);
+            variables, CompileBuildVariables.UNFILTERED_COMPILE_FLAGS.getVariableName());
     assertThat(unfilteredCompileFlags).contains("--i_ll_live_forever");
   }
 
@@ -122,7 +145,8 @@ public class CompileBuildVariablesTest extends BuildViewTestCase {
     Variables variables = getCompileBuildVariables("//x:bin", "bin");
 
     ImmutableList<String> copts =
-        Variables.toStringList(variables, CcCompilationHelper.USER_COMPILE_FLAGS_VARIABLE_NAME);
+        Variables.toStringList(
+            variables, CompileBuildVariables.USER_COMPILE_FLAGS.getVariableName());
     assertThat(copts).containsExactly("-foo").inOrder();
   }
 

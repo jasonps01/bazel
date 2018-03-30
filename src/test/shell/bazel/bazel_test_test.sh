@@ -69,7 +69,8 @@ function test_3_cpus() {
   set_up_jobcount
   # 3 CPUs, so no more than 3 tests in parallel.
   bazel test --spawn_strategy=standalone --test_output=errors \
-    --local_resources=10000,3,100  --runs_per_test=10 //dir:test
+    --local_test_jobs=0 --local_resources=10000,3,100 \
+    --runs_per_test=10 //dir:test
 }
 
 function test_3_local_jobs() {
@@ -197,7 +198,12 @@ EOF
 
   # We don't just use the local PATH, but use the test's PATH, which is more restrictive.
   PATH=$PATH:$PWD/scripts bazel --nomaster_bazelrc test //testing:t1 -s --run_under=hello \
-    --test_output=all >& $TEST_log && fail "Expected failure"
+    --test_output=all --experimental_strict_action_env >& $TEST_log && fail "Expected failure"
+
+  # With --noexperimental_strict_action_env, the local PATH is forwarded to the test.
+  PATH=$PATH:$PWD/scripts bazel test //testing:t1 -s --run_under=hello \
+    --test_output=all --noexperimental_strict_action_env >& $TEST_log || fail "Expected success"
+  expect_log 'hello script!!! testing/t1'
 
   # We need to forward the PATH to make it work.
   PATH=$PATH:$PWD/scripts bazel test //testing:t1 -s --run_under=hello \

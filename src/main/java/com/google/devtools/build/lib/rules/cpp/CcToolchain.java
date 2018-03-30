@@ -21,6 +21,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Actions;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.AnalysisUtils;
 import com.google.devtools.build.lib.analysis.CompilationHelper;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
@@ -303,7 +304,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
 
   @Override
   public ConfiguredTarget create(RuleContext ruleContext)
-      throws RuleErrorException, InterruptedException {
+      throws InterruptedException, RuleErrorException, ActionConflictException {
     TransitiveInfoCollection lipoContextCollector =
         ruleContext.getPrerequisite(
             TransitiveLipoInfoProvider.LIPO_CONTEXT_COLLECTOR, Mode.DONT_CHECK);
@@ -506,7 +507,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
             "COVERAGE_GCOV_PATH", toolchainInfo.getToolPathFragment(Tool.GCOV).getPathString()));
     if (cppConfiguration.getFdoInstrument() != null) {
       coverageEnvironment.add(
-          Pair.of("FDO_DIR", cppConfiguration.getFdoInstrument().getPathString()));
+          Pair.of("FDO_DIR", cppConfiguration.getFdoInstrument()));
     }
 
     // This tries to convert LLVM profiles to the indexed format if necessary.
@@ -674,9 +675,8 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
     PlatformConfiguration platformConfig =
         Preconditions.checkNotNull(ruleContext.getFragment(PlatformConfiguration.class));
 
-    if (!platformConfig
-        .getEnabledToolchainTypes()
-        .contains(CppHelper.getToolchainTypeFromRuleClass(ruleContext))) {
+    if (!platformConfig.isToolchainTypeEnabled(
+        CppHelper.getToolchainTypeFromRuleClass(ruleContext))) {
       return null;
     }
 

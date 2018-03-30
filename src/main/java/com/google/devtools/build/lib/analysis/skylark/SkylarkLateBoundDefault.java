@@ -26,7 +26,10 @@ import com.google.devtools.build.lib.packages.Attribute.AbstractLabelLateBoundDe
 import com.google.devtools.build.lib.packages.Attribute.LateBoundDefault;
 import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.Rule;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -45,7 +48,9 @@ import javax.annotation.concurrent.Immutable;
  * target configuration.
  */
 @Immutable
-public class SkylarkLateBoundDefault<FragmentT> extends AbstractLabelLateBoundDefault<FragmentT> {
+@AutoCodec
+public class SkylarkLateBoundDefault<FragmentT> extends AbstractLabelLateBoundDefault<FragmentT>
+    implements SkylarkValue {
 
   private final Method method;
   private final String fragmentName;
@@ -68,6 +73,9 @@ public class SkylarkLateBoundDefault<FragmentT> extends AbstractLabelLateBoundDe
    */
   private static Label getDefaultLabel(
       SkylarkConfigurationField annotation, String toolsRepository) {
+    if (annotation.defaultLabel().isEmpty()) {
+      return null;
+    }
     Label defaultLabel = annotation.defaultInToolRepository()
         ? Label.parseAbsoluteUnchecked(toolsRepository + annotation.defaultLabel())
         : Label.parseAbsoluteUnchecked(annotation.defaultLabel());
@@ -76,13 +84,26 @@ public class SkylarkLateBoundDefault<FragmentT> extends AbstractLabelLateBoundDe
 
   private SkylarkLateBoundDefault(SkylarkConfigurationField annotation,
       Class<FragmentT> fragmentClass, String fragmentName, Method method, String toolsRepository) {
-    super(false /* don't use host configuration */,
+    this(
+        getDefaultLabel(annotation, toolsRepository),
         fragmentClass,
-        getDefaultLabel(annotation, toolsRepository));
+        method,
+        fragmentName,
+        annotation.name());
+  }
 
+  @AutoCodec.VisibleForSerialization
+  @AutoCodec.Instantiator
+  SkylarkLateBoundDefault(
+      Label defaultVal,
+      Class<FragmentT> fragmentClass,
+      Method method,
+      String fragmentName,
+      String fragmentFieldName) {
+    super(/*useHostConfiguration=*/ false, fragmentClass, defaultVal);
     this.method = method;
     this.fragmentName = fragmentName;
-    this.fragmentFieldName = annotation.name();
+    this.fragmentFieldName = fragmentFieldName;
   }
 
   /**
@@ -98,6 +119,17 @@ public class SkylarkLateBoundDefault<FragmentT> extends AbstractLabelLateBoundDe
    */
   public String getFragmentFieldName() {
     return fragmentFieldName;
+  }
+
+  @Override
+  public void repr(SkylarkPrinter printer) {
+    printer.format("<late-bound default>");
+  }
+
+  /** For use by @AutoCodec since the {@link #defaultValue} field is hard for it to process. */
+  @AutoCodec.VisibleForSerialization
+  Label getDefaultVal() {
+    return getDefault();
   }
 
   /**

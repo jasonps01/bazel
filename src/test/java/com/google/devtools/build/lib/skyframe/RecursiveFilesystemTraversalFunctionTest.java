@@ -44,6 +44,8 @@ import com.google.devtools.build.lib.skyframe.RecursiveFilesystemTraversalFuncti
 import com.google.devtools.build.lib.skyframe.RecursiveFilesystemTraversalValue.ResolvedFile;
 import com.google.devtools.build.lib.skyframe.RecursiveFilesystemTraversalValue.TraversalRequest;
 import com.google.devtools.build.lib.testutil.FoundationTestCase;
+import com.google.devtools.build.lib.testutil.TimestampGranularityUtils;
+import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
@@ -277,8 +279,6 @@ public final class RecursiveFilesystemTraversalFunctionTest extends FoundationTe
       // Strip metadata so only the type and path of the objects are compared.
       actual.add(act.stripMetadataForTesting());
     }
-    // First just assert equality of the keys, so in case of a mismatch the error message is easier
-    // to read.
     assertThat(actual).containsExactly((Object[]) expectedFilesIgnoringMetadata);
 
     // The returned object still has the unstripped metadata.
@@ -480,6 +480,8 @@ public final class RecursiveFilesystemTraversalFunctionTest extends FoundationTe
     progressReceiver.clear();
 
     // Add a new file to the directory and see that the value is rebuilt.
+    TimestampGranularityUtils.waitForTimestampGranularity(
+        directoryArtifact.getPath().stat().getLastChangeTime(), OutErr.SYSTEM_OUT_ERR);
     RootedPath file3 = createFile(childOf(directoryArtifact, "foo.txt"));
     if (directoryArtifact.isSourceArtifact()) {
       invalidateDirectory(directoryArtifact);
@@ -827,9 +829,9 @@ public final class RecursiveFilesystemTraversalFunctionTest extends FoundationTe
     progressReceiver.clear();
 
     // Change the mtime of the file but not the digest. See that the value is *not* rebuilt.
-    long mtime = path.asPath().getLastModifiedTime();
-    mtime += 1000000L; // more than the timestamp granularity of any filesystem
-    path.asPath().setLastModifiedTime(mtime);
+    TimestampGranularityUtils.waitForTimestampGranularity(
+        path.asPath().stat().getLastChangeTime(), OutErr.SYSTEM_OUT_ERR);
+    path.asPath().setLastModifiedTime(System.currentTimeMillis());
     RecursiveFilesystemTraversalValue v2 = traverseAndAssertFiles(params, expected);
     assertThat(v2).isEqualTo(v1);
     assertTraversalRootHashesAreEqual(v1, v2);

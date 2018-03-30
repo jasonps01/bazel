@@ -20,6 +20,7 @@ import static com.google.devtools.build.lib.rules.objc.ObjcProvider.LIBRARY;
 
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
@@ -46,7 +47,7 @@ public class J2ObjcLibrary implements RuleConfiguredTargetFactory {
   public static final ImmutableList<String> J2OBJC_SUPPORTED_RULES =
       ImmutableList.of("java_import", "java_library", "proto_library");
 
-  private ObjcCommon common(RuleContext ruleContext) {
+  private ObjcCommon common(RuleContext ruleContext) throws InterruptedException {
     return new ObjcCommon.Builder(ruleContext)
         .setCompilationAttributes(
             CompilationAttributes.Builder.fromRuleContext(ruleContext).build())
@@ -59,7 +60,7 @@ public class J2ObjcLibrary implements RuleConfiguredTargetFactory {
 
   @Override
   public ConfiguredTarget create(RuleContext ruleContext)
-      throws InterruptedException, RuleErrorException {
+      throws InterruptedException, RuleErrorException, ActionConflictException {
     checkAttributes(ruleContext);
 
     if (ruleContext.hasErrors()) {
@@ -74,7 +75,7 @@ public class J2ObjcLibrary implements RuleConfiguredTargetFactory {
     Iterable<ObjcProvider> jreDeps =
         ruleContext.getPrerequisites("jre_deps", Mode.TARGET, ObjcProvider.SKYLARK_CONSTRUCTOR);
     ObjcProvider.Builder objcProviderBuilder =
-        new ObjcProvider.Builder()
+        new ObjcProvider.Builder(ruleContext.getAnalysisEnvironment().getSkylarkSemantics())
             .addTransitiveAndPropagate(jreDeps)
             .addTransitiveAndPropagate(
                 ruleContext.getPrerequisites(

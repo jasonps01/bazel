@@ -28,6 +28,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.CommandLineItem;
 import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.actions.ResourceSet;
@@ -44,12 +45,12 @@ import com.google.devtools.build.lib.analysis.stringtemplate.TemplateExpander;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.util.LazyString;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 import javax.annotation.Nullable;
 
 /** Constructs actions to run the protocol compiler to generate sources from .proto files. */
@@ -165,28 +166,33 @@ public class ProtoCompileActionBuilder {
   }
 
   /** Static class to avoid keeping a reference to this builder after build() is called. */
-  private static class LazyLangPluginFlag extends LazyString {
+  @AutoCodec.VisibleForSerialization
+  @AutoCodec
+  static class LazyLangPluginFlag extends LazyString {
     private final String langPrefix;
-    private final Supplier<String> langPluginParameter1;
+    private final Supplier<String> langPluginParameter;
 
-    LazyLangPluginFlag(String langPrefix, Supplier<String> langPluginParameter1) {
+    @AutoCodec.VisibleForSerialization
+    LazyLangPluginFlag(String langPrefix, Supplier<String> langPluginParameter) {
       this.langPrefix = langPrefix;
-      this.langPluginParameter1 = langPluginParameter1;
+      this.langPluginParameter = langPluginParameter;
     }
 
     @Override
     public String toString() {
-      return String.format("--%s_out=%s", langPrefix, langPluginParameter1.get());
+      return String.format("--%s_out=%s", langPrefix, langPluginParameter.get());
     }
   }
 
-  private static class LazyCommandLineExpansion extends LazyString {
+  @AutoCodec.VisibleForSerialization
+  @AutoCodec
+  static class LazyCommandLineExpansion extends LazyString {
     // E.g., --java_out=%s
     private final String template;
     private final Map<String, ? extends CharSequence> variableValues;
 
-    private LazyCommandLineExpansion(
-        String template, Map<String, ? extends CharSequence> variableValues) {
+    @AutoCodec.VisibleForSerialization
+    LazyCommandLineExpansion(String template, Map<String, ? extends CharSequence> variableValues) {
       this.template = template;
       this.variableValues = variableValues;
     }
@@ -531,8 +537,7 @@ public class ProtoCompileActionBuilder {
     CustomCommandLine.Builder cmdLine = CustomCommandLine.builder();
 
     cmdLine.addAll(
-        VectorArg.of(transitiveProtoPathFlags)
-            .mapped(ProtoCompileActionBuilder::expandTransitiveProtoPathFlags));
+        VectorArg.of(transitiveProtoPathFlags).mapped(EXPAND_TRANSITIVE_PROTO_PATH_FLAGS));
 
     // A set to check if there are multiple invocations with the same name.
     HashSet<String> invocationNames = new HashSet<>();
@@ -589,16 +594,14 @@ public class ProtoCompileActionBuilder {
       CustomCommandLine.Builder commandLine,
       @Nullable NestedSet<Artifact> protosInDirectDependencies,
       NestedSet<Artifact> transitiveImports) {
-    commandLine.addAll(
-        VectorArg.of(transitiveImports)
-            .mapped(ProtoCompileActionBuilder::expandTransitiveImportArg));
+    commandLine.addAll(VectorArg.of(transitiveImports).mapped(EXPAND_TRANSITIVE_IMPORT_ARG));
     if (protosInDirectDependencies != null) {
       if (!protosInDirectDependencies.isEmpty()) {
         commandLine.addAll(
             "--direct_dependencies",
             VectorArg.join(":")
                 .each(protosInDirectDependencies)
-                .mapped(ProtoCompileActionBuilder::expandToPathIgnoringRepository));
+                .mapped(EXPAND_TO_PATH_IGNORING_REPOSITORY));
       } else {
         // The proto compiler requires an empty list to turn on strict deps checking
         commandLine.add("--direct_dependencies=");
@@ -606,20 +609,33 @@ public class ProtoCompileActionBuilder {
     }
   }
 
-  private static void expandTransitiveProtoPathFlags(String flag, Consumer<String> args) {
-    args.accept("--proto_path=" + flag);
-  }
+  @AutoCodec @AutoCodec.VisibleForSerialization
+  static final CommandLineItem.MapFn<String> EXPAND_TRANSITIVE_PROTO_PATH_FLAGS =
+      (flag, args) -> args.accept("--proto_path=" + flag);
 
-  private static void expandTransitiveImportArg(Artifact artifact, Consumer<String> args) {
-    args.accept(
-        "-I"
-            + ProtoCommon.getPathIgnoringRepository(artifact).toString()
-            + "="
-            + artifact.getExecPathString());
-  }
+  @AutoCodec @AutoCodec.VisibleForSerialization
+  static final CommandLineItem.MapFn<Artifact> EXPAND_TRANSITIVE_IMPORT_ARG =
+      (artifact, args) ->
+          args.accept(
+              "-I" + getPathIgnoringRepository(artifact) + "=" + artifact.getExecPathString());
 
-  private static void expandToPathIgnoringRepository(Artifact artifact, Consumer<String> args) {
-    args.accept(ProtoCommon.getPathIgnoringRepository(artifact).toString());
+  @AutoCodec @AutoCodec.VisibleForSerialization
+  static final CommandLineItem.MapFn<Artifact> EXPAND_TO_PATH_IGNORING_REPOSITORY =
+      (artifact, args) -> args.accept(getPathIgnoringRepository(artifact));
+
+  /**
+   * Gets the artifact's path relative to the root, ignoring the external repository the artifact is
+   * at. For example, <code>
+   * //a:b.proto --> a/b.proto
+   * {@literal @}foo//a:b.proto --> a/b.proto
+   * </code>
+   */
+  private static String getPathIgnoringRepository(Artifact artifact) {
+    return artifact
+        .getRootRelativePath()
+        .relativeTo(
+            artifact.getOwnerLabel().getPackageIdentifier().getRepository().getPathUnderExecRoot())
+        .toString();
   }
 
   /**

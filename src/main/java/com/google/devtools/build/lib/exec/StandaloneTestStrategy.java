@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.exec;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.EnvironmentalExecException;
@@ -48,6 +49,7 @@ import com.google.devtools.build.lib.view.test.TestStatus.TestResultData;
 import com.google.devtools.build.lib.view.test.TestStatus.TestResultData.Builder;
 import java.io.Closeable;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -163,16 +165,7 @@ public class StandaloneTestStrategy extends TestStrategy {
                 workingDirectory);
       }
       processLastTestAttempt(attempt, dataBuilder, standaloneTestResult.testResultData());
-      ImmutableList.Builder<Pair<String, Path>> testOutputsBuilder = new ImmutableList.Builder<>();
-      if (action.getTestLog().getPath().exists()) {
-        testOutputsBuilder.add(
-            Pair.of(TestFileNameConstants.TEST_LOG, action.getTestLog().getPath()));
-      }
-      if (action.getCoverageData() != null && action.getCoverageData().getPath().exists()) {
-        testOutputsBuilder.add(
-            Pair.of(TestFileNameConstants.TEST_COVERAGE, action.getCoverageData().getPath()));
-      }
-      testOutputsBuilder.addAll(TestResult.testOutputsFromPaths(resolvedPaths));
+      ImmutableList<Pair<String, Path>> testOutputs = action.getTestOutputsMapping(execRoot);
       actionExecutionContext
           .getEventBus()
           .post(
@@ -182,7 +175,7 @@ public class StandaloneTestStrategy extends TestStrategy {
                   standaloneTestResult.testResultData().getStatus(),
                   standaloneTestResult.testResultData().getStartTimeMillisEpoch(),
                   standaloneTestResult.testResultData().getRunDurationMillis(),
-                  testOutputsBuilder.build(),
+                  testOutputs,
                   standaloneTestResult.testResultData().getWarningList(),
                   true));
       finalizeTest(actionExecutionContext, action, dataBuilder.build());
@@ -207,41 +200,38 @@ public class StandaloneTestStrategy extends TestStrategy {
     // Rename outputs
     String namePrefix =
         FileSystemUtils.removeExtension(action.getTestLog().getExecPath().getBaseName());
-    Path testRoot = action.getTestLog().getPath().getParentDirectory();
+    Path testRoot = actionExecutionContext.getInputPath(action.getTestLog()).getParentDirectory();
     Path attemptsDir = testRoot.getChild(namePrefix + "_attempts");
     attemptsDir.createDirectory();
     String attemptPrefix = "attempt_" + attempt;
     Path testLog = attemptsDir.getChild(attemptPrefix + ".log");
-    if (action.getTestLog().getPath().exists()) {
-      action.getTestLog().getPath().renameTo(testLog);
-      testOutputsBuilder.add(Pair.of(TestFileNameConstants.TEST_LOG, testLog));
-    }
-    if (action.getCoverageData() != null && action.getCoverageData().getPath().exists()) {
-      testOutputsBuilder.add(
-          Pair.of(TestFileNameConstants.TEST_COVERAGE, action.getCoverageData().getPath()));
-    }
 
     // Get the normal test output paths, and then update them to use "attempt_N" names, and
     // attemptDir, before adding them to the outputs.
-    ResolvedPaths resolvedPaths = action.resolve(actionExecutionContext.getExecRoot());
-    ImmutableList<Pair<String, Path>> testOutputs = TestResult.testOutputsFromPaths(resolvedPaths);
+    ImmutableList<Pair<String, Path>> testOutputs =
+        action.getTestOutputsMapping(actionExecutionContext.getExecRoot());
     for (Pair<String, Path> testOutput : testOutputs) {
       // e.g. /testRoot/test.dir/file, an example we follow throughout this loop's comments.
       Path testOutputPath = testOutput.getSecond();
+      Path destinationPath;
+      if (testOutput.getFirst().equals(TestFileNameConstants.TEST_LOG)) {
+        // The rename rules for the test log are different than for all the other files.
+        destinationPath = testLog;
+      } else {
+        // e.g. test.dir/file
+        PathFragment relativeToTestDirectory = testOutputPath.relativeTo(testRoot);
 
-      // e.g. test.dir/file
-      PathFragment relativeToTestDirectory = testOutputPath.relativeTo(testRoot);
+        // e.g. attempt_1.dir/file
+        String destinationPathFragmentStr =
+            relativeToTestDirectory.getSafePathString().replaceFirst("test", attemptPrefix);
+        PathFragment destinationPathFragment = PathFragment.create(destinationPathFragmentStr);
 
-      // e.g. attempt_1.dir/file
-      String destinationPathFragmentStr =
-          relativeToTestDirectory.getSafePathString().replaceFirst("test", attemptPrefix);
-      PathFragment destinationPathFragment = PathFragment.create(destinationPathFragmentStr);
+        // e.g. /attemptsDir/attempt_1.dir/file
+        destinationPath = attemptsDir.getRelative(destinationPathFragment);
+        destinationPath.getParentDirectory().createDirectory();
+      }
 
-      // e.g. /attemptsDir/attempt_1.dir/file
-      Path destinationPath = attemptsDir.getRelative(destinationPathFragment);
-      destinationPath.getParentDirectory().createDirectory();
-
-      // Copy to the destination.
+      // Move to the destination.
       testOutputPath.renameTo(destinationPath);
 
       testOutputsBuilder.add(Pair.of(testOutput.getFirst(), destinationPath));
@@ -300,8 +290,9 @@ public class StandaloneTestStrategy extends TestStrategy {
     prepareFileSystem(action, tmpDir, coverageDir, workingDirectory);
 
     try (FileOutErr fileOutErr =
-            new FileOutErr(
-                action.getTestLog().getPath(), action.resolve(execRoot).getTestStderr())) {
+        new FileOutErr(
+            actionExecutionContext.getInputPath(action.getTestLog()),
+            action.resolve(execRoot).getTestStderr())) {
       StandaloneTestResult standaloneTestResult =
           executeTest(action, spawn, actionExecutionContext.withFileOutErr(fileOutErr));
       appendStderr(fileOutErr.getOutputPath(), fileOutErr.getErrorPath());
@@ -334,12 +325,11 @@ public class StandaloneTestStrategy extends TestStrategy {
       TestRunnerAction action, Spawn spawn, ActionExecutionContext actionExecutionContext)
       throws ExecException, InterruptedException, IOException {
     Closeable streamed = null;
-    Path testLogPath = action.getTestLog().getPath();
+    Path testLogPath = actionExecutionContext.getInputPath(action.getTestLog());
     TestResultData.Builder builder = TestResultData.newBuilder();
 
     long startTime = actionExecutionContext.getClock().currentTimeMillis();
-    SpawnActionContext spawnActionContext =
-        actionExecutionContext.getSpawnActionContext(action.getMnemonic());
+    SpawnActionContext spawnActionContext = actionExecutionContext.getSpawnActionContext(spawn);
     List<SpawnResult> spawnResults = ImmutableList.of();
     try {
       try {
@@ -372,7 +362,16 @@ public class StandaloneTestStrategy extends TestStrategy {
             .addFailedLogs(testLogPath.getPathString());
         spawnResults = ImmutableList.of(e.getSpawnResult());
       } finally {
-        long duration = actionExecutionContext.getClock().currentTimeMillis() - startTime;
+        long endTime = actionExecutionContext.getClock().currentTimeMillis();
+        long duration = endTime - startTime;
+        // If execution fails with an exception other SpawnExecException, there is no result here.
+        if (!spawnResults.isEmpty()) {
+          // The SpawnResult of a remotely cached or remotely executed action may not have walltime
+          // set. We fall back to the time measured here for backwards compatibility.
+          SpawnResult primaryResult = Iterables.getOnlyElement(spawnResults);
+          duration = primaryResult.getWallTime().orElse(Duration.ofMillis(duration)).toMillis();
+        }
+
         builder.setStartTimeMillisEpoch(startTime);
         builder.addTestTimes(duration);
         builder.addTestProcessTimes(duration);

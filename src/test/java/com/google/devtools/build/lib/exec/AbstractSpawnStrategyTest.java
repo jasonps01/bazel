@@ -34,7 +34,6 @@ import com.google.devtools.build.lib.testutil.TestSpec;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.inmemoryfs.InMemoryFileSystem;
-import java.util.Collection;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
@@ -70,7 +69,8 @@ public class AbstractSpawnStrategyTest {
   public void testZeroExit() throws Exception {
     when(actionExecutionContext.getContext(eq(SpawnCache.class))).thenReturn(SpawnCache.NO_CACHE);
     when(actionExecutionContext.getExecRoot()).thenReturn(fs.getPath("/execroot"));
-    SpawnResult spawnResult = new SpawnResult.Builder().setStatus(Status.SUCCESS).build();
+    SpawnResult spawnResult =
+        new SpawnResult.Builder().setStatus(Status.SUCCESS).setRunnerName("test").build();
     when(spawnRunner.exec(any(Spawn.class), any(SpawnExecutionPolicy.class)))
         .thenReturn(spawnResult);
 
@@ -88,7 +88,11 @@ public class AbstractSpawnStrategyTest {
     when(actionExecutionContext.getContext(eq(SpawnCache.class))).thenReturn(SpawnCache.NO_CACHE);
     when(actionExecutionContext.getExecRoot()).thenReturn(execRoot);
     SpawnResult result =
-        new SpawnResult.Builder().setStatus(Status.NON_ZERO_EXIT).setExitCode(1).build();
+        new SpawnResult.Builder()
+            .setStatus(Status.NON_ZERO_EXIT)
+            .setExitCode(1)
+            .setRunnerName("test")
+            .build();
     when(spawnRunner.exec(any(Spawn.class), any(SpawnExecutionPolicy.class)))
         .thenReturn(result);
 
@@ -106,7 +110,8 @@ public class AbstractSpawnStrategyTest {
   @Test
   public void testCacheHit() throws Exception {
     SpawnCache cache = mock(SpawnCache.class);
-    SpawnResult spawnResult = new SpawnResult.Builder().setStatus(Status.SUCCESS).build();
+    SpawnResult spawnResult =
+        new SpawnResult.Builder().setStatus(Status.SUCCESS).setRunnerName("test").build();
     when(cache.lookup(any(Spawn.class), any(SpawnExecutionPolicy.class)))
         .thenReturn(SpawnCache.success(spawnResult));
     when(actionExecutionContext.getContext(eq(SpawnCache.class))).thenReturn(cache);
@@ -129,7 +134,8 @@ public class AbstractSpawnStrategyTest {
 
     when(actionExecutionContext.getContext(eq(SpawnCache.class))).thenReturn(cache);
     when(actionExecutionContext.getExecRoot()).thenReturn(fs.getPath("/execroot"));
-    SpawnResult spawnResult = new SpawnResult.Builder().setStatus(Status.SUCCESS).build();
+    SpawnResult spawnResult =
+        new SpawnResult.Builder().setStatus(Status.SUCCESS).setRunnerName("test").build();
     when(spawnRunner.exec(any(Spawn.class), any(SpawnExecutionPolicy.class)))
         .thenReturn(spawnResult);
 
@@ -140,7 +146,7 @@ public class AbstractSpawnStrategyTest {
 
     // Must only be called exactly once.
     verify(spawnRunner).exec(any(Spawn.class), any(SpawnExecutionPolicy.class));
-    verify(entry).store(eq(spawnResult), any(Collection.class));
+    verify(entry).store(eq(spawnResult));
   }
 
   @SuppressWarnings("unchecked")
@@ -155,7 +161,11 @@ public class AbstractSpawnStrategyTest {
     when(actionExecutionContext.getContext(eq(SpawnCache.class))).thenReturn(cache);
     when(actionExecutionContext.getExecRoot()).thenReturn(fs.getPath("/execroot"));
     SpawnResult result =
-        new SpawnResult.Builder().setStatus(Status.NON_ZERO_EXIT).setExitCode(1).build();
+        new SpawnResult.Builder()
+            .setStatus(Status.NON_ZERO_EXIT)
+            .setExitCode(1)
+            .setRunnerName("test")
+            .build();
     when(spawnRunner.exec(any(Spawn.class), any(SpawnExecutionPolicy.class))).thenReturn(result);
 
     try {
@@ -167,6 +177,6 @@ public class AbstractSpawnStrategyTest {
     }
     // Must only be called exactly once.
     verify(spawnRunner).exec(any(Spawn.class), any(SpawnExecutionPolicy.class));
-    verify(entry).store(eq(result), any(Collection.class));
+    verify(entry).store(eq(result));
   }
 }

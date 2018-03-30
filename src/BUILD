@@ -53,23 +53,6 @@ genquery(
     scope = ["//tools/defaults:java_toolchain"],
 )
 
-genrule(
-    name = "java-version",
-    srcs = [":java_toolchain_content"],
-    outs = ["java.version"],
-    cmd = """
-          VERSION_LINE=$$(cat $< | grep target_version);
-          JAVA_VERSION=$$(echo $${VERSION_LINE} | sed 's/.*value=\\"\\([^\\"]\\)\\".*/\\1/');
-          if [ -z "$${JAVA_VERSION}" ]; then
-            echo "1.8" >$@  # Java 8 is the default
-          elif [[ "$${JAVA_VERSION}" =~ ^[0-9]+$$ ]]; then
-            echo "1.$${JAVA_VERSION}" >$@  # Add 1. before 7 or 8
-          else
-            echo "$${JAVA_VERSION}" >$@
-          fi
-          """,
-)
-
 # Create dummy tools so we can do select to prevent building iOS target on
 # Linux.
 OSX_DUMMY_TARGETS = [
@@ -77,7 +60,6 @@ OSX_DUMMY_TARGETS = [
     "src/tools/xcode/ibtoolwrapper/ibtoolwrapper",
     "src/tools/xcode/momcwrapper/momcwrapper",
     "src/tools/xcode/swiftstdlibtoolwrapper/swiftstdlibtoolwrapper",
-    "src/tools/xcode/environment/environment_plist",
     "src/objc_tools/bundlemerge/bundlemerge_deploy.jar",
     "src/objc_tools/plmerge/plmerge_deploy.jar",
     "src/tools/xcode/realpath/realpath",
@@ -101,7 +83,6 @@ filegroup(
         "//src/tools/xcode/ibtoolwrapper:ibtoolwrapper",
         "//src/tools/xcode/momcwrapper:momcwrapper",
         "//src/tools/xcode/swiftstdlibtoolwrapper:swiftstdlibtoolwrapper",
-        "//src/tools/xcode/environment:environment_plist",
         "//src/objc_tools/bundlemerge:bundlemerge_deploy.jar",
         "//src/objc_tools/plmerge:plmerge_deploy.jar",
         "//src/tools/xcode/realpath:realpath",
@@ -261,7 +242,6 @@ genrule(
         "//src/main/tools:jdk-support",
         "//src/main/tools:linux-sandbox",
         "//tools/osx:xcode-locator",
-        ":java-version",
     ],
     outs = ["package" + suffix + ".zip"],
     cmd = "$(location :package-bazel.sh) $@ " + ("" if embed else "''") + " $(SRCS)",
@@ -352,10 +332,10 @@ filegroup(
         "//src/tools/android/java/com/google/devtools/build/android:srcs",
         "//src/tools/launcher:srcs",
         "//src/tools/runfiles:srcs",
+        "//src/tools/package_printer/java/com/google/devtools/build/packageprinter:srcs",
         "//src/tools/skylark/java/com/google/devtools/skylark/skylint:srcs",
         "//src/tools/skylark/javatests/com/google/devtools/skylark/skylint:srcs",
         "//src/tools/xcode/actoolwrapper:srcs",
-        "//src/tools/xcode/environment:srcs",
         "//src/tools/xcode/ibtoolwrapper:srcs",
         "//src/tools/xcode/momcwrapper:srcs",
         "//src/tools/xcode/realpath:srcs",

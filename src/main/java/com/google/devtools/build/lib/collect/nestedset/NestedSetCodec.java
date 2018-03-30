@@ -14,11 +14,13 @@
 package com.google.devtools.build.lib.collect.nestedset;
 
 import com.google.common.base.Preconditions;
+import com.google.common.cache.CacheBuilder;
 import com.google.common.hash.Hashing;
 import com.google.common.hash.HashingOutputStream;
 import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.EnumCodec;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationConstants;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.protobuf.ByteString;
@@ -26,11 +28,12 @@ import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Codec for {@link NestedSet}.
@@ -43,6 +46,15 @@ public class NestedSetCodec<T> implements ObjectCodec<NestedSet<T>> {
 
   private static final EnumCodec<Order> orderCodec = new EnumCodec<>(Order.class);
 
+  private static final ConcurrentMap<ByteString, Object> digestToChild =
+      CacheBuilder.newBuilder()
+          .concurrencyLevel(SerializationConstants.DESERIALIZATION_POOL_SIZE)
+          .weakValues()
+          .<ByteString, Object>build()
+          .asMap();
+
+  public NestedSetCodec() {}
+
   @SuppressWarnings("unchecked")
   @Override
   public Class<NestedSet<T>> getEncodedClass() {
@@ -54,6 +66,11 @@ public class NestedSetCodec<T> implements ObjectCodec<NestedSet<T>> {
   @Override
   public void serialize(SerializationContext context, NestedSet<T> obj, CodedOutputStream codedOut)
       throws SerializationException, IOException {
+    if (!SerializationConstants.shouldSerializeNestedSet) {
+      // Don't perform NestedSet serialization in testing
+      return;
+    }
+
     // Topo sort the nested set to ensure digests are available for children at time of writing
     Collection<Object> topoSortedChildren = getTopologicallySortedChildren(obj);
     Map<Object, byte[]> childToDigest = new IdentityHashMap<>();
@@ -67,19 +84,25 @@ public class NestedSetCodec<T> implements ObjectCodec<NestedSet<T>> {
   @Override
   public NestedSet<T> deserialize(DeserializationContext context, CodedInputStream codedIn)
       throws SerializationException, IOException {
-    Map<ByteString, Object> digestToChild = new HashMap<>();
+    if (!SerializationConstants.shouldSerializeNestedSet) {
+      // Don't perform NestedSet deserialization in testing
+      return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
+    }
+
     int nestedSetCount = codedIn.readInt32();
     Preconditions.checkState(
         nestedSetCount >= 1,
         "Should have at least serialized one nested set, got: %s",
         nestedSetCount);
     Order order = orderCodec.deserialize(context, codedIn);
-    Object children = null;
+    ArrayList<Object> childrenForThisNestedSet = new ArrayList<>(nestedSetCount);
     for (int i = 0; i < nestedSetCount; ++i) {
-      // Update var, the last one in the list is the top level nested set
-      children = deserializeOneNestedSet(context, codedIn, digestToChild);
+      // Maintain pointers to all children in this NestedSet so that their entries in the
+      // digestToChild map are not GCed.
+      childrenForThisNestedSet.add(deserializeOneNestedSet(context, codedIn));
     }
-    return createNestedSet(order, children);
+    // The last element of childrenForThisNestedSet is the top-level NestedSet
+    return createNestedSet(order, childrenForThisNestedSet.get(nestedSetCount - 1));
   }
 
   private void serializeOneNestedSet(
@@ -139,10 +162,7 @@ public class NestedSetCodec<T> implements ObjectCodec<NestedSet<T>> {
     context.serialize(singleChild, childCodedOut);
   }
 
-  private Object deserializeOneNestedSet(
-      DeserializationContext context,
-      CodedInputStream codedIn,
-      Map<ByteString, Object> digestToChild)
+  private Object deserializeOneNestedSet(DeserializationContext context, CodedInputStream codedIn)
       throws SerializationException, IOException {
     ByteString digest = codedIn.readBytes();
     CodedInputStream childCodedIn = codedIn.readBytes().newCodedInput();
@@ -150,19 +170,26 @@ public class NestedSetCodec<T> implements ObjectCodec<NestedSet<T>> {
     int childCount = childCodedIn.readInt32();
     final Object result;
     if (childCount > 1) {
-      result = deserializeMultipleItemChildArray(context, digestToChild, childCodedIn, childCount);
+      result = deserializeMultipleItemChildArray(context, childCodedIn, childCount);
     } else if (childCount == 1) {
       result = context.deserialize(childCodedIn);
     } else {
       result = NestedSet.EMPTY_CHILDREN;
     }
-    digestToChild.put(digest, result);
-    return result;
+    // If this member has been deserialized already, use it, so that NestedSets that share members
+    // will point at the same object in memory instead of duplicating them.  Unfortunately, we had
+    // to do the work of deserializing the member that we will now throw away, in order to ensure
+    // that the pointer in the codedIn buffer was incremented appropriately.
+    Object oldValue =
+        digestToChild.putIfAbsent(
+            // Copy the ByteString to avoid keeping the full buffer from codedIn alive due to
+            // aliasing.
+            ByteString.copyFrom(digest.asReadOnlyByteBuffer()), result);
+    return oldValue == null ? result : oldValue;
   }
 
   private Object deserializeMultipleItemChildArray(
       DeserializationContext context,
-      Map<ByteString, Object> digestToChild,
       CodedInputStream childCodedIn,
       int childCount)
       throws IOException, SerializationException {

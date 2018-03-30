@@ -14,28 +14,84 @@
 
 package com.google.devtools.build.lib.skyframe.serialization;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
-import com.google.devtools.build.lib.skyframe.serialization.SerializationException.NoCodecException;
+import com.google.devtools.build.lib.skyframe.serialization.Memoizer.Deserializer;
+import com.google.devtools.build.lib.skyframe.serialization.ObjectCodecRegistry.CodecDescriptor;
+import com.google.devtools.build.lib.skyframe.serialization.ObjectCodecs.MemoizationPermission;
 import com.google.protobuf.CodedInputStream;
-import com.google.protobuf.CodedOutputStream;
 import java.io.IOException;
+import javax.annotation.CheckReturnValue;
 
-/** Stateful class for providing additional context to a single deserialization "session". */
-// TODO(bazel-team): This class is just a shell, fill in.
+/**
+ * Stateful class for providing additional context to a single deserialization "session". This class
+ * is thread-safe so long as {@link #deserializer} is null. If it is not null, this class is not
+ * thread-safe and should only be accessed on a single thread for deserializing one serialized
+ * object (that may contain other serialized objects inside it).
+ */
 public class DeserializationContext {
-
   private final ObjectCodecRegistry registry;
   private final ImmutableMap<Class<?>, Object> dependencies;
+  private final MemoizationPermission memoizationPermission;
+  private final Memoizer.Deserializer deserializer;
 
-  public DeserializationContext(
-      ObjectCodecRegistry registry, ImmutableMap<Class<?>, Object> dependencies) {
+  private DeserializationContext(
+      ObjectCodecRegistry registry,
+      ImmutableMap<Class<?>, Object> dependencies,
+      MemoizationPermission memoizationPermission,
+      Deserializer deserializer) {
     this.registry = registry;
     this.dependencies = dependencies;
+    this.memoizationPermission = memoizationPermission;
+    this.deserializer = deserializer;
   }
 
+  @VisibleForTesting
+  public DeserializationContext(
+      ObjectCodecRegistry registry, ImmutableMap<Class<?>, Object> dependencies) {
+    this(registry, dependencies, MemoizationPermission.ALLOWED, /*deserializer=*/ null);
+  }
+
+  @VisibleForTesting
   public DeserializationContext(ImmutableMap<Class<?>, Object> dependencies) {
     this(AutoRegistry.get(), dependencies);
+  }
+
+  DeserializationContext disableMemoization() {
+    Preconditions.checkState(
+        memoizationPermission == MemoizationPermission.ALLOWED, "memoization already disabled");
+    Preconditions.checkState(deserializer == null, "deserializer already present");
+    return new DeserializationContext(
+        registry, dependencies, MemoizationPermission.DISABLED, deserializer);
+  }
+
+  /**
+   * Returns a {@link DeserializationContext} that will memoize values it encounters (using
+   * reference equality), the inverse of the memoization performed by a {@link SerializationContext}
+   * returned by {@link SerializationContext#getMemoizingContext}. The context returned here should
+   * be used instead of the original: memoization may only occur when using the returned context.
+   *
+   * <p>This method is idempotent: calling it on an already memoizing context will return the same
+   * context.
+   */
+  @CheckReturnValue
+  public DeserializationContext getMemoizingContext() {
+    Preconditions.checkState(
+        memoizationPermission == MemoizationPermission.ALLOWED, "memoization disabled");
+    if (deserializer != null) {
+      return this;
+    }
+    return new DeserializationContext(
+        this.registry, this.dependencies, memoizationPermission, new Deserializer());
+  }
+
+  /**
+   * Register an initial value for the currently deserializing value, for use by child objects that
+   * may have references to it. Only for use during memoizing deserialization.
+   */
+  public <T> void registerInitialValue(T initialValue) {
+    deserializer.registerInitialValue(initialValue);
   }
 
   // TODO(shahan): consider making codedIn a member of this class.
@@ -46,52 +102,14 @@ public class DeserializationContext {
       return null;
     }
     T constant = (T) registry.maybeGetConstantByTag(tag);
-    return constant == null
-        ? (T) registry.getCodecDescriptorByTag(tag).deserialize(this, codedIn)
-        : constant;
-  }
-
-  /**
-   * Returns an {@link ObjectCodec} appropriate for deserializing the next object on the wire. Only
-   * to be used by {@code MemoizingCodec}.
-   */
-  @SuppressWarnings("unchecked")
-  public <T> ObjectCodec<T> getCodecRecordedInInput(CodedInputStream codedIn)
-      throws IOException, NoCodecException {
-    int tag = codedIn.readSInt32();
-    if (tag == 0) {
-      return null;
+    if (constant != null) {
+      return constant;
     }
-    T constant = (T) registry.maybeGetConstantByTag(tag);
-    return constant == null
-        ? (ObjectCodec<T>) registry.getCodecDescriptorByTag(tag).getCodec()
-        : new InitializedObjectCodec<>(constant);
-  }
-
-  private static class InitializedObjectCodec<T> implements ObjectCodec<T> {
-    private final T obj;
-    private boolean deserialized = false;
-
-    private InitializedObjectCodec(T obj) {
-      this.obj = obj;
-    }
-
-    @Override
-    public void serialize(SerializationContext context, T obj, CodedOutputStream codedOut) {
-      throw new UnsupportedOperationException("Unexpected serialize: " + obj);
-    }
-
-    @Override
-    public T deserialize(DeserializationContext context, CodedInputStream codedIn) {
-      Preconditions.checkState(!deserialized, "Deserialize called twice: %s", obj);
-      deserialized = true;
-      return obj;
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public Class<T> getEncodedClass() {
-      return (Class<T>) obj.getClass();
+    CodecDescriptor codecDescriptor = registry.getCodecDescriptorByTag(tag);
+    if (deserializer == null) {
+      return (T) codecDescriptor.deserialize(this, codedIn);
+    } else {
+      return deserializer.deserialize(this, (ObjectCodec<T>) codecDescriptor.getCodec(), codedIn);
     }
   }
 

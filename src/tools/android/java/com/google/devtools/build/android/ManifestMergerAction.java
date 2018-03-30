@@ -34,7 +34,6 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.FileTime;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.logging.Logger;
@@ -76,7 +75,9 @@ public class ManifestMergerAction {
       category = "input",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.UNKNOWN},
-      help = "Path of primary manifest."
+      help =
+          "Path of primary manifest. If not passed, a dummy manifest will be generated and used as"
+              + " the primary."
     )
     public Path manifest;
 
@@ -204,9 +205,16 @@ public class ManifestMergerAction {
             removePermissions(mergeeManifest.getKey(), tmp), mergeeManifest.getValue());
       }
 
+      Path manifest = options.manifest;
+      if (manifest == null) {
+        // No primary manifest was passed. Generate a dummy primary.
+        manifest = tmp.resolve("dummy_AndroidManifest.xml");
+        AndroidResourceProcessor.writeDummyManifestForAapt(manifest, options.customPackage);
+      }
+
       mergedManifest =
           manifestProcessor.mergeManifest(
-              options.manifest,
+              manifest,
               mergeeManifests.build(),
               options.mergeType,
               options.manifestValues,
@@ -215,11 +223,11 @@ public class ManifestMergerAction {
               options.log);
 
       if (!mergedManifest.equals(options.manifestOutput)) {
-        Files.copy(options.manifest, options.manifestOutput, StandardCopyOption.REPLACE_EXISTING);
+        // manifestProcess.mergeManifest returns the merged manifest, or, if merging was a no-op,
+        // the original primary manifest. In the latter case, explicitly copy that primary manifest
+        // to the expected location of the output.
+        Files.copy(manifest, options.manifestOutput, StandardCopyOption.REPLACE_EXISTING);
       }
-
-      // Set to the epoch for caching purposes.
-      Files.setLastModifiedTime(options.manifestOutput, FileTime.fromMillis(0L));
     } catch (AndroidManifestProcessor.ManifestProcessingException e) {
       System.exit(1);
     } catch (Exception e) {

@@ -41,6 +41,7 @@ import com.google.devtools.build.lib.packages.Attribute.SkylarkComputedDefaultTe
 import com.google.devtools.build.lib.packages.Attribute.SkylarkComputedDefaultTemplate.CannotPrecomputeDefaultsException;
 import com.google.devtools.build.lib.packages.BuildType.SelectorList;
 import com.google.devtools.build.lib.packages.ConfigurationFragmentPolicy.MissingFragmentPolicy;
+import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType;
 import com.google.devtools.build.lib.packages.RuleFactory.AttributeValues;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
@@ -174,22 +175,23 @@ public class RuleClass {
     }
   }
 
-  /**
-   * A factory or builder class for rule implementations.
-   */
-  public interface ConfiguredTargetFactory<TConfiguredTarget, TContext> {
+  /** A factory or builder class for rule implementations. */
+  public interface ConfiguredTargetFactory<
+      TConfiguredTarget, TContext, TActionConflictException extends Throwable> {
     /**
      * Returns a fully initialized configured target instance using the given context.
      *
      * @throws RuleErrorException if configured target creation could not be completed due to rule
-     *    errors
+     *     errors
+     * @throws TActionConflictException if there were conflicts during action registration
      */
-    TConfiguredTarget create(TContext ruleContext) throws InterruptedException, RuleErrorException;
+    TConfiguredTarget create(TContext ruleContext)
+        throws InterruptedException, RuleErrorException, TActionConflictException;
 
     /**
-     * Exception indicating that configured target creation could not be completed. Error messaging
-     * should be done via {@link RuleErrorConsumer}; this exception only interrupts configured
-     * target creation in cases where it can no longer continue.
+     * Exception indicating that configured target creation could not be completed. General error
+     * messaging should be done via {@link RuleErrorConsumer}; this exception only interrupts
+     * configured target creation in cases where it can no longer continue.
      */
     public static final class RuleErrorException extends Exception {}
   }
@@ -585,8 +587,7 @@ public class RuleClass {
     private boolean isConfigMatcher = false;
     private ImplicitOutputsFunction implicitOutputsFunction = ImplicitOutputsFunction.NONE;
     private RuleTransitionFactory transitionFactory;
-    private RuleTransitionFactory outgoingTransitionFactory;
-    private ConfiguredTargetFactory<?, ?> configuredTargetFactory = null;
+    private ConfiguredTargetFactory<?, ?, ?> configuredTargetFactory = null;
     private PredicateWithMessage<Rule> validityPredicate =
         PredicatesWithMessage.<Rule>alwaysTrue();
     private Predicate<String> preferredDependencyPredicate = Predicates.alwaysFalse();
@@ -684,7 +685,12 @@ public class RuleClass {
           skylark && (type == RuleClassType.NORMAL || type == RuleClassType.TEST);
       Preconditions.checkState(
           (type == RuleClassType.ABSTRACT)
-          == (configuredTargetFactory == null && configuredTargetFunction == null));
+              == (configuredTargetFactory == null && configuredTargetFunction == null),
+          "Bad combo for %s: %s %s %s",
+          name,
+          type,
+          configuredTargetFactory,
+          configuredTargetFunction);
       if (!workspaceOnly) {
         Preconditions.checkState(skylarkExecutable == (configuredTargetFunction != null));
         Preconditions.checkState(skylarkExecutable == (ruleDefinitionEnvironment != null));
@@ -696,6 +702,7 @@ public class RuleClass {
       return new RuleClass(
           name,
           key,
+          type,
           skylark,
           skylarkExecutable,
           skylarkTestable,
@@ -707,7 +714,6 @@ public class RuleClass {
           implicitOutputsFunction,
           isConfigMatcher,
           transitionFactory,
-          outgoingTransitionFactory,
           configuredTargetFactory,
           validityPredicate,
           preferredDependencyPredicate,
@@ -895,23 +901,7 @@ public class RuleClass {
       return this;
     }
 
-    /**
-     * Applies the given transition factory to all deps of this rule class.
-     *
-     * <p>This means that for each dep, the factory can examine the dep's {@link Rule} to
-     * determine the right transition for that dep.
-     */
-    public Builder depsCfg(RuleTransitionFactory outgoingTransitionFactory) {
-      Preconditions.checkState(type != RuleClassType.ABSTRACT,
-          "Setting not inherited property (configureDeps) of abstract rule class '%s'", name);
-      Preconditions.checkState(this.outgoingTransitionFactory == null,
-          "Property configureDeps has already been set");
-      Preconditions.checkNotNull(outgoingTransitionFactory);
-      this.outgoingTransitionFactory = outgoingTransitionFactory;
-      return this;
-    }
-
-    public Builder factory(ConfiguredTargetFactory<?, ?> factory) {
+    public Builder factory(ConfiguredTargetFactory<?, ?, ?> factory) {
       this.configuredTargetFactory = factory;
       return this;
     }
@@ -1183,6 +1173,7 @@ public class RuleClass {
    */
   private final String targetKind;
 
+  private final RuleClassType type;
   private final boolean isSkylark;
   private final boolean skylarkExecutable;
   private final boolean skylarkTestable;
@@ -1220,15 +1211,8 @@ public class RuleClass {
    */
   private final RuleTransitionFactory transitionFactory;
 
-  /**
-   * A factory which will produce custom configuration transitions for each dep of this rule.
-   */
-  private final RuleTransitionFactory outgoingTransitionFactory;
-
-  /**
-   * The factory that creates configured targets from this rule.
-   */
-  private final ConfiguredTargetFactory<?, ?> configuredTargetFactory;
+  /** The factory that creates configured targets from this rule. */
+  private final ConfiguredTargetFactory<?, ?, ?> configuredTargetFactory;
 
   /**
    * The constraint the package name of the rule instance must fulfill
@@ -1306,6 +1290,7 @@ public class RuleClass {
   RuleClass(
       String name,
       String key,
+      RuleClassType type,
       boolean isSkylark,
       boolean skylarkExecutable,
       boolean skylarkTestable,
@@ -1317,8 +1302,7 @@ public class RuleClass {
       ImplicitOutputsFunction implicitOutputsFunction,
       boolean isConfigMatcher,
       RuleTransitionFactory transitionFactory,
-      RuleTransitionFactory outgoingRuleTransitionFactory,
-      ConfiguredTargetFactory<?, ?> configuredTargetFactory,
+      ConfiguredTargetFactory<?, ?, ?> configuredTargetFactory,
       PredicateWithMessage<Rule> validityPredicate,
       Predicate<String> preferredDependencyPredicate,
       AdvertisedProviderSet advertisedProviders,
@@ -1334,6 +1318,7 @@ public class RuleClass {
       Attribute... attributes) {
     this.name = name;
     this.key = key;
+    this.type = type;
     this.isSkylark = isSkylark;
     this.targetKind = name + Rule.targetKindSuffix();
     this.skylarkExecutable = skylarkExecutable;
@@ -1344,7 +1329,6 @@ public class RuleClass {
     this.implicitOutputsFunction = implicitOutputsFunction;
     this.isConfigMatcher = isConfigMatcher;
     this.transitionFactory = transitionFactory;
-    this.outgoingTransitionFactory = outgoingRuleTransitionFactory;
     this.configuredTargetFactory = configuredTargetFactory;
     this.validityPredicate = validityPredicate;
     this.preferredDependencyPredicate = preferredDependencyPredicate;
@@ -1416,13 +1400,10 @@ public class RuleClass {
     return transitionFactory;
   }
 
-  public RuleTransitionFactory getOutgoingTransitionFactory() {
-    return outgoingTransitionFactory;
-  }
-
   @SuppressWarnings("unchecked")
-  public <CT, RC> ConfiguredTargetFactory<CT, RC> getConfiguredTargetFactory() {
-    return (ConfiguredTargetFactory<CT, RC>) configuredTargetFactory;
+  public <CT, RC, ACE extends Throwable>
+      ConfiguredTargetFactory<CT, RC, ACE> getConfiguredTargetFactory() {
+    return (ConfiguredTargetFactory<CT, RC, ACE>) configuredTargetFactory;
   }
 
   /**
@@ -1430,6 +1411,11 @@ public class RuleClass {
    */
   public String getName() {
     return name;
+  }
+
+  /** Returns the type of rule that this RuleClass represents. Only for use during serialization. */
+  public RuleClassType getRuleClassType() {
+    return type;
   }
 
   /** Returns a unique key. Used for profiling purposes. */

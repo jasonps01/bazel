@@ -35,7 +35,7 @@ import com.google.devtools.build.lib.analysis.util.AnalysisMock;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction;
 import com.google.devtools.build.lib.packages.util.MockCcSupport;
-import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -114,7 +114,8 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
         .setupCrosstool(
             mockToolsConfig,
             MockCcSupport.NO_LEGACY_FEATURES_FEATURE,
-            MockCcSupport.EMPTY_COMPILE_ACTION_CONFIG);
+            MockCcSupport.EMPTY_COMPILE_ACTION_CONFIG,
+            MockCcSupport.PIC_FEATURE);
     useConfiguration();
 
     checkError(
@@ -131,7 +132,8 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
         .setupCrosstool(
             mockToolsConfig,
             MockCcSupport.NO_LEGACY_FEATURES_FEATURE,
-            MockCcSupport.EMPTY_STATIC_LIBRARY_ACTION_CONFIG);
+            MockCcSupport.EMPTY_STATIC_LIBRARY_ACTION_CONFIG,
+            MockCcSupport.PIC_FEATURE);
     useConfiguration();
 
     checkError(
@@ -180,6 +182,8 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
         "    name = 'cc-compiler-k8',",
         "    output_licenses = ['unencumbered'],",
         "    cpu = 'k8',",
+        "    ar_files = ':empty',",
+        "    as_files = ':empty',",
         "    compiler_files = ':empty',",
         "    dwp_files = ':empty',",
         "    coverage_files = ':empty',",
@@ -562,6 +566,62 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
     assertNoEvents();
   }
 
+  private void setupPackagesForSourcesWithSameBaseNameTests() throws Exception {
+    scratch.file(
+        "foo/BUILD",
+        "cc_library(",
+        "    name = 'lib',",
+        "    srcs = ['a.cc', 'subpkg/b.cc', 'subpkg/a.c', '//bar:srcs'],",
+        ")");
+    scratch.file("bar/BUILD", "filegroup(name = 'srcs', srcs = ['a.cpp'])");
+  }
+
+  @Test
+  public void testContainingSourcesWithSameBaseNameWithNewObjPath() throws Exception {
+    AnalysisMock.get().ccSupport().setup(mockToolsConfig);
+    useConfiguration("--cpu=k8", "--experimental_shortened_obj_file_path=true");
+    setupPackagesForSourcesWithSameBaseNameTests();
+    getConfiguredTarget("//foo:lib");
+
+    Artifact a0 = getBinArtifact("_objs/lib/0/a.pic.o", "//foo:lib");
+    Artifact a1 = getBinArtifact("_objs/lib/1/a.pic.o", "//foo:lib");
+    Artifact a2 = getBinArtifact("_objs/lib/2/a.pic.o", "//foo:lib");
+    Artifact b = getBinArtifact("_objs/lib/b.pic.o", "//foo:lib");
+
+    assertThat(getGeneratingAction(a0)).isNotNull();
+    assertThat(getGeneratingAction(a1)).isNotNull();
+    assertThat(getGeneratingAction(a2)).isNotNull();
+    assertThat(getGeneratingAction(b)).isNotNull();
+
+    assertThat(getGeneratingAction(a0).getInputs()).contains(getSourceArtifact("foo/a.cc"));
+    assertThat(getGeneratingAction(a1).getInputs()).contains(getSourceArtifact("foo/subpkg/a.c"));
+    assertThat(getGeneratingAction(a2).getInputs()).contains(getSourceArtifact("bar/a.cpp"));
+    assertThat(getGeneratingAction(b).getInputs()).contains(getSourceArtifact("foo/subpkg/b.cc"));
+  }
+
+  @Test
+  public void testContainingSourcesWithSameBaseNameWithLegacyObjPath() throws Exception {
+    AnalysisMock.get().ccSupport().setup(mockToolsConfig);
+    useConfiguration("--cpu=k8", "--experimental_shortened_obj_file_path=false");
+    setupPackagesForSourcesWithSameBaseNameTests();
+    getConfiguredTarget("//foo:lib");
+
+    Artifact a0 = getBinArtifact("_objs/lib/foo/a.pic.o", "//foo:lib");
+    Artifact a1 = getBinArtifact("_objs/lib/foo/subpkg/a.pic.o", "//foo:lib");
+    Artifact a2 = getBinArtifact("_objs/lib/bar/a.pic.o", "//foo:lib");
+    Artifact b = getBinArtifact("_objs/lib/foo/subpkg/b.pic.o", "//foo:lib");
+
+    assertThat(getGeneratingAction(a0)).isNotNull();
+    assertThat(getGeneratingAction(a1)).isNotNull();
+    assertThat(getGeneratingAction(a2)).isNotNull();
+    assertThat(getGeneratingAction(b)).isNotNull();
+
+    assertThat(getGeneratingAction(a0).getInputs()).contains(getSourceArtifact("foo/a.cc"));
+    assertThat(getGeneratingAction(a1).getInputs()).contains(getSourceArtifact("foo/subpkg/a.c"));
+    assertThat(getGeneratingAction(a2).getInputs()).contains(getSourceArtifact("bar/a.cpp"));
+    assertThat(getGeneratingAction(b).getInputs()).contains(getSourceArtifact("foo/subpkg/b.cc"));
+  }
+
   private void setupPackagesForModuleTests(boolean useHeaderModules) throws Exception {
     scratch.file("module/BUILD",
         "package(features = ['header_modules'])",
@@ -938,7 +998,7 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
         ")");
     ConfiguredTarget target = getConfiguredTarget("//foo");
     CppCompileAction action = getCppCompileAction(target);
-    String genfilesDir = target.getConfiguration().getGenfilesFragment().toString();
+    String genfilesDir = getConfiguration(target).getGenfilesFragment().toString();
     // Local include paths come first.
     assertContainsSublist(
         action.getCompilerOptions(),
@@ -1135,8 +1195,8 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
   public void addOnlyStaticLibraryToFilesToBuildWhenWrappingIffImplicitOutput() throws Exception {
     // This shared library has the same name as the archive generated by this rule, so it should
     // override said archive. However, said archive should still be put in files to build.
-    ConfiguredTargetAndTarget target =
-        scratchConfiguredTargetAndTarget("a", "b", "cc_library(name = 'b', srcs = ['libb.so'])");
+    ConfiguredTargetAndData target =
+        scratchConfiguredTargetAndData("a", "b", "cc_library(name = 'b', srcs = ['libb.so'])");
 
     if (target.getTarget().getAssociatedRule().getImplicitOutputsFunction()
         != ImplicitOutputsFunction.NONE) {

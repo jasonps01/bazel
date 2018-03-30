@@ -43,11 +43,23 @@ public class ConfiguredTargetKey extends ActionLookupKey {
     this.configurationKey = configurationKey;
   }
 
-  public static ConfiguredTargetKey of(ConfiguredTarget configuredTarget) {
+  private static Label getLabel(ConfiguredTarget configuredTarget) {
     AliasProvider aliasProvider = configuredTarget.getProvider(AliasProvider.class);
-    Label label =
-        aliasProvider != null ? aliasProvider.getAliasChain().get(0) : configuredTarget.getLabel();
-    return of(label, configuredTarget.getConfiguration());
+    return aliasProvider != null
+        ? aliasProvider.getAliasChain().get(0)
+        : configuredTarget.getLabel();
+  }
+
+  public static ConfiguredTargetKey of(
+      ConfiguredTarget configuredTarget, BuildConfiguration buildConfiguration) {
+    return of(getLabel(configuredTarget), buildConfiguration);
+  }
+
+  public static ConfiguredTargetKey of(
+      ConfiguredTarget configuredTarget,
+      BuildConfigurationValue.Key configurationKey,
+      boolean isHostConfiguration) {
+    return of(getLabel(configuredTarget), configurationKey, isHostConfiguration);
   }
 
   /**
@@ -64,7 +76,7 @@ public class ConfiguredTargetKey extends ActionLookupKey {
   }
 
   @AutoCodec.Instantiator
-  static ConfiguredTargetKey of(
+  public static ConfiguredTargetKey of(
       Label label,
       @Nullable BuildConfigurationValue.Key configurationKey,
       boolean isHostConfiguration) {
@@ -79,9 +91,7 @@ public class ConfiguredTargetKey extends ActionLookupKey {
     return configuration == null
         ? KeyAndHost.NULL_INSTANCE
         : new KeyAndHost(
-            BuildConfigurationValue.key(
-                configuration.fragmentClasses(), configuration.getOptions()),
-            configuration.isHostConfiguration());
+            BuildConfigurationValue.key(configuration), configuration.isHostConfiguration());
   }
 
   @Override

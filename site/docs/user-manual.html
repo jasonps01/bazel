@@ -25,12 +25,14 @@ title: User Manual
     <a href='#canonicalize'>canonicalize-flags</a>  Canonicalize Bazel flags.
     <a href='#clean'>clean</a>               Removes output files and optionally stops the server.
 
+    <a href='#query'>cquery</a>              Executes a <a href='#analysis-phase'>post-analysis</a> dependency graph query.
+
     <a href='#dump'>dump</a>                Dumps the internal state of the Bazel server process.
 
     <a href='#help'>help</a>                Prints help for commands, or the index.
     <a href='#info'>info</a>                Displays runtime info about the bazel server.
 
-    <a href='#fetch'>fetch</a>                Fetches all external dependencies of a target.
+    <a href='#fetch'>fetch</a>               Fetches all external dependencies of a target.
     <a href='#mobile-install'>mobile-install</a>      Installs apps on mobile devices.
 
     <a href='#query'>query</a>               Executes a dependency graph query.
@@ -3035,7 +3037,10 @@ in an environment closer to the current shell environment. Note that none of the
 
 <p>
   Bazel includes a query language for asking questions about the
-  dependency graph used during the build.  The query tool is an
+  dependency graph used during the build.  The query language is used
+  by two commands: query and cquery. The major difference between the
+  two commands is that query runs after the <a href='#loading-phase'>loading phase</a>
+  and cquery runs after the <a href='#analysis-phase'>analysis phase</a>. These tools are an
   invaluable aid to many software engineering tasks.
 </p>
 <p>
@@ -3364,6 +3369,16 @@ adb -s deadbeef install ...
   printed to the console.
 </p>
 
+
+<h3 id='dump'>The <code>dump</code> command</h3>
+
+<p>
+  The <code>dump</code> command prints to stdout a dump of the
+  internal state of the Bazel server.  This command is intended
+  primarily for use by Bazel developers, so the output of this command
+  is not specified, and is subject to change.
+</p>
+
 <p>
   By default, command will just print help message outlining possible
   options to dump specific areas of the Bazel state. In order to dump
@@ -3375,7 +3390,6 @@ adb -s deadbeef install ...
 <ul>
   <li><code class='flag'>--action_cache</code> dumps action cache content.</li>
   <li><code class='flag'>--packages</code> dumps package cache content.</li>
-  <li><code class='flag'>--vfs</code> dumps VFS state.</li>
   <li><code class='flag'>--skyframe</code> dumps state of internal Bazel dependency graph.</li>
   <li><code class='flag'>--rules</code> dumps rule summary for each rule and aspect class,
     including counts and action counts. This includes both native and Skylark rules.

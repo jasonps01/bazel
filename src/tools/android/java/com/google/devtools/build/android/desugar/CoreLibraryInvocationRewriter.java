@@ -14,6 +14,7 @@
 package com.google.devtools.build.android.desugar;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import org.objectweb.asm.ClassVisitor;
@@ -52,19 +53,8 @@ public class CoreLibraryInvocationRewriter extends ClassVisitor {
     public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean itf) {
       Class<?> coreInterface =
           support.getCoreInterfaceRewritingTarget(opcode, owner, name, desc, itf);
-      String newOwner = support.getMoveTarget(owner, name);
 
-      if (newOwner != null) {
-        checkState(coreInterface == null,
-            "Can't move and use companion: %s.%s : %s", owner, name, desc);
-        if (opcode != Opcodes.INVOKESTATIC) {
-          // assuming a static method
-          desc = InterfaceDesugaring.companionDefaultMethodDescriptor(owner, desc);
-          opcode = Opcodes.INVOKESTATIC;
-        }
-        owner = newOwner;
-        itf = false; // assuming a class
-      } else if (coreInterface != null) {
+      if (coreInterface != null) {
         String coreInterfaceName = coreInterface.getName().replace('.', '/');
         name =
             InterfaceDesugaring.normalizeInterfaceMethodName(
@@ -76,14 +66,29 @@ public class CoreLibraryInvocationRewriter extends ClassVisitor {
         }
 
         if (opcode == Opcodes.INVOKESTATIC || opcode == Opcodes.INVOKESPECIAL) {
-          checkArgument(itf, "Expected interface to rewrite %s.%s : %s", owner, name, desc);
-          owner = InterfaceDesugaring.getCompanionClassName(coreInterfaceName);
+          checkArgument(itf || opcode == Opcodes.INVOKESPECIAL,
+              "Expected interface to rewrite %s.%s : %s", owner, name, desc);
+          owner = coreInterface.isInterface()
+              ? InterfaceDesugaring.getCompanionClassName(coreInterfaceName)
+              : checkNotNull(support.getMoveTarget(coreInterfaceName, name));
         } else {
+          checkState(coreInterface.isInterface());
           owner = coreInterfaceName + "$$Dispatch";
         }
 
         opcode = Opcodes.INVOKESTATIC;
         itf = false;
+      } else {
+        String newOwner = support.getMoveTarget(owner, name);
+        if (newOwner != null) {
+          if (opcode != Opcodes.INVOKESTATIC) {
+            // assuming a static method
+            desc = InterfaceDesugaring.companionDefaultMethodDescriptor(owner, desc);
+            opcode = Opcodes.INVOKESTATIC;
+          }
+          owner = newOwner;
+          itf = false; // assuming a class
+        }
       }
       super.visitMethodInsn(opcode, owner, name, desc, itf);
     }

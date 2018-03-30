@@ -18,13 +18,15 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.syntax.Environment.LexicalFrame;
 
 /**
- * The actual function registered in the environment. This function is defined in the
- * parsed code using {@link FunctionDefStatement}.
+ * The actual function registered in the environment. This function is defined in the parsed code
+ * using {@link FunctionDefStatement}.
  */
+@AutoCodec
 public class UserDefinedFunction extends BaseFunction {
 
   private final ImmutableList<Statement> statements;
@@ -34,11 +36,11 @@ public class UserDefinedFunction extends BaseFunction {
 
   public UserDefinedFunction(
       String name,
-      Location loc,
+      Location location,
       FunctionSignature.WithValues<Object, SkylarkType> signature,
       ImmutableList<Statement> statements,
       Environment.GlobalFrame definitionGlobals) {
-    super(name, signature, loc);
+    super(name, signature, location);
     this.statements = statements;
     this.definitionGlobals = definitionGlobals;
   }
@@ -63,10 +65,12 @@ public class UserDefinedFunction extends BaseFunction {
               getName(), env.getCurrentFunction().getName()));
     }
 
-    Profiler.instance().startTask(ProfilerTask.SKYLARK_USER_FN, getName());
+    ImmutableList<String> names = signature.getSignature().getNames();
+    LexicalFrame lexicalFrame =
+        LexicalFrame.createForUserDefinedFunctionCall(env.mutability(), /*numArgs=*/ names.size());
     try {
-      env.enterScope(this, LexicalFrame.create(env.mutability()), ast, definitionGlobals);
-      ImmutableList<String> names = signature.getSignature().getNames();
+      Profiler.instance().startTask(ProfilerTask.SKYLARK_USER_FN, getName());
+      env.enterScope(this, lexicalFrame, ast, definitionGlobals);
 
       // Registering the functions's arguments as variables in the local Environment
       int i = 0;

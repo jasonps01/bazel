@@ -135,8 +135,6 @@ import java.util.zip.ZipFile;
 @Immutable
 @AutoCodec
 public class FdoSupport {
-  public static final ObjectCodec<FdoSupport> CODEC = new FdoSupport_AutoCodec();
-
   /**
    * The FDO mode we are operating in.
    *
@@ -169,7 +167,7 @@ public class FdoSupport {
    * Coverage information output directory passed to {@code --fdo_instrument},
    * or {@code null} if FDO instrumentation is disabled.
    */
-  private final PathFragment fdoInstrument;
+  private final String fdoInstrument;
 
   /**
    * Path of the profile file passed to {@code --fdo_optimize}, or
@@ -240,7 +238,7 @@ public class FdoSupport {
       LipoMode lipoMode,
       ArtifactRoot fdoRoot,
       PathFragment fdoRootExecPath,
-      PathFragment fdoInstrument,
+      String fdoInstrument,
       Path fdoProfile,
       FdoZipContents fdoZipContents) {
     this.fdoInstrument = fdoInstrument;
@@ -279,7 +277,7 @@ public class FdoSupport {
   /** Creates an initialized {@link FdoSupport} instance. */
   static FdoSupport create(
       SkyFunction.Environment env,
-      PathFragment fdoInstrument,
+      String fdoInstrument,
       Path fdoProfile,
       LipoMode lipoMode,
       Path execRoot,
@@ -592,23 +590,30 @@ public class FdoSupport {
   }
 
   /**
-   * Configures a compile action builder by setting up command line options and
-   * auxiliary inputs according to the FDO configuration. This method does
-   * nothing If FDO is disabled.
+   * Configures a compile action builder by setting up command line options and auxiliary inputs
+   * according to the FDO configuration. This method does nothing If FDO is disabled.
    */
   @ThreadSafe
-  public void configureCompilation(CppCompileActionBuilder builder,
-      CcToolchainFeatures.Variables.Builder buildVariables, RuleContext ruleContext,
-      PathFragment sourceName, PathFragment sourceExecPath, boolean usePic,
-      FeatureConfiguration featureConfiguration, FdoSupportProvider fdoSupportProvider) {
+  public ImmutableMap<String, String> configureCompilation(
+      CppCompileActionBuilder builder,
+      RuleContext ruleContext,
+      PathFragment sourceName,
+      PathFragment sourceExecPath,
+      PathFragment outputName,
+      boolean usePic,
+      FeatureConfiguration featureConfiguration,
+      FdoSupportProvider fdoSupportProvider) {
 
     // FDO is disabled -> do nothing.
     if ((fdoInstrument == null) && (fdoRoot == null)) {
-      return;
+      return ImmutableMap.of();
     }
 
+    ImmutableMap.Builder<String, String> variablesBuilder = ImmutableMap.builder();
+
     if (featureConfiguration.isEnabled(CppRuleClasses.FDO_INSTRUMENT)) {
-      buildVariables.addStringVariable("fdo_instrument_path", fdoInstrument.getPathString());
+      variablesBuilder.put(
+          CompileBuildVariables.FDO_INSTRUMENT_PATH.getVariableName(), fdoInstrument);
     }
 
     // Optimization phase
@@ -616,33 +621,41 @@ public class FdoSupport {
       AnalysisEnvironment env = ruleContext.getAnalysisEnvironment();
       // Declare dependency on contents of zip file.
       if (env.getSkyframeEnv().valuesMissing()) {
-        return;
+        return ImmutableMap.of();
       }
-      Iterable<Artifact> auxiliaryInputs = getAuxiliaryInputs(
-          ruleContext, sourceName, sourceExecPath, usePic, fdoSupportProvider);
+      Iterable<Artifact> auxiliaryInputs =
+          getAuxiliaryInputs(
+              ruleContext, sourceName, sourceExecPath, outputName, usePic, fdoSupportProvider);
       builder.addMandatoryInputs(auxiliaryInputs);
       if (!Iterables.isEmpty(auxiliaryInputs)) {
         if (featureConfiguration.isEnabled(CppRuleClasses.AUTOFDO)) {
-          buildVariables.addStringVariable(
-              "fdo_profile_path", getAutoProfilePath(fdoProfile, fdoRootExecPath).getPathString());
+          variablesBuilder.put(
+              CompileBuildVariables.FDO_PROFILE_PATH.getVariableName(),
+              getAutoProfilePath(fdoProfile, fdoRootExecPath).getPathString());
         }
         if (featureConfiguration.isEnabled(CppRuleClasses.FDO_OPTIMIZE)) {
           if (fdoMode == FdoMode.LLVM_FDO) {
-            buildVariables.addStringVariable(
-                "fdo_profile_path", fdoSupportProvider.getProfileArtifact().getExecPathString());
+            variablesBuilder.put(
+                CompileBuildVariables.FDO_PROFILE_PATH.getVariableName(),
+                fdoSupportProvider.getProfileArtifact().getExecPathString());
           } else {
-            buildVariables.addStringVariable("fdo_profile_path", fdoRootExecPath.getPathString());
+            variablesBuilder.put(
+                CompileBuildVariables.FDO_PROFILE_PATH.getVariableName(),
+                fdoRootExecPath.getPathString());
           }
         }
       }
     }
+    return variablesBuilder.build();
   }
 
-  /**
-   * Returns the auxiliary files that need to be added to the {@link CppCompileAction}.
-   */
+  /** Returns the auxiliary files that need to be added to the {@link CppCompileAction}. */
   private Iterable<Artifact> getAuxiliaryInputs(
-      RuleContext ruleContext, PathFragment sourceName, PathFragment sourceExecPath, boolean usePic,
+      RuleContext ruleContext,
+      PathFragment sourceName,
+      PathFragment sourceExecPath,
+      PathFragment outputName,
+      boolean usePic,
       FdoSupportProvider fdoSupportProvider) {
     CcToolchainProvider toolchain =
         CppHelper.getToolchainUsingDefaultCcToolchainAttribute(ruleContext);
@@ -663,7 +676,7 @@ public class FdoSupport {
       ImmutableSet.Builder<Artifact> auxiliaryInputs = ImmutableSet.builder();
 
       PathFragment objectName =
-          FileSystemUtils.replaceExtension(sourceName, usePic ? ".pic.o" : ".o");
+          FileSystemUtils.appendExtension(outputName, usePic ? ".pic.o" : ".o");
 
       Label lipoLabel = ruleContext.getLabel();
       auxiliaryInputs.addAll(
@@ -781,7 +794,7 @@ public class FdoSupport {
       CcToolchainFeatures.Variables.Builder buildVariables
       ) {
     if (featureConfiguration.isEnabled(CppRuleClasses.FDO_INSTRUMENT)) {
-      buildVariables.addStringVariable("fdo_instrument_path", fdoInstrument.getPathString());
+      buildVariables.addStringVariable("fdo_instrument_path", fdoInstrument);
     }
   }
 

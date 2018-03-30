@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration.StrictDe
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.StrictDepsMode;
 import com.google.devtools.build.lib.analysis.config.FragmentOptions;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.rules.java.JavaConfiguration.ImportDepsCheckingLevel;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaClasspathMode;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaOptimizationMode;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.OneVersionEnforcementLevel;
@@ -64,10 +65,19 @@ public class JavaOptions extends FragmentOptions {
     }
   }
 
+  /** Converter for the --experimental_import_deps_checking option */
+  public static class ImportDepsCheckingLevelConverter
+      extends EnumConverter<ImportDepsCheckingLevel> {
+    public ImportDepsCheckingLevelConverter() {
+      super(
+          ImportDepsCheckingLevel.class,
+          "Enforcement level for the dependency checking for import targets.");
+    }
+  }
+
   @Option(
     name = "javabase",
     defaultValue = "@bazel_tools//tools/jdk:jdk",
-    category = "version",
     converter = LabelConverter.class,
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
@@ -81,7 +91,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "java_toolchain",
     defaultValue = "@bazel_tools//tools/jdk:toolchain",
-    category = "version",
     converter = LabelConverter.class,
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
@@ -92,7 +101,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "host_java_toolchain",
     defaultValue = "@bazel_tools//tools/jdk:toolchain",
-    category = "version",
     converter = LabelConverter.class,
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
@@ -104,7 +112,6 @@ public class JavaOptions extends FragmentOptions {
     name = "host_javabase",
     defaultValue = "@bazel_tools//tools/jdk:host_jdk",
     converter = LabelConverter.class,
-    category = "version",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -117,7 +124,6 @@ public class JavaOptions extends FragmentOptions {
     name = "javacopt",
     allowMultiple = true,
     defaultValue = "",
-    category = "flags",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Additional options to pass to javac."
@@ -128,7 +134,6 @@ public class JavaOptions extends FragmentOptions {
     name = "jvmopt",
     allowMultiple = true,
     defaultValue = "",
-    category = "flags",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -140,7 +145,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "use_ijars",
     defaultValue = "true",
-    category = "strategy",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -163,7 +167,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "java_header_compilation",
     defaultValue = "true",
-    category = "semantics",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Compile ijars directly from source.",
@@ -185,7 +188,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "java_deps",
     defaultValue = "true",
-    category = "strategy",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Generate dependency information (for now, compile-time classpath) per Java target."
@@ -197,7 +199,6 @@ public class JavaOptions extends FragmentOptions {
     allowMultiple = false,
     defaultValue = "javabuilder",
     converter = JavaClasspathModeConverter.class,
-    category = "semantics",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Enables reduced classpaths for Java compilations.",
@@ -208,7 +209,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "java_debug",
     defaultValue = "null",
-    category = "testing",
     expansion = {
       "--test_arg=--wrapper_script_flag=--debug",
       "--test_output=streamed",
@@ -230,7 +230,6 @@ public class JavaOptions extends FragmentOptions {
     allowMultiple = false,
     defaultValue = "default",
     converter = StrictDepsConverter.class,
-    category = "semantics",
     documentationCategory = OptionDocumentationCategory.INPUT_STRICTNESS,
     effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS, OptionEffectTag.EAGERNESS_TO_EXIT},
     help =
@@ -255,7 +254,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "explicit_java_test_deps",
     defaultValue = "false",
-    category = "semantics",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -343,7 +341,6 @@ public class JavaOptions extends FragmentOptions {
     name = "host_java_launcher",
     defaultValue = "null",
     converter = LabelConverter.class,
-    category = "semantics",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "The Java launcher used by tools that are executed during a build."
@@ -354,7 +351,6 @@ public class JavaOptions extends FragmentOptions {
     name = "java_launcher",
     defaultValue = "null",
     converter = LabelConverter.class,
-    category = "semantics",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -366,7 +362,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "proguard_top",
     defaultValue = "null",
-    category = "version",
     converter = LabelConverter.class,
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
@@ -407,7 +402,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "translations",
     defaultValue = "auto",
-    category = "semantics",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -418,7 +412,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "message_translations",
     defaultValue = "",
-    category = "semantics",
     allowMultiple = true,
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
@@ -430,7 +423,6 @@ public class JavaOptions extends FragmentOptions {
     name = "check_constraint",
     allowMultiple = true,
     defaultValue = "",
-    category = "checking",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Check the listed constraint."
@@ -494,6 +486,18 @@ public class JavaOptions extends FragmentOptions {
   public OneVersionEnforcementLevel enforceOneVersion;
 
   @Option(
+    name = "experimental_import_deps_checking",
+    defaultValue = "OFF",
+    converter = ImportDepsCheckingLevelConverter.class,
+    documentationCategory = OptionDocumentationCategory.INPUT_STRICTNESS,
+    effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+    help =
+        "When enabled, check whether the dependencies of an aar_import are complete. "
+            + "This enforcement can break the build, or can just result in warnings."
+  )
+  public ImportDepsCheckingLevel importDepsCheckingLevel;
+
+  @Option(
     name = "one_version_enforcement_on_java_tests",
     defaultValue = "true",
     documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
@@ -521,7 +525,6 @@ public class JavaOptions extends FragmentOptions {
   @Option(
     name = "jplPropagateCcLinkParamsStore",
     defaultValue = "false",
-    category = "rollout",
     documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
     effectTags = {OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.LOADING_AND_ANALYSIS},
     metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
@@ -538,7 +541,6 @@ public class JavaOptions extends FragmentOptions {
     converter = LabelListConverter.class,
     allowMultiple = true,
     defaultValue = "",
-    category = "flags",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Plugins to use in the build. Currently works with java_plugin."
@@ -570,6 +572,7 @@ public class JavaOptions extends FragmentOptions {
     host.fixDepsTool = fixDepsTool;
 
     host.enforceOneVersion = enforceOneVersion;
+    host.importDepsCheckingLevel = importDepsCheckingLevel;
     // java_test targets can be used as a host tool, Ex: as a validating tool on a genrule.
     host.enforceOneVersionOnJavaTests = enforceOneVersionOnJavaTests;
     host.allowRuntimeDepsOnNeverLink = allowRuntimeDepsOnNeverLink;

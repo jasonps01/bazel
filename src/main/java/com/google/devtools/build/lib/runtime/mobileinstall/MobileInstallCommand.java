@@ -20,6 +20,7 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
+import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.test.TestConfiguration.TestOptions;
 import com.google.devtools.build.lib.buildtool.BuildRequest;
 import com.google.devtools.build.lib.buildtool.BuildResult;
@@ -111,7 +112,6 @@ public class MobileInstallCommand implements BlazeCommand {
     @Option(
       name = "split_apks",
       defaultValue = "false",
-      category = "mobile-install",
       documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
       effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.AFFECTS_OUTPUTS},
       help =
@@ -123,10 +123,8 @@ public class MobileInstallCommand implements BlazeCommand {
 
     @Option(
       name = "incremental",
-      category = "mobile-install",
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
-
       effectTags = OptionEffectTag.LOADING_AND_ANALYSIS,
       help =
           "Whether to do an incremental install. If true, try to avoid unnecessary additional "
@@ -138,7 +136,6 @@ public class MobileInstallCommand implements BlazeCommand {
 
     @Option(
       name = "mode",
-      category = "mobile-install",
       defaultValue = "classic",
       converter = ModeConverter.class,
       documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
@@ -155,7 +152,6 @@ public class MobileInstallCommand implements BlazeCommand {
 
     @Option(
       name = "mobile_install_aspect",
-      category = "mobile-install",
       defaultValue = "@android_test_support//tools/android/mobile_install:mobile-install.bzl",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.CHANGES_INPUTS},
@@ -243,8 +239,11 @@ public class MobileInstallCommand implements BlazeCommand {
 
     List<String> cmdLine = new ArrayList<>();
     // TODO(bazel-team): Get the executable path from the filesToRun provider from the aspect.
+    BuildConfiguration configuration =
+        env.getSkyframeExecutor()
+            .getConfiguration(env.getReporter(), targetToRun.getConfigurationKey());
     cmdLine.add(
-        targetToRun.getConfiguration().getBinFragment().getPathString()
+        configuration.getBinFragment().getPathString()
             + "/"
             + targetToRun.getLabel().toPathFragment().getPathString()
             + "_mi/launcher");

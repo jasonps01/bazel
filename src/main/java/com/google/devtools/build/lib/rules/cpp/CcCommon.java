@@ -50,6 +50,7 @@ import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.HeadersCheckingMode;
 import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoMode;
+import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.shell.ShellUtils;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
@@ -76,14 +77,8 @@ public final class CcCommon {
   /** Name of the build variable for the path to the input file being processed. */
   public static final String INPUT_FILE_VARIABLE_NAME = "input_file";
 
-  /**
-   * Name of the build variable for includes that compiler needs to include into sources to be
-   * compiled.
-   */
-  public static final String INCLUDES_VARIABLE_NAME = "includes";
-
-  /** Name of the build variable for stripopts for the strip action. */
-  public static final String STRIPOPTS_VARIABLE_NAME = "stripopts";
+  public static final String PIC_CONFIGURATION_ERROR =
+      "PIC compilation is requested but the toolchain does not support it";
 
   private static final String NO_COPTS_ATTRIBUTE = "nocopts";
 
@@ -105,11 +100,8 @@ public final class CcCommon {
     }
   };
 
-  /** Action configs we request to enable. */
-  private static final ImmutableSet<String> DEFAULT_ACTION_CONFIGS =
+  public static final ImmutableSet<String> ALL_COMPILE_ACTIONS =
       ImmutableSet.of(
-          CppCompileAction.CC_FLAGS_MAKE_VARIABLE_ACTION_NAME,
-          CppCompileAction.STRIP_ACTION_NAME,
           CppCompileAction.C_COMPILE,
           CppCompileAction.CPP_COMPILE,
           CppCompileAction.CPP_HEADER_PARSING,
@@ -120,16 +112,29 @@ public final class CcCommon {
           CppCompileAction.PREPROCESS_ASSEMBLE,
           CppCompileAction.CLIF_MATCH,
           CppCompileAction.LINKSTAMP_COMPILE,
-          Link.LinkTargetType.STATIC_LIBRARY.getActionName(),
-          // We need to create pic-specific actions for link actions, as they will produce
-          // differently named outputs.
-          Link.LinkTargetType.PIC_STATIC_LIBRARY.getActionName(),
+          CppCompileAction.CC_FLAGS_MAKE_VARIABLE_ACTION_NAME);
+
+  public static final ImmutableSet<String> ALL_LINK_ACTIONS =
+      ImmutableSet.of(
           Link.LinkTargetType.INTERFACE_DYNAMIC_LIBRARY.getActionName(),
-          Link.LinkTargetType.NODEPS_DYNAMIC_LIBRARY.getActionName(),
           Link.LinkTargetType.DYNAMIC_LIBRARY.getActionName(),
-          Link.LinkTargetType.ALWAYS_LINK_STATIC_LIBRARY.getActionName(),
-          Link.LinkTargetType.ALWAYS_LINK_PIC_STATIC_LIBRARY.getActionName(),
-          Link.LinkTargetType.EXECUTABLE.getActionName());
+          Link.LinkTargetType.NODEPS_DYNAMIC_LIBRARY.getActionName(),
+          LinkTargetType.EXECUTABLE.getActionName());
+
+  public static final ImmutableSet<String> ALL_ARCHIVE_ACTIONS =
+      ImmutableSet.of(Link.LinkTargetType.STATIC_LIBRARY.getActionName());
+
+  public static final ImmutableSet<String> ALL_OTHER_ACTIONS =
+      ImmutableSet.of(CppCompileAction.STRIP_ACTION_NAME);
+
+  /** Action configs we request to enable. */
+  public static final ImmutableSet<String> DEFAULT_ACTION_CONFIGS =
+      ImmutableSet.<String>builder()
+          .addAll(ALL_COMPILE_ACTIONS)
+          .addAll(ALL_LINK_ACTIONS)
+          .addAll(ALL_ARCHIVE_ACTIONS)
+          .addAll(ALL_OTHER_ACTIONS)
+          .build();
 
   /** Features we request to enable unless a rule explicitly doesn't support them. */
   private static final ImmutableSet<String> DEFAULT_FEATURES =
@@ -142,6 +147,7 @@ public final class CcCommon {
           CppRuleClasses.INCLUDE_PATHS,
           CppRuleClasses.PIC,
           CppRuleClasses.PREPROCESSOR_DEFINES);
+
   public static final String CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME = ":cc_toolchain";
 
   /** C++ configuration */
@@ -698,6 +704,7 @@ public final class CcCommon {
       CcToolchainProvider toolchain) {
     ImmutableSet.Builder<String> unsupportedFeaturesBuilder = ImmutableSet.builder();
     unsupportedFeaturesBuilder.addAll(unsupportedFeatures);
+    unsupportedFeaturesBuilder.addAll(ruleContext.getDisabledFeatures());
     if (!toolchain.supportsHeaderParsing()) {
       // TODO(bazel-team): Remove once supports_header_parsing has been removed from the
       // cc_toolchain rule.
@@ -726,40 +733,6 @@ public final class CcCommon {
               : CppRuleClasses.DYNAMIC_LINK_MSVCRT_NO_DEBUG);
     }
 
-    CppConfiguration cppConfiguration = toolchain.getCppConfiguration();
-
-    allRequestedFeaturesBuilder.addAll(getCoverageFeatures(ruleContext));
-
-    if (cppConfiguration.getFdoInstrument() != null
-        && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.FDO_INSTRUMENT)) {
-      allRequestedFeaturesBuilder.add(CppRuleClasses.FDO_INSTRUMENT);
-    }
-
-    FdoMode fdoMode = toolchain.getFdoMode();
-    boolean isFdo = fdoMode != FdoMode.OFF && toolchain.getCompilationMode() == CompilationMode.OPT;
-    if (isFdo
-        && fdoMode != FdoMode.AUTO_FDO
-        && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.FDO_OPTIMIZE)) {
-      allRequestedFeaturesBuilder.add(CppRuleClasses.FDO_OPTIMIZE);
-    }
-    if (isFdo && fdoMode == FdoMode.AUTO_FDO) {
-      allRequestedFeaturesBuilder.add(CppRuleClasses.AUTOFDO);
-      // For LLVM, support implicit enabling of ThinLTO for AFDO unless it has been
-      // explicitly disabled.
-      if (toolchain.isLLVMCompiler()
-          && !ruleContext.getDisabledFeatures().contains(CppRuleClasses.THIN_LTO)) {
-        allRequestedFeaturesBuilder.add(CppRuleClasses.ENABLE_AFDO_THINLTO);
-      }
-    }
-    if (cppConfiguration.isLipoOptimizationOrInstrumentation()) {
-      // Map LIPO to ThinLTO for LLVM builds.
-      if (toolchain.isLLVMCompiler() && fdoMode != FdoMode.OFF) {
-        allRequestedFeaturesBuilder.add(CppRuleClasses.THIN_LTO);
-      } else {
-        allRequestedFeaturesBuilder.add(CppRuleClasses.LIPO);
-      }
-    }
-
     ImmutableList.Builder<String> allFeatures =
         new ImmutableList.Builder<String>()
             .addAll(
@@ -772,6 +745,42 @@ public final class CcCommon {
     if (CppHelper.useFission(ruleContext.getFragment(CppConfiguration.class), toolchain)) {
       allFeatures.add(CppRuleClasses.PER_OBJECT_DEBUG_INFO);
     }
+
+    CppConfiguration cppConfiguration = toolchain.getCppConfiguration();
+
+    allFeatures.addAll(getCoverageFeatures(ruleContext));
+
+    if (cppConfiguration.getFdoInstrument() != null
+        && !allUnsupportedFeatures.contains(CppRuleClasses.FDO_INSTRUMENT)) {
+      allFeatures.add(CppRuleClasses.FDO_INSTRUMENT);
+    }
+
+    FdoMode fdoMode = toolchain.getFdoMode();
+    boolean isFdo = fdoMode != FdoMode.OFF && toolchain.getCompilationMode() == CompilationMode.OPT;
+    if (isFdo
+        && fdoMode != FdoMode.AUTO_FDO
+        && !allUnsupportedFeatures.contains(CppRuleClasses.FDO_OPTIMIZE)) {
+      allFeatures.add(CppRuleClasses.FDO_OPTIMIZE);
+    }
+    if (isFdo && fdoMode == FdoMode.AUTO_FDO) {
+      allFeatures.add(CppRuleClasses.AUTOFDO);
+      // For LLVM, support implicit enabling of ThinLTO for AFDO unless it has been
+      // explicitly disabled.
+      if (toolchain.isLLVMCompiler() && !allUnsupportedFeatures.contains(CppRuleClasses.THIN_LTO)) {
+        allFeatures.add(CppRuleClasses.ENABLE_AFDO_THINLTO);
+      }
+    }
+    if (cppConfiguration.isLipoOptimizationOrInstrumentation()) {
+      // Map LIPO to ThinLTO for LLVM builds.
+      if (toolchain.isLLVMCompiler() && fdoMode != FdoMode.OFF) {
+        if (!allUnsupportedFeatures.contains(CppRuleClasses.THIN_LTO)) {
+          allFeatures.add(CppRuleClasses.THIN_LTO);
+        }
+      } else {
+        allFeatures.add(CppRuleClasses.LIPO);
+      }
+    }
+
     for (String feature : allFeatures.build()) {
       if (!allUnsupportedFeatures.contains(feature)) {
         allRequestedFeaturesBuilder.add(feature);
@@ -782,10 +791,10 @@ public final class CcCommon {
     allRequestedFeaturesBuilder.addAll(DEFAULT_ACTION_CONFIGS);
 
     try {
-      FeatureConfiguration configuration =
+      FeatureConfiguration featureConfiguration =
           toolchain.getFeatures().getFeatureConfiguration(allRequestedFeaturesBuilder.build());
       for (String feature : unsupportedFeatures) {
-        if (configuration.isEnabled(feature)) {
+        if (featureConfiguration.isEnabled(feature)) {
           ruleContext.ruleError(
               "The C++ toolchain '"
                   + ruleContext
@@ -797,7 +806,11 @@ public final class CcCommon {
                   + "This is most likely a misconfiguration in the C++ toolchain.");
         }
       }
-      return configuration;
+      if ((cppConfiguration.forcePic() || toolchain.toolchainNeedsPic())
+          && !featureConfiguration.isEnabled(CppRuleClasses.PIC)) {
+        ruleContext.ruleError(PIC_CONFIGURATION_ERROR);
+      }
+      return featureConfiguration;
     } catch (CollidingProvidesException e) {
       ruleContext.ruleError(e.getMessage());
       return FeatureConfiguration.EMPTY;

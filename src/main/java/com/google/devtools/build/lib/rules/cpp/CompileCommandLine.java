@@ -150,9 +150,9 @@ public final class CompileCommandLine {
    * explicit attribute, not using platform-dependent garbage bag that copts is).
    */
   public ImmutableList<String> getCopts() {
-    if (variables.isAvailable(CcCompilationHelper.USER_COMPILE_FLAGS_VARIABLE_NAME)) {
+    if (variables.isAvailable(CompileBuildVariables.USER_COMPILE_FLAGS.getVariableName())) {
       return Variables.toStringList(
-          variables, CcCompilationHelper.USER_COMPILE_FLAGS_VARIABLE_NAME);
+          variables, CompileBuildVariables.USER_COMPILE_FLAGS.getVariableName());
     } else {
       return ImmutableList.of();
     }

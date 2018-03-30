@@ -99,7 +99,6 @@ final class RemoteSpawnCache implements SpawnCache {
     Command command = RemoteSpawnRunner.buildCommand(spawn.getArguments(), spawn.getEnvironment());
     Action action =
         RemoteSpawnRunner.buildAction(
-            execRoot,
             spawn.getOutputFiles(),
             digestUtil.compute(command),
             repository.getMerkleDigest(inputRoot),
@@ -129,6 +128,7 @@ final class RemoteSpawnCache implements SpawnCache {
                 .setStatus(Status.SUCCESS)
                 .setExitCode(result.getExitCode())
                 .setCacheHit(true)
+                .setRunnerName("remote cache hit")
                 .build();
         return SpawnCache.success(spawnResult);
       }
@@ -160,8 +160,8 @@ final class RemoteSpawnCache implements SpawnCache {
         }
 
         @Override
-        public void store(SpawnResult result, Collection<Path> files)
-            throws InterruptedException, IOException {
+        public void store(SpawnResult result)
+            throws ExecException, InterruptedException, IOException {
           if (options.experimentalGuardAgainstConcurrentChanges) {
             try {
               checkForConcurrentModifications();
@@ -175,6 +175,8 @@ final class RemoteSpawnCache implements SpawnCache {
                   && Status.SUCCESS.equals(result.status())
                   && result.exitCode() == 0;
           Context previous = withMetadata.attach();
+          Collection<Path> files =
+              RemoteSpawnRunner.resolveActionInputs(execRoot, spawn.getOutputFiles());
           try {
             remoteCache.upload(actionKey, execRoot, files, policy.getFileOutErr(), uploadAction);
           } catch (IOException e) {

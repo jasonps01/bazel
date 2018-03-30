@@ -13,7 +13,6 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.cpp;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -265,10 +264,9 @@ public final class CcToolchainProvider extends ToolchainInfo {
     return builtInIncludeDirectories;
   }
 
-  /** Returns the {@link CToolchain} for this toolchain. */
-  @VisibleForTesting
-  public CToolchain getToolchain() {
-    return toolchainInfo.getToolchain();
+  /** Returns the identifier of the toolchain as specified in the {@code CToolchain} proto. */
+  public String getToolchainIdentifier() {
+    return toolchainInfo.getToolchainIdentifier();
   }
 
   /**
@@ -740,47 +738,36 @@ public final class CcToolchainProvider extends ToolchainInfo {
     return toolchainInfo.getOptionalCompilerFlags();
   }
 
-  /** Returns optional compiler flags for C++ arising from the {@link CToolchain}. */
-  ImmutableList<OptionalFlag> getOptionalCxxFlags() {
-    return toolchainInfo.getOptionalCxxFlags();
-  }
-
   /** Returns linker flags for fully statically linked outputs. */
   FlagList getFullyStaticLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
     return new FlagList(
-        configureLinkerOptions(
-            compilationMode, lipoMode, LinkingMode.FULLY_STATIC),
-        FlagList.convertOptionalOptions(toolchainInfo.getOptionalLinkerFlags()),
+        configureLinkerOptions(compilationMode, lipoMode, LinkingMode.FULLY_STATIC),
+        ImmutableList.of(),
         ImmutableList.<String>of());
   }
 
   /** Returns linker flags for mostly static linked outputs. */
   FlagList getMostlyStaticLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
     return new FlagList(
-        configureLinkerOptions(
-            compilationMode, lipoMode, LinkingMode.MOSTLY_STATIC),
-        FlagList.convertOptionalOptions(toolchainInfo.getOptionalLinkerFlags()),
+        configureLinkerOptions(compilationMode, lipoMode, LinkingMode.MOSTLY_STATIC),
+        ImmutableList.of(),
         ImmutableList.<String>of());
   }
 
   /** Returns linker flags for mostly static shared linked outputs. */
   FlagList getMostlyStaticSharedLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
     return new FlagList(
-        configureLinkerOptions(
-            compilationMode,
-            lipoMode,
-            LinkingMode.MOSTLY_STATIC_LIBRARIES),
-        FlagList.convertOptionalOptions(toolchainInfo.getOptionalLinkerFlags()),
+        configureLinkerOptions(compilationMode, lipoMode, LinkingMode.MOSTLY_STATIC_LIBRARIES),
+        ImmutableList.of(),
         ImmutableList.<String>of());
   }
 
   /** Returns linker flags for artifacts that are not fully or mostly statically linked. */
   FlagList getDynamicLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
     return new FlagList(
-        configureLinkerOptions(
-            compilationMode, lipoMode, LinkingMode.DYNAMIC),
-        FlagList.convertOptionalOptions(toolchainInfo.getOptionalLinkerFlags()),
-        ImmutableList.<String>of());
+        configureLinkerOptions(compilationMode, lipoMode, LinkingMode.DYNAMIC),
+        ImmutableList.of(),
+        ImmutableList.of());
   }
 
   ImmutableList<String> configureLinkerOptions(

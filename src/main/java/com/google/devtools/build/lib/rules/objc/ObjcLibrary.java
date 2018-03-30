@@ -14,7 +14,9 @@
 
 package com.google.devtools.build.lib.rules.objc;
 
+import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
@@ -37,7 +39,7 @@ public class ObjcLibrary implements RuleConfiguredTargetFactory {
   /**
    * Constructs an {@link ObjcCommon} instance based on the attributes of the given rule context.
    */
-  private ObjcCommon common(RuleContext ruleContext) {
+  private ObjcCommon common(RuleContext ruleContext) throws InterruptedException {
     return new ObjcCommon.Builder(ruleContext)
         .setCompilationAttributes(
             CompilationAttributes.Builder.fromRuleContext(ruleContext).build())
@@ -59,7 +61,7 @@ public class ObjcLibrary implements RuleConfiguredTargetFactory {
 
   @Override
   public ConfiguredTarget create(RuleContext ruleContext)
-      throws InterruptedException, RuleErrorException {
+      throws InterruptedException, RuleErrorException, ActionConflictException {
     validateAttributes(ruleContext);
 
     ObjcCommon common = common(ruleContext);
@@ -68,10 +70,12 @@ public class ObjcLibrary implements RuleConfiguredTargetFactory {
         .addAll(common.getCompiledArchive().asSet());
 
     Map<String, NestedSet<Artifact>> outputGroupCollector = new TreeMap<>();
+    ImmutableList.Builder<Artifact> objectFilesCollector = ImmutableList.builder();
     CompilationSupport compilationSupport =
         new CompilationSupport.Builder()
             .setRuleContext(ruleContext)
             .setOutputGroupCollector(outputGroupCollector)
+            .setObjectFilesCollector(objectFilesCollector)
             .build();
 
     compilationSupport
@@ -104,7 +108,7 @@ public class ObjcLibrary implements RuleConfiguredTargetFactory {
         .addProvider(J2ObjcMappingFileProvider.class, j2ObjcMappingFileProvider)
         .addProvider(
             InstrumentedFilesProvider.class,
-            compilationSupport.getInstrumentedFilesProvider(common))
+            compilationSupport.getInstrumentedFilesProvider(objectFilesCollector.build()))
         .addNativeDeclaredProvider(new CcLinkParamsInfo(new ObjcLibraryCcLinkParamsStore(common)))
         .addOutputGroups(outputGroupCollector)
         .build();

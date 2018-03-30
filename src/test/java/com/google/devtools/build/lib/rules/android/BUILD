@@ -104,8 +104,8 @@ java_test(
 )
 
 java_test(
-    name = "LocalResourceContainerTest",
-    srcs = ["LocalResourceContainerTest.java"],
+    name = "AndroidResourcesTest",
+    srcs = ["AndroidResourcesTest.java"],
     deps = [
         ":ResourceTestBase",
         "//src/main/java/com/google/devtools/build/lib:android-rules",
@@ -323,6 +323,51 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/test/java/com/google/devtools/build/lib:actions_testutil",
         "//src/test/java/com/google/devtools/build/lib:testutil",
+        "//third_party:guava",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
+java_test(
+    name = "AndroidManifestInfoTest",
+    srcs = ["AndroidManifestInfoTest.java"],
+    runtime_deps = ["//src/test/java/com/google/devtools/build/lib:testutil"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib:android-rules",
+        "//src/main/java/com/google/devtools/build/lib:build-base",
+        "//src/test/java/com/google/devtools/build/lib:analysis_testutil",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
+java_test(
+    name = "AndroidManifestTest",
+    srcs = ["AndroidManifestTest.java"],
+    runtime_deps = ["//src/test/java/com/google/devtools/build/lib:testutil"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib:android-rules",
+        "//src/main/java/com/google/devtools/build/lib:build-base",
+        "//src/main/java/com/google/devtools/build/lib:events",
+        "//src/main/java/com/google/devtools/build/lib:packages-internal",
+        "//src/main/java/com/google/devtools/build/lib/cmdline",
+        "//src/test/java/com/google/devtools/build/lib:analysis_testutil",
+        "//src/test/java/com/google/devtools/build/lib:testutil",
+        "//third_party:guava",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
+java_test(
+    name = "AndroidDataConverterTest",
+    srcs = ["AndroidDataConverterTest.java"],
+    runtime_deps = ["//src/test/java/com/google/devtools/build/lib:testutil"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib:android-rules",
+        "//src/main/java/com/google/devtools/build/lib/cmdline",
+        "//src/main/java/com/google/devtools/build/lib/vfs",
         "//third_party:guava",
         "//third_party:junit4",
         "//third_party:truth",

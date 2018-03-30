@@ -5,6 +5,7 @@ filegroup(
     srcs = glob(["**"]) + [
         "//src/test/shell/bazel/android:srcs",
         "//src/test/shell/bazel/apple:srcs",
+        "//src/test/shell/bazel/remote:srcs",
         "//src/test/shell/bazel/testdata:srcs",
     ],
     visibility = ["//src/test/shell:__pkg__"],
@@ -49,6 +50,7 @@ filegroup(
     }),
     visibility = [
         "//src/test/shell:__subpackages__",
+        "//src/tools/package_printer/java/com/google/devtools/build/packageprinter:__pkg__",
     ],
 )
 
@@ -89,6 +91,13 @@ sh_test(
         ":test-deps",
         "//:workspace-file",
     ],
+)
+
+sh_test(
+    name = "bazel_embedded_skylark_test",
+    size = "medium",
+    srcs = ["bazel_embedded_skylark_test.sh"],
+    data = [":test-deps"],
 )
 
 sh_test(
@@ -415,38 +424,6 @@ sh_test(
         ":test-deps",
         "//:workspace-file",
         "//src/test/shell/bazel/apple:objc-deps",
-    ],
-)
-
-sh_test(
-    name = "remote_execution_test",
-    size = "large",
-    timeout = "eternal",
-    srcs = ["remote_execution_test.sh"],
-    data = [
-        ":test-deps",
-        "//src/tools/remote:worker",
-    ],
-)
-
-sh_test(
-    name = "remote_execution_http_test",
-    size = "large",
-    srcs = ["remote_execution_http_test.sh"],
-    data = [
-        ":test-deps",
-        "//src/tools/remote:worker",
-    ],
-)
-
-sh_test(
-    name = "remote_execution_sandboxing_test",
-    size = "large",
-    srcs = ["remote_execution_sandboxing_test.sh"],
-    data = [
-        ":test-deps",
-        "//src/test/shell:sandboxing_test_utils.sh",
-        "//src/tools/remote:worker",
     ],
 )
 

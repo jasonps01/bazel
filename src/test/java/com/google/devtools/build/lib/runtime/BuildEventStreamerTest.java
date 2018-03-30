@@ -633,6 +633,9 @@ public class BuildEventStreamerTest extends FoundationTestCase {
     BuildEventStreamer streamer =
         new BuildEventStreamer(ImmutableSet.<BuildEventTransport>of(transport), reporter);
 
+    BuildOptions defaultBuildOptions =
+        BuildOptions.of(
+            ImmutableList.<Class<? extends FragmentOptions>>of(BuildConfiguration.Options.class));
     BuildEvent startEvent =
         new GenericBuildEvent(
             testId("Initial"),
@@ -645,14 +648,13 @@ public class BuildEventStreamerTest extends FoundationTestCase {
                 "productName"),
             ImmutableMap
                 .<Class<? extends BuildConfiguration.Fragment>, BuildConfiguration.Fragment>of(),
-            BuildOptions.of(
-                ImmutableList.<Class<? extends FragmentOptions>>of(
-                    BuildConfiguration.Options.class)),
+            defaultBuildOptions,
+            BuildOptions.diffForReconstruction(defaultBuildOptions, defaultBuildOptions),
             "workspace");
     BuildEvent firstWithConfiguration =
-        new GenericConfigurationEvent(testId("first"), configuration);
+        new GenericConfigurationEvent(testId("first"), configuration.toBuildEvent());
     BuildEvent secondWithConfiguration =
-        new GenericConfigurationEvent(testId("second"), configuration);
+        new GenericConfigurationEvent(testId("second"), configuration.toBuildEvent());
 
     streamer.buildEvent(startEvent);
     streamer.buildEvent(firstWithConfiguration);
@@ -663,7 +665,7 @@ public class BuildEventStreamerTest extends FoundationTestCase {
     assertThat(allEventsSeen).hasSize(7);
     assertThat(allEventsSeen.get(0).getEventId()).isEqualTo(startEvent.getEventId());
     assertThat(allEventsSeen.get(1).getEventId()).isEqualTo(ProgressEvent.INITIAL_PROGRESS_UPDATE);
-    assertThat(allEventsSeen.get(2)).isEqualTo(configuration);
+    assertThat(allEventsSeen.get(2)).isEqualTo(configuration.toBuildEvent());
     assertThat(allEventsSeen.get(3).getEventId()).isEqualTo(BuildEventId.progressId(1));
     assertThat(allEventsSeen.get(4)).isEqualTo(firstWithConfiguration);
     assertThat(allEventsSeen.get(5).getEventId()).isEqualTo(BuildEventId.progressId(2));

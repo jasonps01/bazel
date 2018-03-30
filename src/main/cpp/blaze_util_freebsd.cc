@@ -32,14 +32,14 @@
 #include "src/main/cpp/util/errors.h"
 #include "src/main/cpp/util/exit_code.h"
 #include "src/main/cpp/util/file.h"
+#include "src/main/cpp/util/logging.h"
 #include "src/main/cpp/util/port.h"
 #include "src/main/cpp/util/strings.h"
 
 namespace blaze {
 
 using blaze_util::die;
-using blaze_util::pdie;
-using blaze_util::PrintWarning;
+using blaze_util::GetLastErrorString;
 using std::string;
 
 string GetOutputRoot() {
@@ -58,16 +58,15 @@ string GetOutputRoot() {
 void WarnFilesystemType(const string &output_base) {
   struct statfs buf = {};
   if (statfs(output_base.c_str(), &buf) < 0) {
-    PrintWarning("couldn't get file system type information for '%s': %s",
-                output_base.c_str(), strerror(errno));
+    BAZEL_LOG(WARNING) << "couldn't get file system type information for '"
+                       << output_base << "': " << strerror(errno);
     return;
   }
 
   if (strcmp(buf.f_fstypename, "nfs") == 0) {
-    PrintWarning(
-        "Output base '%s' is on NFS. This may lead "
-        "to surprising failures and undetermined behavior.",
-        output_base.c_str());
+    BAZEL_LOG(WARNING) << "Output base '" << output_base
+                       << "' is on NFS. This may lead to surprising failures "
+                          "and undetermined behavior.";
   }
 }
 
@@ -80,12 +79,14 @@ string GetSelfPath() {
   auto p = procstat_getprocs(procstat, KERN_PROC_PID, pid, &n);
   if (p) {
     if (n != 1) {
-      pdie(blaze_exit_code::INTERNAL_ERROR,
-           "expected exactly one process from procstat_getprocs, got %d", n);
+      die(blaze_exit_code::INTERNAL_ERROR,
+          "expected exactly one process from procstat_getprocs, got %d: %s", n,
+          GetLastErrorString().c_str());
     }
     auto r = procstat_getpathname(procstat, p, buffer, PATH_MAX);
     if (r != 0) {
-      pdie(blaze_exit_code::INTERNAL_ERROR, "error procstat_getpathname");
+      die(blaze_exit_code::INTERNAL_ERROR, "procstat_getpathname failed: %s",
+          GetLastErrorString().c_str());
     }
     procstat_freeprocs(procstat, p);
   }
@@ -117,8 +118,9 @@ string GetProcessCWD(int pid) {
   string cwd;
   if (p) {
     if (n != 1) {
-      pdie(blaze_exit_code::INTERNAL_ERROR,
-           "expected exactly one process from procstat_getprocs, got %d", n);
+      die(blaze_exit_code::INTERNAL_ERROR,
+          "expected exactly one process from procstat_getprocs, got %d: %s", n,
+          GetLastErrorString().c_str());
     }
     auto files = procstat_getfiles(procstat, p, false);
     filestat *entry;

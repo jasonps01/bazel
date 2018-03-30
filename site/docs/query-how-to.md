@@ -10,8 +10,8 @@ This is a quick tutorial to get you started using Bazel's query language to
 trace dependencies in your code.
 
 For a language details and `--output` flag details, please see the reference
-manual, [Bazel query reference](query.html).  You can get help for Bazel query
-by typing `bazel help query`.
+manuals, [Bazel query reference](query.html) and [Bazel cquery reference](cquery.html). You can get help for Bazel query and cquery
+by typing `bazel help query` or `bazel help cquery`.
 
 To execute a query while ignoring errors such as missing targets, use the
 `--keep_going` flag.
@@ -217,7 +217,7 @@ bazel query 'kind("generated file", //foo:*)'
 #### What's the set of BUILD files needed to build `//foo`?
 
 ```sh
-bazel query 'buildfiles(deps(//foo))' --output location | cut -f1 -d:
+bazel query 'buildfiles(deps(//foo))' | cut -f1 -d:
 ```
 
 <a name="What_are_the_individual_tests_th"></a>

@@ -23,12 +23,13 @@ import com.google.devtools.build.lib.actions.ActionExecutionMetadata;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.analysis.AnalysisProtos;
 import com.google.devtools.build.lib.analysis.AnalysisProtos.ActionGraphContainer;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
-import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
+import com.google.devtools.build.lib.buildeventstream.BuildEvent;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetView;
@@ -56,9 +57,12 @@ public class ActionGraphDump {
   private final KnownNestedSets knownNestedSets;
   private final KnownAspectDescriptors knownAspectDescriptors;
   private final KnownRuleConfiguredTargets knownRuleConfiguredTargets;
+  private final boolean includeActionCmdLine;
 
-  public ActionGraphDump(List<String> actionGraphTargets) {
+  public ActionGraphDump(List<String> actionGraphTargets, boolean includeActionCmdLine) {
     this.actionGraphTargets = ImmutableSet.copyOf(actionGraphTargets);
+    this.includeActionCmdLine = includeActionCmdLine;
+
     knownRuleClassStrings = new KnownRuleClassStrings(actionGraphBuilder);
     knownArtifacts = new KnownArtifacts(actionGraphBuilder);
     knownConfigurations = new KnownConfigurations(actionGraphBuilder);
@@ -80,7 +84,8 @@ public class ActionGraphDump {
     return actionGraphTargets.contains(labelString);
   }
 
-  private void dumpSingleAction(ConfiguredTarget configuredTarget, ActionAnalysisMetadata action) {
+  private void dumpSingleAction(ConfiguredTarget configuredTarget, ActionAnalysisMetadata action)
+      throws CommandLineExpansionException {
     Preconditions.checkState(configuredTarget instanceof RuleConfiguredTarget);
     RuleConfiguredTarget ruleConfiguredTarget = (RuleConfiguredTarget) configuredTarget;
     AnalysisProtos.Action.Builder actionBuilder =
@@ -98,7 +103,7 @@ public class ActionGraphDump {
     // store environment
     if (action instanceof SpawnAction) {
       SpawnAction spawnAction = (SpawnAction) action;
-      // TODO(twerth): This handles the fixed environemnt. We probably want to output the inherited
+      // TODO(twerth): This handles the fixed environment. We probably want to output the inherited
       // environment as well.
       ImmutableMap<String, String> fixedEnvironment = spawnAction.getEnvironment();
       for (Entry<String, String> environmentVariable : fixedEnvironment.entrySet()) {
@@ -109,12 +114,16 @@ public class ActionGraphDump {
             .setValue(environmentVariable.getValue());
         actionBuilder.addEnvironmentVariables(keyValuePairBuilder.build());
       }
+
+      if (includeActionCmdLine) {
+        actionBuilder.addAllArguments(spawnAction.getArguments());
+      }
     }
 
     ActionOwner actionOwner = action.getOwner();
     if (actionOwner != null) {
-      BuildConfiguration buildConfiguration = (BuildConfiguration) actionOwner.getConfiguration();
-      actionBuilder.setConfigurationId(knownConfigurations.dataToId(buildConfiguration));
+      BuildEvent event = actionOwner.getConfiguration();
+      actionBuilder.setConfigurationId(knownConfigurations.dataToId(event));
 
       // store aspect
       for (AspectDescriptor aspectDescriptor : actionOwner.getAspectDescriptors()) {
@@ -140,7 +149,8 @@ public class ActionGraphDump {
     actionGraphBuilder.addActions(actionBuilder.build());
   }
 
-  public void dumpAspect(AspectValue aspectValue, ConfiguredTargetValue configuredTargetValue) {
+  public void dumpAspect(AspectValue aspectValue, ConfiguredTargetValue configuredTargetValue)
+      throws CommandLineExpansionException {
     ConfiguredTarget configuredTarget = configuredTargetValue.getConfiguredTarget();
     if (!includeInActionGraph(configuredTarget.getLabel().toString())) {
       return;
@@ -151,7 +161,8 @@ public class ActionGraphDump {
     }
   }
 
-  public void dumpConfiguredTarget(ConfiguredTargetValue configuredTargetValue) {
+  public void dumpConfiguredTarget(ConfiguredTargetValue configuredTargetValue)
+      throws CommandLineExpansionException {
     ConfiguredTarget configuredTarget = configuredTargetValue.getConfiguredTarget();
     if (!includeInActionGraph(configuredTarget.getLabel().toString())) {
       return;

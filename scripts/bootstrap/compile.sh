@@ -18,9 +18,9 @@
 
 PROTO_FILES=$(ls src/main/protobuf/*.proto src/main/java/com/google/devtools/build/lib/buildeventstream/proto/*.proto)
 LIBRARY_JARS=$(find third_party -name '*.jar' | grep -Fv JavaBuilder | grep -Fv third_party/guava | grep -Fv third_party/guava | grep -ve 'third_party/grpc/grpc.*jar' | tr "\n" " ")
-GRPC_JAVA_VERSION=1.7.0
+GRPC_JAVA_VERSION=1.10.0
 GRPC_LIBRARY_JARS=$(find third_party/grpc -name '*.jar' | grep -e ".*${GRPC_JAVA_VERSION}.*jar" | tr "\n" " ")
-GUAVA_VERSION=23.1
+GUAVA_VERSION=24.1
 GUAVA_JARS=$(find third_party/guava -name '*.jar' | grep -e ".*${GUAVA_VERSION}.*jar" | tr "\n" " ")
 LIBRARY_JARS="${LIBRARY_JARS} ${GRPC_LIBRARY_JARS} ${GUAVA_JARS}"
 
@@ -207,10 +207,24 @@ if [ -z "${BAZEL_SKIP_JAVA_COMPILATION}" ]; then
     cp src/main/java/$i ${OUTPUT_DIR}/classes/$i
   done
 
+  # Create the bazel_tools repository.
+  BAZEL_TOOLS_REPO=${OUTPUT_DIR}/embedded_tools
+  mkdir -p ${BAZEL_TOOLS_REPO}
+  cat <<EOF >${BAZEL_TOOLS_REPO}/WORKSPACE
+workspace(name = 'bazel_tools')
+EOF
+  link_dir ${PWD}/src ${BAZEL_TOOLS_REPO}/src
+  link_dir ${PWD}/third_party ${BAZEL_TOOLS_REPO}/third_party
+  link_dir ${PWD}/tools ${BAZEL_TOOLS_REPO}/tools
+
+  # Set up @bazel_tools//platforms properly
+  mkdir -p ${BAZEL_TOOLS_REPO}/platforms
+  cp tools/platforms/platforms.BUILD ${BAZEL_TOOLS_REPO}/platforms/BUILD
+
   # Overwrite tools.WORKSPACE, this is only for the bootstrap binary
   chmod u+w "${OUTPUT_DIR}/classes/com/google/devtools/build/lib/bazel/rules/tools.WORKSPACE"
   cat <<EOF >${OUTPUT_DIR}/classes/com/google/devtools/build/lib/bazel/rules/tools.WORKSPACE
-local_repository(name = 'bazel_tools', path = __workspace_dir__)
+local_repository(name = 'bazel_tools', path = '${BAZEL_TOOLS_REPO}')
 bind(name = "cc_toolchain", actual = "@bazel_tools//tools/cpp:default-toolchain")
 EOF
 

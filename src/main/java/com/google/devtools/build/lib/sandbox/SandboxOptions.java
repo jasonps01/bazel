@@ -77,7 +77,6 @@ public class SandboxOptions extends OptionsBase {
   @Option(
     name = "ignore_unsupported_sandboxing",
     defaultValue = "false",
-    category = "strategy",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Do not print a warning when sandboxed execution is not supported on this system."
@@ -87,7 +86,6 @@ public class SandboxOptions extends OptionsBase {
   @Option(
     name = "sandbox_debug",
     defaultValue = "false",
-    category = "strategy",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -99,7 +97,6 @@ public class SandboxOptions extends OptionsBase {
   @Option(
     name = "experimental_sandbox_base",
     defaultValue = "",
-    category = "strategy",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -113,7 +110,6 @@ public class SandboxOptions extends OptionsBase {
   @Option(
     name = "sandbox_fake_hostname",
     defaultValue = "false",
-    category = "strategy",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Change the current hostname to 'localhost' for sandboxed actions."
@@ -123,7 +119,6 @@ public class SandboxOptions extends OptionsBase {
   @Option(
     name = "sandbox_fake_username",
     defaultValue = "false",
-    category = "strategy",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Change the current username to 'nobody' for sandboxed actions."
@@ -134,7 +129,6 @@ public class SandboxOptions extends OptionsBase {
     name = "sandbox_block_path",
     allowMultiple = true,
     defaultValue = "",
-    category = "config",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "For sandboxed actions, disallow access to this path."
@@ -145,7 +139,6 @@ public class SandboxOptions extends OptionsBase {
     name = "sandbox_tmpfs_path",
     allowMultiple = true,
     defaultValue = "",
-    category = "config",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -158,7 +151,6 @@ public class SandboxOptions extends OptionsBase {
     name = "sandbox_writable_path",
     allowMultiple = true,
     defaultValue = "",
-    category = "config",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
@@ -172,12 +164,33 @@ public class SandboxOptions extends OptionsBase {
     allowMultiple = true,
     converter = MountPairConverter.class,
     defaultValue = "",
-    category = "config",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Add additional path pair to mount in sandbox."
   )
   public List<ImmutableMap.Entry<String, String>> sandboxAdditionalMounts;
+
+  @Option(
+    name = "experimental_use_sandboxfs",
+    defaultValue = "false",
+    documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    help =
+        "Use sandboxfs to create the actions' execroot directories instead of building a symlink "
+            + "tree."
+  )
+  public boolean useSandboxfs;
+
+  @Option(
+    name = "experimental_sandboxfs_path",
+    defaultValue = "sandboxfs",
+    documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    help =
+        "Path to the sandboxfs binary to use when --experimental_use_sandboxfs is true. If a "
+            + "bare name, use the first binary of that name found in the PATH."
+  )
+  public String sandboxfsPath;
 
   public ImmutableSet<Path> getInaccessiblePaths(FileSystem fs) {
     List<Path> inaccessiblePaths = new ArrayList<>();

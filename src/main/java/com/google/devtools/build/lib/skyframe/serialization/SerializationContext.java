@@ -14,40 +14,100 @@
 
 package com.google.devtools.build.lib.skyframe.serialization;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
+import com.google.devtools.build.lib.skyframe.serialization.Memoizer.Serializer;
+import com.google.devtools.build.lib.skyframe.serialization.ObjectCodecs.MemoizationPermission;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException.NoCodecException;
 import com.google.protobuf.CodedOutputStream;
 import java.io.IOException;
+import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;
 
-/** Stateful class for providing additional context to a single serialization "session". */
-// TODO(bazel-team): This class is just a shell, fill in.
+/**
+ * Stateful class for providing additional context to a single serialization "session". This class
+ * is thread-safe so long as {@link #serializer} is null. If it is not null, this class is not
+ * thread-safe and should only be accessed on a single thread for serializing one object (that may
+ * involve serializing other objects contained in it).
+ */
 public class SerializationContext {
-
   private final ObjectCodecRegistry registry;
   private final ImmutableMap<Class<?>, Object> dependencies;
+  private final MemoizationPermission memoizationPermission;
+  @Nullable private final Memoizer.Serializer serializer;
 
-  public SerializationContext(
-      ObjectCodecRegistry registry, ImmutableMap<Class<?>, Object> dependencies) {
+  private SerializationContext(
+      ObjectCodecRegistry registry,
+      ImmutableMap<Class<?>, Object> dependencies,
+      MemoizationPermission memoizationPermission,
+      @Nullable Serializer serializer) {
     this.registry = registry;
     this.dependencies = dependencies;
+    this.serializer = serializer;
+    this.memoizationPermission = memoizationPermission;
+    Preconditions.checkState(
+        serializer == null || memoizationPermission == MemoizationPermission.ALLOWED);
   }
 
+  @VisibleForTesting
+  public SerializationContext(
+      ObjectCodecRegistry registry, ImmutableMap<Class<?>, Object> dependencies) {
+    this(registry, dependencies, MemoizationPermission.ALLOWED, /*serializer=*/ null);
+  }
+
+  @VisibleForTesting
   public SerializationContext(ImmutableMap<Class<?>, Object> dependencies) {
     this(AutoRegistry.get(), dependencies);
+  }
+
+  SerializationContext disableMemoization() {
+    Preconditions.checkState(
+        memoizationPermission == MemoizationPermission.ALLOWED, "memoization already disabled");
+    Preconditions.checkState(serializer == null, "serializer already present");
+    return new SerializationContext(
+        registry, dependencies, MemoizationPermission.DISABLED, serializer);
+  }
+
+  /**
+   * Returns a {@link SerializationContext} that will memoize values it encounters (using reference
+   * equality) in a new memoization table. The returned context should be used instead of the
+   * original: memoization may only occur when using the returned context. Calls must be in pairs
+   * with {@link DeserializationContext#getMemoizingContext} in the corresponding deserialization
+   * code.
+   *
+   * <p>This method is idempotent: calling it on an already memoizing context will return the same
+   * context.
+   */
+  @CheckReturnValue
+  public SerializationContext getMemoizingContext() {
+    Preconditions.checkState(
+        memoizationPermission == MemoizationPermission.ALLOWED, "memoization disabled");
+    if (serializer != null) {
+      return this;
+    }
+    return new SerializationContext(
+        this.registry, this.dependencies, memoizationPermission, new Memoizer.Serializer());
+  }
+
+  private boolean writeNullOrConstant(@Nullable Object object, CodedOutputStream codedOut)
+      throws IOException {
+    if (object == null) {
+      codedOut.writeSInt32NoTag(0);
+      return true;
+    }
+    Integer tag = registry.maybeGetTagForConstant(object);
+    if (tag != null) {
+      codedOut.writeSInt32NoTag(tag);
+      return true;
+    }
+    return false;
   }
 
   @Nullable
   private ObjectCodecRegistry.CodecDescriptor recordAndGetDescriptorIfNotConstantOrNull(
       @Nullable Object object, CodedOutputStream codedOut) throws IOException, NoCodecException {
-    if (object == null) {
-      codedOut.writeSInt32NoTag(0);
-      return null;
-    }
-    Integer tag = registry.maybeGetTagForConstant(object);
-    if (tag != null) {
-      codedOut.writeSInt32NoTag(tag);
+    if (writeNullOrConstant(object, codedOut)) {
       return null;
     }
     ObjectCodecRegistry.CodecDescriptor descriptor = registry.getCodecDescriptor(object.getClass());
@@ -61,28 +121,15 @@ public class SerializationContext {
     ObjectCodecRegistry.CodecDescriptor descriptor =
         recordAndGetDescriptorIfNotConstantOrNull(object, codedOut);
     if (descriptor != null) {
-      descriptor.serialize(this, object, codedOut);
+      if (serializer == null) {
+        descriptor.serialize(this, object, codedOut);
+      } else {
+        @SuppressWarnings("unchecked")
+        ObjectCodec<Object> castCodec = (ObjectCodec<Object>) descriptor.getCodec();
+        serializer.serialize(this, object, castCodec, codedOut);
+      }
     }
-  }
-
-  /**
-   * Returns the {@link ObjectCodec} to use when serializing {@code object}. The codec's tag is
-   * written to {@code codedOut} so that {@link DeserializationContext#getCodecRecordedInInput} can
-   * return the correct codec as well. Only to be used by {@code MemoizingCodec}.
-   *
-   * <p>If the return value is null, this indicates that the value was serialized directly as null
-   * or a constant. The caller needs do nothing further to serialize {@code object} in this case.
-   */
-  @SuppressWarnings("unchecked") // cast to ObjectCodec<? super T>.
-  public <T> ObjectCodec<? super T> recordAndMaybeReturnCodec(T object, CodedOutputStream codedOut)
-      throws SerializationException, IOException {
-    ObjectCodecRegistry.CodecDescriptor descriptor =
-        recordAndGetDescriptorIfNotConstantOrNull(object, codedOut);
-    if (descriptor == null) {
-      return null;
     }
-    return (ObjectCodec<? super T>) descriptor.getCodec();
-  }
 
   @SuppressWarnings("unchecked")
   public <T> T getDependency(Class<T> type) {

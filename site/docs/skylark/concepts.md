@@ -1,15 +1,15 @@
 ---
 layout: documentation
-title: Extensions - Overview
+title: Extension Overview
 ---
 
-# Overview
+# Extension Overview
 
 <!-- [TOC] -->
 
 ## Loading an extension
 
-Extensions are files with the `.bzl` extension. Use the `load` statement to
+Bazel extensions are files ending in `.bzl`. Use the `load` statement to
 import a symbol from an extension.
 
 ```python

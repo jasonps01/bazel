@@ -72,7 +72,7 @@ import com.google.devtools.build.lib.rules.proto.ProtoSourceFileBlacklist;
 import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
 import com.google.devtools.build.lib.rules.proto.ProtoSupportDataProvider;
 import com.google.devtools.build.lib.rules.proto.SupportData;
-import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.List;
@@ -111,7 +111,7 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
       LabelLateBoundDefault.fromTargetConfiguration(
           J2ObjcConfiguration.class,
           null,
-          (rule, attributes, j2objcConfig) -> j2objcConfig.deadCodeReport().orNull());
+          (rule, attributes, j2objcConfig) -> j2objcConfig.deadCodeReport());
 
   /** Adds additional attribute aspects and attributes to the given AspectDefinition.Builder. */
   protected AspectDefinition.Builder addAdditionalAttributes(AspectDefinition.Builder builder) {
@@ -225,9 +225,9 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
 
   @Override
   public ConfiguredAspect create(
-      ConfiguredTargetAndTarget ctatBase, RuleContext ruleContext, AspectParameters parameters)
+      ConfiguredTargetAndData ctadBase, RuleContext ruleContext, AspectParameters parameters)
       throws InterruptedException {
-    ConfiguredTarget base = ctatBase.getConfiguredTarget();
+    ConfiguredTarget base = ctadBase.getConfiguredTarget();
     if (isProtoRule(base)) {
       if (shouldAttachToProtoRule(ruleContext)) {
         return proto(base, ruleContext, parameters);
@@ -630,11 +630,10 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
             .addAll(outputClassMappingFiles)
             .build();
 
+    String genfilesPath = getProtoOutputRoot(ruleContext).getPathString();
+
     String langPluginParameter =
-        String.format(
-            "%s:%s",
-            Joiner.on(',').join(J2OBJC_PLUGIN_PARAMS),
-            ruleContext.getConfiguration().getGenfilesFragment().getPathString());
+        String.format("%s:%s", Joiner.on(',').join(J2OBJC_PLUGIN_PARAMS), genfilesPath);
 
     SupportData supportData = base.getProvider(ProtoSupportDataProvider.class).getSupportData();
 
@@ -744,11 +743,8 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
 
   private static J2ObjcSource protoJ2ObjcSource(
       RuleContext ruleContext, ImmutableList<Artifact> protoSources) {
-    PathFragment objcFileRootExecPath =
-        ruleContext
-            .getConfiguration()
-            .getGenfilesDirectory(ruleContext.getRule().getRepository())
-            .getExecPath();
+    PathFragment objcFileRootExecPath = getProtoOutputRoot(ruleContext);
+
     Iterable<PathFragment> headerSearchPaths =
         J2ObjcLibrary.j2objcSourceHeaderSearchPaths(
             ruleContext, objcFileRootExecPath, protoSources);
@@ -760,6 +756,14 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
         objcFileRootExecPath,
         SourceType.PROTO,
         headerSearchPaths);
+  }
+
+  private static PathFragment getProtoOutputRoot(RuleContext ruleContext) {
+    return ruleContext
+        .getConfiguration()
+        .getGenfilesFragment()
+        .getRelative(
+            ruleContext.getLabel().getPackageIdentifier().getRepository().getPathUnderExecRoot());
   }
 
   private static boolean isProtoRule(ConfiguredTarget base) {
@@ -787,7 +791,7 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
    */
   static ObjcCommon common(RuleContext ruleContext, Iterable<Artifact> transpiledSources,
       Iterable<Artifact> transpiledHeaders, Iterable<PathFragment> headerSearchPaths,
-      Iterable<Attribute> dependentAttributes) {
+      Iterable<Attribute> dependentAttributes) throws InterruptedException {
     ObjcCommon.Builder builder = new ObjcCommon.Builder(ruleContext);
     IntermediateArtifacts intermediateArtifacts =
         ObjcRuleClasses.j2objcIntermediateArtifacts(ruleContext);

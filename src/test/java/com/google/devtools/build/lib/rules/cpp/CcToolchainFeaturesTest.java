@@ -20,8 +20,12 @@ import static org.junit.Assert.fail;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
+import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.ArtifactRoot;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.ActionConfig;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.ExpansionException;
@@ -34,11 +38,16 @@ import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.Str
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.StructureBuilder;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.VariableValue;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.VariableValueBuilder;
+import com.google.devtools.build.lib.skyframe.serialization.AutoRegistry;
+import com.google.devtools.build.lib.skyframe.serialization.ObjectCodecs;
 import com.google.devtools.build.lib.skyframe.serialization.testutils.SerializationTester;
+import com.google.devtools.build.lib.testutil.FoundationTestCase;
 import com.google.devtools.build.lib.testutil.TestUtils;
+import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain;
 import com.google.protobuf.TextFormat;
+import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -47,11 +56,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Tests for toolchain features.
- */
+/** Tests for toolchain features. */
 @RunWith(JUnit4.class)
-public class CcToolchainFeaturesTest {
+public class CcToolchainFeaturesTest extends FoundationTestCase {
 
   /**
    * Creates a {@code Variables} configuration from a list of key/value pairs.
@@ -102,8 +109,19 @@ public class CcToolchainFeaturesTest {
     return enabledFeatures.build();
   }
 
+  private Artifact scratchArtifact(String s) {
+    Path execRoot = outputBase.getRelative("exec");
+    Path outputRoot = execRoot.getRelative("out");
+    ArtifactRoot root = ArtifactRoot.asDerivedRoot(execRoot, outputRoot);
+    try {
+      return new Artifact(scratch.overwriteFile(outputRoot.getRelative(s).toString()), root);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
   @Test
-  public void testCodec() throws Exception {
+  public void testFeatureConfigurationCodec() throws Exception {
     FeatureConfiguration emptyConfiguration =
         buildFeatures("").getFeatureConfiguration(ImmutableSet.of());
     FeatureConfiguration emptyFeatures =
@@ -144,6 +162,17 @@ public class CcToolchainFeaturesTest {
 
     new SerializationTester(emptyConfiguration, emptyFeatures, featuresWithFlags, featureWithEnvSet)
         .runTests();
+  }
+
+  @Test
+  public void testCrosstoolProtoCanBeSerialized() throws Exception {
+    ObjectCodecs objectCodecs =
+        new ObjectCodecs(AutoRegistry.get().getBuilder().build(), ImmutableMap.of());
+    objectCodecs.serialize(CToolchain.WithFeatureSet.getDefaultInstance());
+    objectCodecs.serialize(CToolchain.VariableWithValue.getDefaultInstance());
+    objectCodecs.serialize(CToolchain.FlagGroup.getDefaultInstance());
+    objectCodecs.serialize(CToolchain.FlagSet.getDefaultInstance());
+    objectCodecs.serialize(CToolchain.EnvSet.getDefaultInstance());
   }
 
   @Test
@@ -1671,19 +1700,24 @@ public class CcToolchainFeaturesTest {
                 .getFieldValue("LibraryToLinkValue", LibraryToLinkValue.OBJECT_FILES_FIELD_NAME))
         .isNull();
 
+    ImmutableList<Artifact> testArtifacts =
+        ImmutableList.of(scratchArtifact("foo"), scratchArtifact("bar"));
+
     assertThat(
-            LibraryToLinkValue.forObjectFileGroup(ImmutableList.of("foo", "bar"), false)
+            LibraryToLinkValue.forObjectFileGroup(testArtifacts, false)
                 .getFieldValue("LibraryToLinkValue", LibraryToLinkValue.NAME_FIELD_NAME))
         .isNull();
     Iterable<? extends VariableValue> objects =
-        LibraryToLinkValue.forObjectFileGroup(ImmutableList.of("foo", "bar"), false)
+        LibraryToLinkValue.forObjectFileGroup(testArtifacts, false)
             .getFieldValue("LibraryToLinkValue", LibraryToLinkValue.OBJECT_FILES_FIELD_NAME)
             .getSequenceValue(LibraryToLinkValue.OBJECT_FILES_FIELD_NAME);
     ImmutableList.Builder<String> objectNames = ImmutableList.builder();
     for (VariableValue object : objects) {
       objectNames.add(object.getStringValue("name"));
     }
-    assertThat(objectNames.build()).containsExactly("foo", "bar");
+    assertThat(objectNames.build())
+        .containsExactlyElementsIn(
+            Iterables.transform(testArtifacts, testArtifact -> testArtifact.getExecPathString()));
   }
 
   @Test

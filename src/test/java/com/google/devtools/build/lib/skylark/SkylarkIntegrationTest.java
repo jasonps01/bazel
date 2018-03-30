@@ -39,7 +39,7 @@ import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.Provider;
 import com.google.devtools.build.lib.packages.SkylarkProvider;
 import com.google.devtools.build.lib.packages.SkylarkProvider.SkylarkKey;
-import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndTarget;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.skyframe.PackageFunction;
 import com.google.devtools.build.lib.skyframe.SkyFunctions;
 import com.google.devtools.build.lib.skyframe.SkylarkImportLookupFunction;
@@ -108,7 +108,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
   }
 
   private AttributeContainer getContainerForTarget(String targetName) throws Exception {
-    ConfiguredTargetAndTarget target = getConfiguredTargetAndTarget("//test/skylark:" + targetName);
+    ConfiguredTargetAndData target = getConfiguredTargetAndData("//test/skylark:" + targetName);
     return target.getTarget().getAssociatedRule().getAttributeContainer();
   }
 
@@ -158,7 +158,26 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
     assertThat(ccTarget.getAttr("generator_location")).isEqualTo("");
   }
 
-
+  @Test
+  public void sanityCheckUserDefinedTestRule() throws Exception {
+    scratch.file(
+        "test/skylark/test_rule.bzl",
+        "def _impl(ctx):",
+        "  output = ctx.outputs.out",
+        "  ctx.actions.write(output = output, content = 'hello')",
+        "",
+        "fake_test = rule(",
+        "  implementation = _impl,",
+        "  test=True,",
+        "  attrs = {'_xcode_config': attr.label(default = configuration_field(",
+        "  fragment = 'apple', name = \"xcode_config_label\"))},",
+        "  outputs = {\"out\": \"%{name}.txt\"})");
+    scratch.file(
+        "test/skylark/BUILD",
+        "load('//test/skylark:test_rule.bzl', 'fake_test')",
+        "fake_test(name = 'test_name')");
+    getConfiguredTarget("//test/skylark:fake_test");
+  }
 
   @Test
   public void testOutputGroups() throws Exception {

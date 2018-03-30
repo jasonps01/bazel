@@ -71,7 +71,7 @@
 namespace devtools_ijar {
 // In the absence of ZIP64 support, zip files are limited to 4GB.
 // http://www.info-zip.org/FAQ.html#limits
-static const u8 kMaximumOutputSize = std::numeric_limits<uint32_t>::max();
+static const size_t kMaximumOutputSize = std::numeric_limits<uint32_t>::max();
 
 static const u4 kDefaultTimestamp =
     30 << 25 | 1 << 21 | 1 << 16;  // January 1, 2010 in DOS time
@@ -147,13 +147,6 @@ class InputZipFile : public ZipExtractor {
   const u1 *file_name_;
   const u1 *extra_field_;
 
-  // Administration of memory reserved for decompressed data. We use the same
-  // buffer for each file to avoid some malloc()/free() calls and free the
-  // memory only in the dtor. C-style memory management is used so that we
-  // can call realloc.
-  u1 *uncompressed_data_;
-  size_t uncompressed_data_allocated_;
-
   // Copy of the last filename entry - Null-terminated.
   char filename[PATH_MAX];
   // The external file attribute field
@@ -206,11 +199,11 @@ class InputZipFile : public ZipExtractor {
 //
 class OutputZipFile : public ZipBuilder {
  public:
-  OutputZipFile(const char* filename, u8 estimated_size) :
-      output_file_(NULL),
-      filename_(filename),
-      estimated_size_(estimated_size),
-      finished_(false) {
+  OutputZipFile(const char *filename, size_t estimated_size)
+      : output_file_(NULL),
+        filename_(filename),
+        estimated_size_(estimated_size),
+        finished_(false) {
     errmsg[0] = 0;
   }
 
@@ -264,7 +257,7 @@ class OutputZipFile : public ZipBuilder {
 
   MappedOutputFile* output_file_;
   const char* filename_;
-  u8 estimated_size_;
+  size_t estimated_size_;
   bool finished_;
 
   // OutputZipFile is responsible for maintaining the following
@@ -599,7 +592,7 @@ struct EndOfCentralDirectoryRecord {
 
 // Checks for a zip64 end of central directory record. If a valid zip64 EOCD is
 // found, updates the original EOCD record and returns true.
-bool MaybeReadZip64CentralDirectory(const u1 *bytes, size_t in_length,
+bool MaybeReadZip64CentralDirectory(const u1 *bytes, size_t /*in_length*/,
                                     const u1 *current,
                                     const u1 **end_of_central_dir,
                                     EndOfCentralDirectoryRecord *cd) {
@@ -1085,8 +1078,8 @@ int OutputZipFile::FinishFile(size_t filelength, bool compress,
 bool OutputZipFile::Open() {
   if (estimated_size_ > kMaximumOutputSize) {
     fprintf(stderr,
-            "Uncompressed input jar has size %llu, "
-            "which exceeds the maximum supported output size %llu.\n"
+            "Uncompressed input jar has size %lu, "
+            "which exceeds the maximum supported output size %lu.\n"
             "Assuming that ijar will be smaller and hoping for the best.\n",
             estimated_size_, kMaximumOutputSize);
     estimated_size_ = kMaximumOutputSize;
@@ -1106,7 +1099,7 @@ bool OutputZipFile::Open() {
   return true;
 }
 
-ZipBuilder* ZipBuilder::Create(const char* zip_file, u8 estimated_size) {
+ZipBuilder *ZipBuilder::Create(const char *zip_file, size_t estimated_size) {
   OutputZipFile* result = new OutputZipFile(zip_file, estimated_size);
   if (!result->Open()) {
     fprintf(stderr, "%s\n", result->GetError());

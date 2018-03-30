@@ -32,11 +32,12 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.TypeMirror;
 
 /** Static utilities for AutoCodec processors. */
 class AutoCodecUtil {
   // Synthesized classes will have `_AutoCodec` suffix added.
-  public static final String GENERATED_CLASS_NAME_SUFFIX = "AutoCodec";
+  private static final String GENERATED_CLASS_NAME_SUFFIX = "AutoCodec";
   static final Class<AutoCodec> ANNOTATION = AutoCodec.class;
 
   /**
@@ -68,39 +69,47 @@ class AutoCodecUtil {
    * Initializes the deserialize method.
    *
    * @param encodedType type being serialized
+   * @param startMemoizing whether memoization should start in this method.
    */
   static MethodSpec.Builder initializeSerializeMethodBuilder(
-      TypeElement encodedType, ProcessingEnvironment env) {
+      TypeElement encodedType, boolean startMemoizing, ProcessingEnvironment env) {
     MethodSpec.Builder builder =
         MethodSpec.methodBuilder("serialize")
             .addModifiers(Modifier.PUBLIC)
             .returns(void.class)
             .addAnnotation(Override.class)
             .addException(SerializationException.class)
-            .addException(IOException.class);
-    return builder
-        .addParameter(SerializationContext.class, "context")
-        .addParameter(TypeName.get(env.getTypeUtils().erasure(encodedType.asType())), "input")
-        .addParameter(CodedOutputStream.class, "codedOut");
+            .addException(IOException.class)
+            .addParameter(SerializationContext.class, "context")
+            .addParameter(TypeName.get(env.getTypeUtils().erasure(encodedType.asType())), "input")
+            .addParameter(CodedOutputStream.class, "codedOut");
+    if (startMemoizing) {
+      builder.addStatement("context = context.getMemoizingContext()");
+    }
+    return builder;
   }
 
   /**
    * Initializes the deserialize method.
    *
    * @param encodedType type being serialized
+   * @param startMemoizing whether memoization should start in this method.
    */
   static MethodSpec.Builder initializeDeserializeMethodBuilder(
-      TypeElement encodedType, ProcessingEnvironment env) {
+      TypeElement encodedType, boolean startMemoizing, ProcessingEnvironment env) {
     MethodSpec.Builder builder =
         MethodSpec.methodBuilder("deserialize")
             .addModifiers(Modifier.PUBLIC)
             .returns(TypeName.get(env.getTypeUtils().erasure(encodedType.asType())))
             .addAnnotation(Override.class)
             .addException(SerializationException.class)
-            .addException(IOException.class);
-    return builder
-        .addParameter(DeserializationContext.class, "context")
-        .addParameter(CodedInputStream.class, "codedIn");
+            .addException(IOException.class)
+            .addParameter(DeserializationContext.class, "context")
+            .addParameter(CodedInputStream.class, "codedIn");
+    if (startMemoizing) {
+      builder.addStatement("context = context.getMemoizingContext()");
+    }
+    return builder;
   }
 
   /**
@@ -125,5 +134,13 @@ class AutoCodecUtil {
    */
   private static String getCodecName(Element element) {
     return getGeneratedName(element, GENERATED_CLASS_NAME_SUFFIX);
+  }
+
+  static TypeMirror getType(Class<?> clazz, ProcessingEnvironment env) {
+    return env.getElementUtils().getTypeElement((clazz.getCanonicalName())).asType();
+  }
+
+  static boolean isSubType(TypeMirror type, Class<?> clazz, ProcessingEnvironment env) {
+    return env.getTypeUtils().isSubtype(type, getType(clazz, env));
   }
 }

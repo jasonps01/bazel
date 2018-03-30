@@ -18,9 +18,10 @@ import static com.google.common.truth.Truth.assertAbout;
 import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
 
 import com.google.common.io.Resources;
+import com.google.devtools.build.lib.events.Location;
+import com.google.devtools.build.lib.syntax.Environment;
 import com.google.testing.compile.JavaFileObjects;
 import javax.tools.JavaFileObject;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -60,7 +61,20 @@ public final class SkylarkCallableProcessorTest {
         .processedWith(new SkylarkCallableProcessor())
         .failsToCompile()
         .withErrorContaining(
-            "@SkylarkCallable annotated methods with structField=true must have zero arguments.");
+            "@SkylarkCallable annotated methods with structField=true must have 0 user-supplied "
+                + "parameters. Expected 0 extra interpreter parameters, "
+                + "but found 1 total parameters.");
+  }
+
+  @Test
+  public void testStructFieldWithInvalidInfo() throws Exception {
+    assertAbout(javaSource())
+        .that(getFile("StructFieldWithInvalidInfo.java"))
+        .processedWith(new SkylarkCallableProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "@SkylarkCallable-annotated methods with structField=true may not also specify "
+                + "useAst, useEnvironment, or useLocation");
   }
 
   @Test
@@ -70,7 +84,58 @@ public final class SkylarkCallableProcessorTest {
         .processedWith(new SkylarkCallableProcessor())
         .failsToCompile()
         .withErrorContaining(
-            "@SkylarkCallable annotated method has 0 parameters, but annotation declared 1.");
+            "@SkylarkCallable annotated method has 0 parameters, "
+                + "but annotation declared 1 user-supplied parameters "
+                + "and 0 extra interpreter parameters.");
+  }
+
+  @Test
+  public void testEnvironmentMissing() throws Exception {
+    assertAbout(javaSource())
+        .that(getFile("EnvironmentMissing.java"))
+        .processedWith(new SkylarkCallableProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "Expected parameter index 2 to be the "
+                + Environment.class.getCanonicalName()
+                + " type, matching useEnvironment, but was java.lang.String");
+  }
+
+  @Test
+  public void testLocationMissing() throws Exception {
+    assertAbout(javaSource())
+        .that(getFile("LocationMissing.java"))
+        .processedWith(new SkylarkCallableProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "Expected parameter index 2 to be the "
+                + Location.class.getCanonicalName()
+                + " type, matching useLocation, but was java.lang.String");
+  }
+
+  @Test
+  public void testSkylarkInfoBeforeParams() throws Exception {
+    assertAbout(javaSource())
+        .that(getFile("SkylarkInfoBeforeParams.java"))
+        .processedWith(new SkylarkCallableProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "Expected parameter index 3 to be the "
+                + Location.class.getCanonicalName()
+                + " type, matching useLocation, but was java.lang.Integer");
+  }
+
+  @Test
+  public void testSkylarkInfoParamsWrongOrder() throws Exception {
+    assertAbout(javaSource())
+        .that(getFile("SkylarkInfoParamsWrongOrder.java"))
+        .processedWith(new SkylarkCallableProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "Expected parameter index 1 to be the "
+                + Location.class.getCanonicalName()
+                + " type, matching useLocation, but was "
+                + Environment.class.getCanonicalName());
   }
 
   @Test
@@ -80,6 +145,29 @@ public final class SkylarkCallableProcessorTest {
         .processedWith(new SkylarkCallableProcessor())
         .failsToCompile()
         .withErrorContaining(
-            "@SkylarkCallable annotated method has 2 parameters, but annotation declared 1.");
+            "@SkylarkCallable annotated method has 2 parameters, "
+                + "but annotation declared 1 user-supplied parameters "
+                + "and 0 extra interpreter parameters.");
+  }
+
+  @Test
+  public void testInvalidParamNoneDefault() throws Exception {
+    assertAbout(javaSource())
+        .that(getFile("InvalidParamNoneDefault.java"))
+        .processedWith(new SkylarkCallableProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "Parameter 'a_parameter' has 'None' default value but is not noneable.");
+  }
+
+  @Test
+  public void testParamTypeConflict() throws Exception {
+    assertAbout(javaSource())
+        .that(getFile("ParamTypeConflict.java"))
+        .processedWith(new SkylarkCallableProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "Parameter 'a_parameter' has both 'type' and 'allowedTypes' specified."
+                + " Only one may be specified.");
   }
 }

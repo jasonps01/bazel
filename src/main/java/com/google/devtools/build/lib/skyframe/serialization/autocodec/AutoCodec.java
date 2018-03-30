@@ -70,6 +70,12 @@ public @interface AutoCodec {
      * instance for deserialization.
      */
     PUBLIC_FIELDS,
+    /**
+     * For use with {@link com.google.auto.value.AutoValue} classes with an {@link
+     * com.google.auto.value.AutoValue.Builder} static nested Builder class: uses the builder when
+     * deserializing.
+     */
+    AUTO_VALUE_BUILDER,
   }
 
   /**
@@ -82,6 +88,20 @@ public @interface AutoCodec {
   @interface Instantiator {}
 
   Strategy strategy() default Strategy.INSTANTIATOR;
+
+  /** Whether to start memoizing values below this codec. */
+  enum Memoization {
+    /** Do not start memoization, but also do not disable memoization if it is already happening. */
+    UNCHANGED,
+    /**
+     * Start memoizing. Memoization is assumed to always need a Skylark "Mutability" object. If this
+     * package does not have access to the {@link com.google.devtools.build.lib.syntax.Mutability}
+     * class, memoization cannot be started here.
+     */
+    START_MEMOIZING
+  }
+
+  Memoization memoization() default Memoization.UNCHANGED;
 
   /**
    * Signals that the annotated element is only visible for use by serialization. It should not be

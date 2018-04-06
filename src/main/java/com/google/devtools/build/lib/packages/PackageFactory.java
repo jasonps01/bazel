@@ -62,7 +62,6 @@ import com.google.devtools.build.lib.syntax.SkylarkUtils;
 import com.google.devtools.build.lib.syntax.Statement;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.syntax.Type.ConversionException;
-import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.UnixGlob;
@@ -362,7 +361,7 @@ public final class PackageFactory {
       return this;
     }
 
-    public abstract PackageFactory build(RuleClassProvider ruleClassProvider, FileSystem fs);
+    public abstract PackageFactory build(RuleClassProvider ruleClassProvider);
   }
 
   @VisibleForTesting
@@ -631,6 +630,10 @@ public final class PackageFactory {
               List<Label> defaults = BuildType.LABEL_LIST.convert(defaultsList,
                   "'environment_group argument'", context.pkgBuilder.getBuildFileLabel());
 
+              if (environments.isEmpty()) {
+                throw new EvalException(location,
+                    "environment group " + name + " must contain at least one environment");
+              }
               try {
                 context.pkgBuilder.addEnvironmentGroup(
                     name, environments, defaults, context.eventHandler, loc);
@@ -1361,7 +1364,7 @@ public final class PackageFactory {
     }
     byte[] buildFileBytes = maybeGetBuildFileBytes(buildFile, eventHandler);
     if (buildFileBytes == null) {
-      throw new BuildFileContainsErrorsException(packageId, "IOException occured");
+      throw new BuildFileContainsErrorsException(packageId, "IOException occurred");
     }
 
     Globber globber = createLegacyGlobber(buildFile.getParentDirectory(), packageId, locator);
@@ -1508,9 +1511,10 @@ public final class PackageFactory {
    */
   private ClassObject newNativeModule() {
     ImmutableMap.Builder<String, Object> builder = new ImmutableMap.Builder<>();
-    Runtime.BuiltinRegistry builtins = Runtime.getBuiltinRegistry();
-    for (String nativeFunction : builtins.getFunctionNames(SkylarkNativeModule.class)) {
-      builder.put(nativeFunction, builtins.getFunction(SkylarkNativeModule.class, nativeFunction));
+    SkylarkNativeModule nativeModuleInstance = new SkylarkNativeModule();
+    for (String nativeFunction : FuncallExpression.getMethodNames(SkylarkNativeModule.class)) {
+      builder.put(nativeFunction,
+          FuncallExpression.getBuiltinCallable(nativeModuleInstance, nativeFunction));
     }
     builder.putAll(ruleFunctions);
     builder.put("package", newPackageFunction(packageArguments));
@@ -1530,6 +1534,17 @@ public final class PackageFactory {
     // or if not possible, at least make them straight copies from the native module variant.
     // or better, use a common Environment.Frame for these common bindings
     // (that shares a backing ImmutableMap for the bindings?)
+    Object packageNameFunction;
+    Object repositoryNameFunction;
+    try {
+      packageNameFunction = nativeModule.getValue("package_name");
+      repositoryNameFunction = nativeModule.getValue("repository_name");
+    } catch (EvalException exception) {
+      // This should not occur, as nativeModule.getValue should never throw an exception.
+      throw new IllegalStateException(
+          "error getting package_name or repository_name functions from the native module",
+          exception);
+    }
     pkgEnv
         .setup("native", nativeModule)
         .setup("distribs", newDistribsFunction.apply(context))
@@ -1538,8 +1553,8 @@ public final class PackageFactory {
         .setup("exports_files", newExportsFilesFunction.apply())
         .setup("package_group", newPackageGroupFunction.apply())
         .setup("package", newPackageFunction(packageArguments))
-        .setup("package_name", SkylarkNativeModule.packageName)
-        .setup("repository_name", SkylarkNativeModule.repositoryName)
+        .setup("package_name", packageNameFunction)
+        .setup("repository_name", repositoryNameFunction)
         .setup("environment_group", newEnvironmentGroupFunction.apply(context));
 
     for (Entry<String, BuiltinRuleFunction> entry : ruleFunctions.entrySet()) {

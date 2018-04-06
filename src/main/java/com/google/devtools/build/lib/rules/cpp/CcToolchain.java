@@ -471,12 +471,14 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
     Preconditions.checkState(
         (dynamicRuntimeLinkMiddleman == null) == dynamicRuntimeLinkSymlinks.isEmpty());
 
-    CcCompilationInfo.Builder ccCompilationInfoBuilder = new CcCompilationInfo.Builder(ruleContext);
+    CcCompilationContextInfo.Builder ccCompilationContextInfoBuilder =
+        new CcCompilationContextInfo.Builder(ruleContext);
     CppModuleMap moduleMap = createCrosstoolModuleMap(ruleContext);
     if (moduleMap != null) {
-      ccCompilationInfoBuilder.setCppModuleMap(moduleMap);
+      ccCompilationContextInfoBuilder.setCppModuleMap(moduleMap);
     }
-    final CcCompilationInfo ccCompilationInfo = ccCompilationInfoBuilder.build();
+    final CcCompilationContextInfo ccCompilationContextInfo =
+        ccCompilationContextInfoBuilder.build();
     boolean supportsParamFiles = ruleContext.attributes().get("supports_param_files", BOOLEAN);
     boolean supportsHeaderParsing =
         ruleContext.attributes().get("supports_header_parsing", BOOLEAN);
@@ -545,7 +547,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
             dynamicRuntimeLinkSymlinks,
             dynamicRuntimeLinkMiddleman,
             runtimeSolibDir,
-            ccCompilationInfo,
+            ccCompilationContextInfo,
             supportsParamFiles,
             supportsHeaderParsing,
             getBuildVariables(ruleContext, toolchainInfo.getDefaultSysroot()),
@@ -554,7 +556,6 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
             toolchainInfo.supportsInterfaceSharedObjects()
                 ? ruleContext.getPrerequisiteArtifact("$link_dynamic_library_tool", Mode.HOST)
                 : null,
-            getEnvironment(ruleContext),
             builtInIncludeDirectories,
             sysroot,
             fdoMode);
@@ -844,16 +845,6 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
   protected void addBuildVariables(RuleContext ruleContext, Builder variables)
       throws RuleErrorException {
     // To be overridden in subclasses.
-  }
-
-  /**
-   * Returns a map of environment variables to be added to the compile actions created for this
-   * toolchain. Ideally, this will get replaced by features, which also allow setting env variables.
-   *
-   * @param ruleContext the rule context
-   */
-  protected ImmutableMap<String, String> getEnvironment(RuleContext ruleContext) {
-    return ImmutableMap.<String, String>of();
   }
 
   private PathFragment calculateSysroot(RuleContext ruleContext, PathFragment defaultSysroot) {

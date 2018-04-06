@@ -37,18 +37,18 @@ public class AndroidDataConverter<T> extends ParametrizedMapFn<T> {
     COLON_COMMA(":", ","),
     SEMICOLON_AMPERSAND(";", "&");
 
-    private final String listSeparator;
     private final String itemSeparator;
+    private final String listSeparator;
 
-    JoinerType(String listSeparator, String itemSeparator) {
-      this.listSeparator = listSeparator;
+    JoinerType(String itemSeparator, String listSeparator) {
       this.itemSeparator = itemSeparator;
+      this.listSeparator = listSeparator;
     }
 
     private String escape(String string) {
       return string
-          .replace(listSeparator, "\\" + listSeparator)
-          .replace(itemSeparator, "\\" + itemSeparator);
+          .replace(itemSeparator, "\\" + itemSeparator)
+          .replace(listSeparator, "\\" + listSeparator);
     }
   }
 
@@ -93,7 +93,7 @@ public class AndroidDataConverter<T> extends ParametrizedMapFn<T> {
     return suppliers
         .stream()
         .map(s -> (s.apply(t)))
-        .collect(Collectors.joining(joinerType.listSeparator));
+        .collect(Collectors.joining(joinerType.itemSeparator));
   }
 
   public static <T> Builder<T> builder(JoinerType joinerType) {

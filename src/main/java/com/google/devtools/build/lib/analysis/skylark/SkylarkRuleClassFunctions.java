@@ -71,7 +71,6 @@ import com.google.devtools.build.lib.packages.SkylarkProvider;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.packages.TestSize;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
-import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.skylarkinterface.Param;
 import com.google.devtools.build.lib.skylarkinterface.ParamType;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
@@ -556,7 +555,8 @@ public class SkylarkRuleClassFunctions {
           RuleClassType type = test ? RuleClassType.TEST : RuleClassType.NORMAL;
           RuleClass parent =
               test
-                  ? getTestBaseRule(SkylarkUtils.getToolsRepository(funcallEnv),
+                  ? getTestBaseRule(
+                      SkylarkUtils.getToolsRepository(funcallEnv),
                       (PatchTransition) SkylarkUtils.getLipoDataTransition(funcallEnv))
                   : (executable ? binaryBaseRule : baseRule);
 
@@ -609,7 +609,9 @@ public class SkylarkRuleClassFunctions {
               .requiresHostConfigurationFragmentsBySkylarkModuleName(
                   hostFragments.getContents(String.class, "host_fragments"));
           builder.setConfiguredTargetFunction(implementation);
-          builder.setRuleDefinitionEnvironment(funcallEnv);
+          builder.setRuleDefinitionEnvironmentLabelAndHashCode(
+              funcallEnv.getGlobals().getTransitiveLabel(),
+              funcallEnv.getTransitiveContentHashCode());
           builder.addRequiredToolchains(collectToolchainLabels(toolchains, ast));
 
           return new SkylarkRuleFunction(builder, type, attributes, ast.getLocation());
@@ -876,7 +878,6 @@ public class SkylarkRuleClassFunctions {
    *
    * <p>Exactly one of {@link #builder} or {@link #ruleClass} is null except inside {@link #export}.
    */
-  @AutoCodec
   public static final class SkylarkRuleFunction extends BaseFunction
       implements SkylarkExportable, RuleFunction {
     private RuleClass.Builder builder;
@@ -900,14 +901,8 @@ public class SkylarkRuleClassFunctions {
     }
 
     /** This is for post-export reconstruction for serialization. */
-    @VisibleForSerialization
-    @AutoCodec.Instantiator
-    SkylarkRuleFunction(
-        RuleClass ruleClass,
-        RuleClassType type,
-        Location definitionLocation,
-        Label skylarkLabel
-    ) {
+    private SkylarkRuleFunction(
+        RuleClass ruleClass, RuleClassType type, Location definitionLocation, Label skylarkLabel) {
       super("rule", FunctionSignature.KWARGS);
       Preconditions.checkNotNull(
           ruleClass,

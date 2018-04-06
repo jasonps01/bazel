@@ -22,6 +22,11 @@ default_toolchain {
 }
 
 default_toolchain {
+  cpu: "local"
+  toolchain_identifier: "stub_armeabi-v7a"
+}
+
+default_toolchain {
   cpu: "armeabi-v7a"
   toolchain_identifier: "stub_armeabi-v7a"
 }
@@ -44,6 +49,11 @@ default_toolchain {
 default_toolchain {
   cpu: "s390x"
   toolchain_identifier: "%{toolchain_name}"
+}
+
+default_toolchain {
+  cpu: "local"
+  toolchain_identifier: "ios_x86_64"
 }
 
 default_toolchain {
@@ -480,17 +490,6 @@ toolchain {
     implies: 'nologo'
     implies: 'archiver_flags'
     implies: 'input_param_flags'
-    implies: 'linker_param_file'
-    implies: 'msvc_env'
-  }
-
-  action_config {
-    config_name: 'c++-link-interface-dynamic-library'
-    action_name: 'c++-link-interface-dynamic-library'
-    tool {
-      tool_path: '%{msvc_lib_path}'
-    }
-    implies: 'nologo'
     implies: 'linker_param_file'
     implies: 'msvc_env'
   }

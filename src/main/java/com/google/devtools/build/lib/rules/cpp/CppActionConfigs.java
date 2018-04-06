@@ -202,6 +202,11 @@ public class CppActionConfigs {
                     "    }",
                     "  }",
                     "}"),
+                ifTrue(
+                    !existingFeatureNames.contains(CppRuleClasses.STATIC_LINK_CPP_RUNTIMES),
+                    "feature {",
+                    "  name: 'static_link_cpp_runtimes'",
+                    "}"),
                 // Gcc options:
                 //  -MD turns on .d file output as a side-effect (doesn't imply -E)
                 //  -MM[D] enables user includes only, not system includes
@@ -369,7 +374,6 @@ public class CppActionConfigs {
                     "  flag_set {",
                     "    action: 'c-compile'",
                     "    action: 'c++-compile'",
-                    "    action: 'c++-link-interface-dynamic-library'",
                     "    action: 'c++-link-dynamic-library'",
                     "    action: 'c++-link-nodeps-dynamic-library'",
                     "    action: 'c++-link-executable'",
@@ -855,7 +859,6 @@ public class CppActionConfigs {
                     "    action: 'c++-link-executable'",
                     "    action: 'c++-link-dynamic-library'",
                     "    action: 'c++-link-nodeps-dynamic-library'",
-                    "    action: 'c++-link-interface-dynamic-library'",
                     "    flag_group {",
                     "      expand_if_all_available: 'is_using_fission'",
                     "      flag: '-Wl,--gdb-index'",
@@ -870,7 +873,6 @@ public class CppActionConfigs {
                     "    action: 'c++-link-executable'",
                     "    action: 'c++-link-dynamic-library'",
                     "    action: 'c++-link-nodeps-dynamic-library'",
-                    "    action: 'c++-link-interface-dynamic-library'",
                     "    flag_group {",
                     "      expand_if_all_available: 'strip_debug_symbols'",
                     "      flag: '-Wl,-S'",
@@ -898,7 +900,6 @@ public class CppActionConfigs {
                     "    }",
                     "  }",
                     "  flag_set {",
-                    "    action: 'c++-link-interface-dynamic-library'",
                     "    action: 'c++-link-dynamic-library'",
                     "    action: 'c++-link-nodeps-dynamic-library'",
                     "    action: 'c++-link-executable'",
@@ -931,7 +932,6 @@ public class CppActionConfigs {
                     "    }",
                     "  }",
                     "  flag_set {",
-                    "    action: 'c++-link-interface-dynamic-library'",
                     "    action: 'c++-link-dynamic-library'",
                     "    action: 'c++-link-nodeps-dynamic-library'",
                     "    action: 'c++-link-executable'",

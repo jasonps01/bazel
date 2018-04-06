@@ -89,7 +89,6 @@ import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -98,7 +97,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
@@ -240,8 +238,7 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
   }
 
   private void readResourceTable(
-      LittleEndianDataInputStream resourceTableStream,
-      KeyValueConsumers consumers)
+      LittleEndianDataInputStream resourceTableStream, KeyValueConsumers consumers)
       throws IOException {
     long alignedSize = resourceTableStream.readLong();
     Preconditions.checkArgument(alignedSize <= Integer.MAX_VALUE);
@@ -253,24 +250,21 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
     List<String> sourcePool =
         decodeSourcePool(resourceTable.getSourcePool().getData().toByteArray());
 
-    Map<String, Entry<FullyQualifiedName, Boolean>> fullyQualifiedNames = new HashMap<>();
+    Map<String, Boolean> qualifiedReferenceInlineStatus = new HashMap<>();
 
     for (int i = resourceTable.getPackageCount() - 1; i >= 0; i--) {
       Package resourceTablePackage = resourceTable.getPackage(i);
 
-      String packageName = "";
-      if (!resourceTablePackage.getPackageName().isEmpty()) {
-        packageName = resourceTablePackage.getPackageName() + ":";
-      }
+      String packageName = resourceTablePackage.getPackageName();
 
       for (Type resourceFormatType : resourceTablePackage.getTypeList()) {
         ResourceType resourceType = ResourceType.getEnum(resourceFormatType.getName());
 
         for (Resources.Entry resource : resourceFormatType.getEntryList()) {
-          String resourceName = packageName + resource.getName();
           if (resource.getConfigValueList().isEmpty()
               && resource.getVisibility().getLevel() == Level.PUBLIC) {
 
+            // Public resource definition.
             int sourceIndex = resource.getVisibility().getSource().getPathIdx();
 
             String source = sourcePool.get(sourceIndex);
@@ -279,26 +273,23 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
             DataResourceXml dataResourceXml =
                 DataResourceXml.fromPublic(dataSource, resourceType, resource.getEntryId().getId());
             final FullyQualifiedName fqn =
-                FullyQualifiedName.of(
-                    packageName.isEmpty() ? FullyQualifiedName.DEFAULT_PACKAGE : packageName,
-                    ImmutableList.of(),
+                createAndRecordFqn(
+                    qualifiedReferenceInlineStatus,
+                    packageName,
                     resourceType,
-                    resourceName);
-            fullyQualifiedNames.put(
-                String.format("%s%s/%s", packageName, resourceType, resource.getName()),
-                new SimpleEntry<>(fqn, packageName.isEmpty()));
+                    resource,
+                    ImmutableList.of());
             consumers.combiningConsumer.accept(fqn, dataResourceXml);
-          } else if (packageName.isEmpty()) { // This means this resource is not in the android sdk
+          } else if (!"android".equals(packageName)) {
+            // This means this resource is not in the android sdk, add it to the set.
             for (ConfigValue configValue : resource.getConfigValueList()) {
               FullyQualifiedName fqn =
-                  FullyQualifiedName.of(
-                      packageName.isEmpty() ? FullyQualifiedName.DEFAULT_PACKAGE : packageName,
-                      convertToQualifiers(configValue),
+                  createAndRecordFqn(
+                      qualifiedReferenceInlineStatus,
+                      packageName,
                       resourceType,
-                      resourceName);
-              fullyQualifiedNames.put(
-                  String.format("%s%s/%s", packageName, resourceType, resource.getName()),
-                  new SimpleEntry<>(fqn, packageName.isEmpty()));
+                      resource,
+                      convertToQualifiers(configValue));
 
               int sourceIndex = configValue.getValue().getSource().getPathIdx();
 
@@ -308,7 +299,7 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
               Value resourceValue = resource.getConfigValue(0).getValue();
               DataResourceXml dataResourceXml =
                   DataResourceXml.from(
-                      resourceValue, dataSource, resourceType, fullyQualifiedNames);
+                      resourceValue, dataSource, resourceType, qualifiedReferenceInlineStatus);
 
               if (!fqn.isOverwritable()) {
                 consumers.combiningConsumer.accept(fqn, dataResourceXml);
@@ -317,11 +308,37 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
               }
             }
           } else {
-            throw new IllegalArgumentException("Unexpected package name " + packageName);
+            // In the sdk, just add the fqn for styleables
+            createAndRecordFqn(
+                    qualifiedReferenceInlineStatus,
+                    packageName,
+                    resourceType,
+                    resource,
+                    ImmutableList.of())
+                .toPrettyString();
           }
         }
       }
     }
+  }
+
+  private FullyQualifiedName createAndRecordFqn(
+      Map<String, Boolean> qualifiedReferenceInlineStatus,
+      String packageName,
+      ResourceType resourceType,
+      Resources.Entry resource,
+      List<String> of) {
+    Preconditions.checkArgument(!packageName.contains(":"));
+    final FullyQualifiedName fqn =
+        FullyQualifiedName.of(
+            packageName.isEmpty() ? FullyQualifiedName.DEFAULT_PACKAGE : packageName,
+            of,
+            resourceType,
+            resource.getName());
+    // Record if the definition of the attr is defined in styleable.
+    // Currently, we consider any reference without a package as being defined inline.
+    qualifiedReferenceInlineStatus.put(fqn.asQualifiedReference(), packageName.isEmpty());
+    return fqn;
   }
 
   private List<String> convertToQualifiers(ConfigValue configValue) {

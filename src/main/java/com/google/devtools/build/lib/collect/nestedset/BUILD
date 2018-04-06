@@ -12,16 +12,15 @@ java_library(
     srcs = [
         "NestedSet.java",
         "NestedSetBuilder.java",
-        "NestedSetCodec.java",
+        "NestedSetCodecDisabled.java",
         "NestedSetView.java",
         "NestedSetVisitor.java",
         "Order.java",
     ],
     deps = [
         "//src/main/java/com/google/devtools/build/lib/collect/compacthashset",
-        "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization",
-        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization:constants",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/autocodec",
         "//third_party:guava",
         "//third_party:jsr305",
         "//third_party/protobuf:protobuf_java",

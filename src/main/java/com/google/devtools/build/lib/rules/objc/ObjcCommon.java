@@ -67,7 +67,7 @@ import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTa
 import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
-import com.google.devtools.build.lib.rules.cpp.CcCompilationInfo;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationContextInfo;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
 import com.google.devtools.build.lib.rules.cpp.CppFileTypes;
@@ -157,6 +157,7 @@ public final class ObjcCommon {
     private Iterable<ObjcProvider> depObjcProviders = ImmutableList.of();
     private Iterable<ObjcProvider> directDepObjcProviders = ImmutableList.of();
     private Iterable<ObjcProvider> runtimeDepObjcProviders = ImmutableList.of();
+    private Iterable<ObjcProvider> repropagatedModuleMapObjcProviders = ImmutableList.of();
     private Iterable<String> defines = ImmutableList.of();
     private Iterable<PathFragment> includes = ImmutableList.of();
     private Iterable<PathFragment> directDependencyIncludes = ImmutableList.of();
@@ -167,7 +168,7 @@ public final class ObjcCommon {
     private DsymOutputType dsymOutputType;
     private Optional<Artifact> linkedBinary = Optional.absent();
     private Optional<Artifact> linkmapFile = Optional.absent();
-    private Iterable<CcCompilationInfo> depCcHeaderProviders = ImmutableList.of();
+    private Iterable<CcCompilationContextInfo> depCcHeaderProviders = ImmutableList.of();
     private Iterable<CcLinkParamsInfo> depCcLinkProviders = ImmutableList.of();
 
     /**
@@ -256,17 +257,18 @@ public final class ObjcCommon {
     Builder addDeps(List<ConfiguredTargetAndData> deps) {
       ImmutableList.Builder<ObjcProvider> propagatedObjcDeps =
           ImmutableList.<ObjcProvider>builder();
-      ImmutableList.Builder<CcCompilationInfo> cppDeps = ImmutableList.<CcCompilationInfo>builder();
+      ImmutableList.Builder<CcCompilationContextInfo> cppDeps =
+          ImmutableList.<CcCompilationContextInfo>builder();
       ImmutableList.Builder<CcLinkParamsInfo> cppDepLinkParams =
           ImmutableList.<CcLinkParamsInfo>builder();
 
       for (ConfiguredTargetAndData dep : deps) {
         ConfiguredTarget depCT = dep.getConfiguredTarget();
         addAnyProviders(propagatedObjcDeps, depCT, ObjcProvider.SKYLARK_CONSTRUCTOR);
-        addAnyProviders(cppDeps, depCT, CcCompilationInfo.PROVIDER);
+        addAnyProviders(cppDeps, depCT, CcCompilationContextInfo.PROVIDER);
         if (isCcLibrary(dep)) {
           cppDepLinkParams.add(depCT.get(CcLinkParamsInfo.PROVIDER));
-          addDefines(depCT.get(CcCompilationInfo.PROVIDER).getDefines());
+          addDefines(depCT.get(CcCompilationContextInfo.PROVIDER).getDefines());
         }
       }
       addDepObjcProviders(propagatedObjcDeps.build());
@@ -362,6 +364,22 @@ public final class ObjcCommon {
     }
 
     /**
+     * Adds Objc providers whose module maps should be repropagated as if they are directly
+     * associated with the target propagating the provider being built.
+     *
+     * <p>This supports a small number of specialized use cases, like J2Objc, where the module maps
+     * associated with the {@code java_library} (via an aspect) need to be repropagated by the
+     * {@code j2objc_library} that depends on them so that Swift code can access those module maps
+     * for the purposes of strict module map propagation (without propagating the module maps
+     * _fully_ transitively).
+     */
+    Builder addRepropagatedModuleMapObjcProviders(Iterable<ObjcProvider> objcProviders) {
+      this.repropagatedModuleMapObjcProviders =
+          Iterables.concat(this.repropagatedModuleMapObjcProviders, objcProviders);
+      return this;
+    }
+
+    /**
      * Adds additional static libraries to be linked into the final ObjC application bundle.
      */
     Builder addExtraImportLibraries(Iterable<Artifact> extraImportLibraries) {
@@ -422,11 +440,11 @@ public final class ObjcCommon {
         objcProvider.addTransitiveAndPropagate(ObjcProvider.MERGE_ZIP, provider);
       }
 
-      for (CcCompilationInfo headerProvider : depCcHeaderProviders) {
+      for (CcCompilationContextInfo headerProvider : depCcHeaderProviders) {
         objcProvider.addAll(HEADER, filterFileset(headerProvider.getDeclaredIncludeSrcs()));
         objcProvider.addAll(INCLUDE, headerProvider.getIncludeDirs());
         // TODO(bazel-team): This pulls in stl via
-        // CppHelper.mergeToolchainDependentCcCompilationInfo but
+        // CppHelper.mergeToolchainDependentCcCompilationContextInfo but
         // probably shouldn't.
         objcProvider.addAll(INCLUDE_SYSTEM, headerProvider.getSystemIncludeDirs());
         objcProvider.addAll(DEFINE, headerProvider.getDefines());
@@ -543,13 +561,21 @@ public final class ObjcCommon {
         }
       }
 
+      if (useStrictObjcModuleMaps(context)) {
+        for (ObjcProvider provider : repropagatedModuleMapObjcProviders) {
+          objcProvider.addAllForDirectDependents(MODULE_MAP, provider.get(ObjcProvider.MODULE_MAP));
+          objcProvider.addAllForDirectDependents(
+              TOP_LEVEL_MODULE_MAP, provider.get(ObjcProvider.TOP_LEVEL_MODULE_MAP));
+        }
+      }
+
       if (hasModuleMap) {
         CppModuleMap moduleMap = intermediateArtifacts.moduleMap();
         Optional<Artifact> umbrellaHeader = moduleMap.getUmbrellaHeader();
         if (umbrellaHeader.isPresent()) {
           objcProvider.add(UMBRELLA_HEADER, umbrellaHeader.get());
         }
-        if (context.getFragment(ObjcConfiguration.class).useStrictObjcModuleMaps()) {
+        if (useStrictObjcModuleMaps(context)) {
           objcProvider.addForDirectDependents(MODULE_MAP, moduleMap.getArtifact());
           objcProvider.addForDirectDependents(TOP_LEVEL_MODULE_MAP, moduleMap);
         } else {
@@ -569,6 +595,13 @@ public final class ObjcCommon {
       }
 
       return new ObjcCommon(objcProvider.build(), compilationArtifacts);
+    }
+
+    private static boolean useStrictObjcModuleMaps(RuleContext context) {
+      // We need to check isLegalFragment first because some non-compilation rules, like
+      // objc_bundle_library, don't declare this fragment.
+      return context.isLegalFragment(ObjcConfiguration.class)
+          && context.getFragment(ObjcConfiguration.class).useStrictObjcModuleMaps();
     }
 
     private static boolean isCcLibrary(ConfiguredTargetAndData info) {

@@ -85,7 +85,6 @@ import java.util.UUID;
 import javax.annotation.Nullable;
 
 /** Action that represents some kind of C++ compilation step. */
-@AutoCodec
 @ThreadCompatible
 public class CppCompileAction extends AbstractAction
     implements IncludeScannable, ExecutionInfoSpecifier, CommandAction {
@@ -185,7 +184,7 @@ public class CppCompileAction extends AbstractAction
   protected final boolean needsIncludeValidation;
   private final IncludeProcessing includeProcessing;
 
-  private final CcCompilationInfo ccCompilationInfo;
+  private final CcCompilationContextInfo ccCompilationContextInfo;
   private final Iterable<IncludeScannable> lipoScannables;
   private final ImmutableList<Artifact> builtinIncludeFiles;
   // A list of files to include scan that are not source files, pcm files, lipo scannables, or
@@ -194,7 +193,6 @@ public class CppCompileAction extends AbstractAction
   private final ImmutableList<Artifact> additionalIncludeScanningRoots;
   @VisibleForTesting public final CompileCommandLine compileCommandLine;
   private final ImmutableMap<String, String> executionInfo;
-  private final ImmutableMap<String, String> environment;
   private final String actionName;
 
   private final FeatureConfiguration featureConfiguration;
@@ -251,12 +249,11 @@ public class CppCompileAction extends AbstractAction
    * @param dwoFile the .dwo output file where debug information is stored for Fission builds (null
    *     if Fission mode is disabled)
    * @param optionalSourceFile an additional optional source file (null if unneeded)
-   * @param ccCompilationInfo the {@code CcCompilationInfo}
+   * @param ccCompilationContextInfo the {@code CcCompilationContextInfo}
    * @param coptsFilter regular expression to remove options from {@code copts}
    * @param lipoScannables List of artifacts to include-scan when this action is a lipo action
    * @param additionalIncludeScanningRoots list of additional artifacts to include-scan
    * @param actionClassId TODO(bazel-team): Add parameter description
-   * @param environment TODO(bazel-team): Add parameter description
    * @param actionName a string giving the name of this action for the purpose of toolchain
    *     evaluation
    * @param cppSemantics C++ compilation semantics
@@ -285,13 +282,12 @@ public class CppCompileAction extends AbstractAction
       @Nullable Artifact ltoIndexingFile,
       Artifact optionalSourceFile,
       ImmutableMap<String, String> localShellEnvironment,
-      CcCompilationInfo ccCompilationInfo,
+      CcCompilationContextInfo ccCompilationContextInfo,
       CoptsFilter coptsFilter,
       Iterable<IncludeScannable> lipoScannables,
       ImmutableList<Artifact> additionalIncludeScanningRoots,
       UUID actionClassId,
       ImmutableMap<String, String> executionInfo,
-      ImmutableMap<String, String> environment,
       String actionName,
       CppSemantics cppSemantics,
       CcToolchainProvider cppProvider,
@@ -323,7 +319,7 @@ public class CppCompileAction extends AbstractAction
         usePic,
         useHeaderModules,
         isStrictSystemIncludes,
-        ccCompilationInfo,
+        ccCompilationContextInfo,
         lipoScannables,
         builtinIncludeFiles,
         ImmutableList.copyOf(additionalIncludeScanningRoots),
@@ -333,7 +329,6 @@ public class CppCompileAction extends AbstractAction
             .setVariables(variables)
             .build(),
         executionInfo,
-        environment,
         actionName,
         featureConfiguration,
         actionClassId,
@@ -350,7 +345,6 @@ public class CppCompileAction extends AbstractAction
     Preconditions.checkArgument(!shouldPruneModules || shouldScanIncludes);
   }
 
-  @AutoCodec.Instantiator
   @VisibleForSerialization
   CppCompileAction(
       ActionOwner owner,
@@ -368,13 +362,12 @@ public class CppCompileAction extends AbstractAction
       boolean usePic,
       boolean useHeaderModules,
       boolean isStrictSystemIncludes,
-      CcCompilationInfo ccCompilationInfo,
+      CcCompilationContextInfo ccCompilationContextInfo,
       Iterable<IncludeScannable> lipoScannables,
       ImmutableList<Artifact> builtinIncludeFiles,
       ImmutableList<Artifact> additionalIncludeScanningRoots,
       CompileCommandLine compileCommandLine,
       ImmutableMap<String, String> executionInfo,
-      ImmutableMap<String, String> environment,
       String actionName,
       FeatureConfiguration featureConfiguration,
       UUID actionClassId,
@@ -401,13 +394,12 @@ public class CppCompileAction extends AbstractAction
     this.usePic = usePic;
     this.useHeaderModules = useHeaderModules;
     this.isStrictSystemIncludes = isStrictSystemIncludes;
-    this.ccCompilationInfo = ccCompilationInfo;
+    this.ccCompilationContextInfo = ccCompilationContextInfo;
     this.lipoScannables = lipoScannables;
     this.builtinIncludeFiles = builtinIncludeFiles;
     this.additionalIncludeScanningRoots = additionalIncludeScanningRoots;
     this.compileCommandLine = compileCommandLine;
     this.executionInfo = executionInfo;
-    this.environment = environment;
     this.actionName = actionName;
     this.featureConfiguration = featureConfiguration;
     this.needsDotdInputPruning = needsDotdInputPruning;
@@ -515,8 +507,9 @@ public class CppCompileAction extends AbstractAction
         // Here, we cannot really know what the top-level modules are, so we just mark all
         // transitive modules as "top level".
         topLevelModules =
-            Sets.newLinkedHashSet(ccCompilationInfo.getTransitiveModules(usePic).toCollection());
-        result.addTransitive(ccCompilationInfo.getTransitiveModules(usePic));
+            Sets.newLinkedHashSet(
+                ccCompilationContextInfo.getTransitiveModules(usePic).toCollection());
+        result.addTransitive(ccCompilationContextInfo.getTransitiveModules(usePic));
       }
       result.addTransitive(prunableInputs);
       return result.build();
@@ -543,8 +536,8 @@ public class CppCompileAction extends AbstractAction
       } else {
         usedModules = Sets.newLinkedHashSet();
         topLevelModules = null;
-        for (CcCompilationInfo.TransitiveModuleHeaders usedModule :
-            ccCompilationInfo.getUsedModules(usePic, initialResultSet)) {
+        for (CcCompilationContextInfo.TransitiveModuleHeaders usedModule :
+            ccCompilationContextInfo.getUsedModules(usePic, initialResultSet)) {
           usedModules.add(usedModule.getModule());
         }
         initialResultSet.addAll(usedModules);
@@ -636,12 +629,12 @@ public class CppCompileAction extends AbstractAction
   public Map<Artifact, Artifact> getLegalGeneratedScannerFileMap() {
     Map<Artifact, Artifact> legalOuts = new HashMap<>();
 
-    for (Artifact a : ccCompilationInfo.getDeclaredIncludeSrcs()) {
+    for (Artifact a : ccCompilationContextInfo.getDeclaredIncludeSrcs()) {
       if (!a.isSourceArtifact()) {
         legalOuts.put(a, null);
       }
     }
-    for (PregreppedHeader pregreppedSrcs : ccCompilationInfo.getPregreppedHeaders()) {
+    for (PregreppedHeader pregreppedSrcs : ccCompilationContextInfo.getPregreppedHeaders()) {
       Artifact hdr = pregreppedSrcs.originalHeader();
       Preconditions.checkState(!hdr.isSourceArtifact(), hdr);
       legalOuts.put(hdr, pregreppedSrcs.greppedHeader());
@@ -664,19 +657,19 @@ public class CppCompileAction extends AbstractAction
   }
 
   @VisibleForTesting
-  public CcCompilationInfo getCcCompilationInfo() {
-    return ccCompilationInfo;
+  public CcCompilationContextInfo getCcCompilationContextInfo() {
+    return ccCompilationContextInfo;
   }
 
   @Override
   public List<PathFragment> getQuoteIncludeDirs() {
-    return ccCompilationInfo.getQuoteIncludeDirs();
+    return ccCompilationContextInfo.getQuoteIncludeDirs();
   }
 
   @Override
   public List<PathFragment> getIncludeDirs() {
     ImmutableList.Builder<PathFragment> result = ImmutableList.builder();
-    result.addAll(ccCompilationInfo.getIncludeDirs());
+    result.addAll(ccCompilationContextInfo.getIncludeDirs());
     for (String opt : compileCommandLine.getCopts()) {
       if (opt.startsWith("-I") && opt.length() > 2) {
         // We insist on the combined form "-Idir".
@@ -693,7 +686,7 @@ public class CppCompileAction extends AbstractAction
     // system_includes attribute in cc_toolchain); note that that would disallow users from
     // specifying system include paths via the copts attribute.
     // Currently, this works together with the include_paths features because getCommandLine() will
-    // get the system include paths from the {@code CcCompilationInfo} instead.
+    // get the system include paths from the {@code CcCompilationContextInfo} instead.
     ImmutableList.Builder<PathFragment> result = ImmutableList.builder();
     List<String> compilerOptions = getCompilerOptions();
     for (int i = 0; i < compilerOptions.size(); i++) {
@@ -728,7 +721,7 @@ public class CppCompileAction extends AbstractAction
   @Override
   public Artifact getMainIncludeScannerSource() {
     return getSourceFile().isFileType(CppFileTypes.CPP_MODULE_MAP)
-        ? Iterables.getFirst(ccCompilationInfo.getHeaderModuleSrcs(), null)
+        ? Iterables.getFirst(ccCompilationContextInfo.getHeaderModuleSrcs(), null)
         : getSourceFile();
   }
 
@@ -740,7 +733,7 @@ public class CppCompileAction extends AbstractAction
       // module map, and we need to include-scan all headers that are referenced in the module map.
       // We need to do include scanning as long as we want to support building code bases that are
       // not fully strict layering clean.
-      builder.addAll(ccCompilationInfo.getHeaderModuleSrcs());
+      builder.addAll(ccCompilationContextInfo.getHeaderModuleSrcs());
     } else {
       builder.add(getSourceFile());
       builder.addAll(additionalIncludeScanningRoots);
@@ -759,7 +752,7 @@ public class CppCompileAction extends AbstractAction
    */
   @VisibleForTesting
   public ImmutableCollection<String> getDefines() {
-    return ccCompilationInfo.getDefines();
+    return ccCompilationContextInfo.getDefines();
   }
 
   @Override
@@ -771,9 +764,7 @@ public class CppCompileAction extends AbstractAction
       environment.put("PWD", "/proc/self/cwd");
     }
 
-    environment.putAll(this.environment);
     environment.putAll(compileCommandLine.getEnvironment());
-
     return ImmutableMap.copyOf(environment);
   }
 
@@ -803,7 +794,7 @@ public class CppCompileAction extends AbstractAction
     } else {
       info.addSourcesAndHeaders(getSourceFile().getExecPathString());
       info.addAllSourcesAndHeaders(
-          Artifact.toExecPaths(ccCompilationInfo.getDeclaredIncludeSrcs()));
+          Artifact.toExecPaths(ccCompilationContextInfo.getDeclaredIncludeSrcs()));
     }
     for (Entry<String, String> envVariable : getEnvironment().entrySet()) {
       info.addVariable(
@@ -880,14 +871,14 @@ public class CppCompileAction extends AbstractAction
     // Copy the sets to hash sets for fast contains checking.
     // Avoid immutable sets here to limit memory churn.
     Set<PathFragment> declaredIncludeDirs =
-        Sets.newHashSet(ccCompilationInfo.getDeclaredIncludeDirs());
+        Sets.newHashSet(ccCompilationContextInfo.getDeclaredIncludeDirs());
     Set<PathFragment> warnIncludeDirs =
-        Sets.newHashSet(ccCompilationInfo.getDeclaredIncludeWarnDirs());
+        Sets.newHashSet(ccCompilationContextInfo.getDeclaredIncludeWarnDirs());
     Set<Artifact> declaredIncludeSrcs = Sets.newHashSet(getDeclaredIncludeSrcs());
     Set<Artifact> transitiveModules =
-        Sets.newHashSet(ccCompilationInfo.getTransitiveModules(usePic));
+        Sets.newHashSet(ccCompilationContextInfo.getTransitiveModules(usePic));
     for (Artifact input : inputsForValidation) {
-      if (ccCompilationInfo.getTransitiveCompilationPrerequisites().contains(input)
+      if (ccCompilationContextInfo.getTransitiveCompilationPrerequisites().contains(input)
           || transitiveModules.contains(input)
           || allowedIncludes.contains(input)) {
         continue; // ignore our fixed source in mandatoryInput: we just want includes
@@ -917,19 +908,21 @@ public class CppCompileAction extends AbstractAction
             System.err.println("INFO: Include(s) were OK for '" + getSourceFile()
                 + "', declared srcs:");
           }
-          for (Artifact a : ccCompilationInfo.getDeclaredIncludeSrcs()) {
+          for (Artifact a : ccCompilationContextInfo.getDeclaredIncludeSrcs()) {
             System.err.println("  '" + a.toDetailString() + "'");
           }
           System.err.println(" or under declared dirs:");
-          for (PathFragment f : Sets.newTreeSet(ccCompilationInfo.getDeclaredIncludeDirs())) {
+          for (PathFragment f :
+              Sets.newTreeSet(ccCompilationContextInfo.getDeclaredIncludeDirs())) {
             System.err.println("  '" + f + "'");
           }
           System.err.println(" or under declared warn dirs:");
-          for (PathFragment f : Sets.newTreeSet(ccCompilationInfo.getDeclaredIncludeWarnDirs())) {
+          for (PathFragment f :
+              Sets.newTreeSet(ccCompilationContextInfo.getDeclaredIncludeWarnDirs())) {
             System.err.println("  '" + f + "'");
           }
           System.err.println(" with prefixes:");
-          for (PathFragment dirpath : ccCompilationInfo.getQuoteIncludeDirs()) {
+          for (PathFragment dirpath : ccCompilationContextInfo.getQuoteIncludeDirs()) {
             System.err.println("  '" + dirpath + "'");
           }
         }
@@ -948,7 +941,7 @@ public class CppCompileAction extends AbstractAction
 
   Iterable<PathFragment> getValidationIgnoredDirs() {
     List<PathFragment> cxxSystemIncludeDirs = getBuiltInIncludeDirectories();
-    return Iterables.concat(cxxSystemIncludeDirs, ccCompilationInfo.getSystemIncludeDirs());
+    return Iterables.concat(cxxSystemIncludeDirs, ccCompilationContextInfo.getSystemIncludeDirs());
   }
 
   /**
@@ -1003,17 +996,12 @@ public class CppCompileAction extends AbstractAction
     }
   }
 
-  /**
-   * Recalculates this action's live input collection, including sources, middlemen.
-   *
-   * @throws ActionExecutionException iff any errors happen during update.
-   */
-  @VisibleForTesting  // productionVisibility = Visibility.PRIVATE
+  /** Recalculates this action's live input collection, including sources, middlemen. */
+  @VisibleForTesting // productionVisibility = Visibility.PRIVATE
   @ThreadCompatible
-  public final void updateActionInputs(NestedSet<Artifact> discoveredInputs)
-      throws ActionExecutionException {
+  public final void updateActionInputs(NestedSet<Artifact> discoveredInputs) {
     NestedSetBuilder<Artifact> inputs = NestedSetBuilder.stableOrder();
-    Profiler.instance().startTask(ProfilerTask.ACTION_UPDATE, this);
+    Profiler.instance().startTask(ProfilerTask.ACTION_UPDATE, describe());
     try {
       inputs.addTransitive(mandatoryInputs);
       if (optionalSourceFile != null) {
@@ -1069,8 +1057,9 @@ public class CppCompileAction extends AbstractAction
     addToMap(allowedDerivedInputMap, mandatoryInputs);
     addToMap(allowedDerivedInputMap, prunableInputs);
     addToMap(allowedDerivedInputMap, getDeclaredIncludeSrcs());
-    addToMap(allowedDerivedInputMap, ccCompilationInfo.getTransitiveCompilationPrerequisites());
-    addToMap(allowedDerivedInputMap, ccCompilationInfo.getTransitiveModules(usePic));
+    addToMap(
+        allowedDerivedInputMap, ccCompilationContextInfo.getTransitiveCompilationPrerequisites());
+    addToMap(allowedDerivedInputMap, ccCompilationContextInfo.getTransitiveModules(usePic));
     Artifact artifact = getSourceFile();
     if (!artifact.isSourceArtifact()) {
       allowedDerivedInputMap.put(artifact.getExecPath(), artifact);
@@ -1096,7 +1085,7 @@ public class CppCompileAction extends AbstractAction
    * listed in {@code declaredIncludeSrcs}).
    */
   public NestedSet<PathFragment> getDeclaredIncludeDirs() {
-    return ccCompilationInfo.getDeclaredIncludeDirs();
+    return ccCompilationContextInfo.getDeclaredIncludeDirs();
   }
 
   /**
@@ -1104,7 +1093,7 @@ public class CppCompileAction extends AbstractAction
    * not specifically listed in {@code declaredIncludeSrcs}).
    */
   public NestedSet<PathFragment> getDeclaredIncludeWarnDirs() {
-    return ccCompilationInfo.getDeclaredIncludeWarnDirs();
+    return ccCompilationContextInfo.getDeclaredIncludeWarnDirs();
   }
 
   /** Return explicitly listed header files. */
@@ -1112,13 +1101,13 @@ public class CppCompileAction extends AbstractAction
   public NestedSet<Artifact> getDeclaredIncludeSrcs() {
     if (lipoScannables != null && lipoScannables.iterator().hasNext()) {
       NestedSetBuilder<Artifact> srcs = NestedSetBuilder.stableOrder();
-      srcs.addTransitive(ccCompilationInfo.getDeclaredIncludeSrcs());
+      srcs.addTransitive(ccCompilationContextInfo.getDeclaredIncludeSrcs());
       for (IncludeScannable lipoScannable : lipoScannables) {
         srcs.addTransitive(lipoScannable.getDeclaredIncludeSrcs());
       }
       return srcs.build();
     }
-    return ccCompilationInfo.getDeclaredIncludeSrcs();
+    return ccCompilationContextInfo.getDeclaredIncludeSrcs();
   }
 
   /**
@@ -1153,9 +1142,10 @@ public class CppCompileAction extends AbstractAction
      * that affect whether validateIncludes() will report an error or warning
      * have changed, otherwise we might miss some errors.
      */
-    fp.addPaths(ccCompilationInfo.getDeclaredIncludeDirs());
-    fp.addPaths(ccCompilationInfo.getDeclaredIncludeWarnDirs());
-    actionKeyContext.addNestedSetToFingerprint(fp, ccCompilationInfo.getDeclaredIncludeSrcs());
+    fp.addPaths(ccCompilationContextInfo.getDeclaredIncludeDirs());
+    fp.addPaths(ccCompilationContextInfo.getDeclaredIncludeWarnDirs());
+    actionKeyContext.addNestedSetToFingerprint(
+        fp, ccCompilationContextInfo.getDeclaredIncludeSrcs());
     fp.addInt(0); // mark the boundary between input types
     actionKeyContext.addNestedSetToFingerprint(fp, getMandatoryInputs());
     fp.addInt(0);
@@ -1388,7 +1378,7 @@ public class CppCompileAction extends AbstractAction
       legend = "  Argument: ";
     }
 
-    for (PathFragment path : ccCompilationInfo.getDeclaredIncludeDirs()) {
+    for (PathFragment path : ccCompilationContextInfo.getDeclaredIncludeDirs()) {
       message.append("  Declared include directory: ");
       message.append(ShellEscaper.escapeString(path.getPathString()));
       message.append('\n');

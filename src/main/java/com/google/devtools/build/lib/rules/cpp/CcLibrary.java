@@ -66,10 +66,13 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
       CppFileTypes.ALWAYS_LINK_LIBRARY, CppFileTypes.ALWAYS_LINK_PIC_LIBRARY,
       CppFileTypes.SHARED_LIBRARY, CppFileTypes.VERSIONED_SHARED_LIBRARY);
 
-  private static Runfiles collectRunfiles(RuleContext context,
+  private static Runfiles collectRunfiles(
+      RuleContext context,
+      FeatureConfiguration featureConfiguration,
       CcLinkingOutputs ccLinkingOutputs,
       CcToolchainProvider ccToolchain,
-      boolean neverLink, boolean addDynamicRuntimeInputArtifactsToRunfiles,
+      boolean neverLink,
+      boolean addDynamicRuntimeInputArtifactsToRunfiles,
       boolean linkingStatically) {
     Runfiles.Builder builder = new Runfiles.Builder(
         context.getWorkspaceName(), context.getConfiguration().legacyExternalRunfiles());
@@ -78,12 +81,12 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
     // it, but instead be loaded as an extension. So we need the dynamic library for this in the
     // runfiles.
     builder.addArtifacts(ccLinkingOutputs.getLibrariesForRunfiles(linkingStatically && !neverLink));
-    builder.add(context, CppRunfilesProvider.runfilesFunction(linkingStatically));
+    builder.add(context, CcRunfilesInfo.runfilesFunction(linkingStatically));
 
     builder.addDataDeps(context);
 
     if (addDynamicRuntimeInputArtifactsToRunfiles) {
-      builder.addTransitiveArtifacts(ccToolchain.getDynamicRuntimeLinkInputs());
+      builder.addTransitiveArtifacts(ccToolchain.getDynamicRuntimeLinkInputs(featureConfiguration));
     }
     return builder.build();
   }
@@ -284,7 +287,8 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
     CompilationInfo compilationInfo = compilationHelper.compile();
     LinkingInfo linkingInfo =
         linkingHelper.link(
-            compilationInfo.getCcCompilationOutputs(), compilationInfo.getCcCompilationInfo());
+            compilationInfo.getCcCompilationOutputs(),
+            compilationInfo.getCcCompilationContextInfo());
 
     /*
      * We always generate a static library, even if there aren't any source files.
@@ -313,10 +317,24 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
     }
     NestedSet<Artifact> filesToBuild = filesBuilder.build();
 
-    Runfiles staticRunfiles = collectRunfiles(ruleContext, linkingOutputs, ccToolchain,
-        neverLink, addDynamicRuntimeInputArtifactsToRunfiles, true);
-    Runfiles sharedRunfiles = collectRunfiles(ruleContext, linkingOutputs, ccToolchain,
-        neverLink, addDynamicRuntimeInputArtifactsToRunfiles, false);
+    Runfiles staticRunfiles =
+        collectRunfiles(
+            ruleContext,
+            featureConfiguration,
+            linkingOutputs,
+            ccToolchain,
+            neverLink,
+            addDynamicRuntimeInputArtifactsToRunfiles,
+            true);
+    Runfiles sharedRunfiles =
+        collectRunfiles(
+            ruleContext,
+            featureConfiguration,
+            linkingOutputs,
+            ccToolchain,
+            neverLink,
+            addDynamicRuntimeInputArtifactsToRunfiles,
+            false);
 
     List<Artifact> instrumentedObjectFiles = new ArrayList<>();
     instrumentedObjectFiles.addAll(compilationInfo.getCcCompilationOutputs().getObjectFiles(false));
@@ -337,8 +355,7 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
         .addProvider(
             RunfilesProvider.class, RunfilesProvider.withData(staticRunfiles, sharedRunfiles))
         // Remove this?
-        .addProvider(
-            CppRunfilesProvider.class, new CppRunfilesProvider(staticRunfiles, sharedRunfiles))
+        .addNativeDeclaredProvider(new CcRunfilesInfo(staticRunfiles, sharedRunfiles))
         .addOutputGroup(
             OutputGroupInfo.HIDDEN_TOP_LEVEL,
             collectHiddenTopLevelArtifacts(

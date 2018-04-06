@@ -438,12 +438,14 @@ public final class CcLinkingHelper {
    *
    * @throws RuleErrorException
    */
-  // TODO(b/73997894): Try to remove CcCompilationInfo. Right now headers are passed as non code
+  // TODO(b/73997894): Try to remove CcCompilationContextInfo. Right now headers are passed as non
+  // code
   // inputs to the linker.
-  public LinkingInfo link(CcCompilationOutputs ccOutputs, CcCompilationInfo ccCompilationInfo)
+  public LinkingInfo link(
+      CcCompilationOutputs ccOutputs, CcCompilationContextInfo ccCompilationContextInfo)
       throws RuleErrorException, InterruptedException {
     Preconditions.checkNotNull(ccOutputs);
-    Preconditions.checkNotNull(ccCompilationInfo);
+    Preconditions.checkNotNull(ccCompilationContextInfo);
 
     if (checkDepsGenerateCpp) {
       for (LanguageDependentFragment dep :
@@ -526,7 +528,7 @@ public final class CcLinkingHelper {
     // We should consider merging most of these providers into a single provider.
     TransitiveInfoProviderMapBuilder providers =
         new TransitiveInfoProviderMapBuilder()
-            .add(new CppRunfilesProvider(cppStaticRunfiles, cppSharedRunfiles));
+            .put(new CcRunfilesInfo(cppStaticRunfiles, cppSharedRunfiles));
 
     Map<String, NestedSet<Artifact>> outputGroups = new TreeMap<>();
 
@@ -540,7 +542,6 @@ public final class CcLinkingHelper {
       providers.add(new CcNativeLibraryProvider(collectNativeCcLibraries(ccLinkingOutputs)));
     }
     providers.put(
-        CcExecutionDynamicLibrariesProvider.class,
         collectExecutionDynamicLibraryArtifacts(ccLinkingOutputs.getExecutionDynamicLibraries()));
 
     CppConfiguration cppConfiguration = ruleContext.getFragment(CppConfiguration.class);
@@ -548,11 +549,11 @@ public final class CcLinkingHelper {
     if (emitCcSpecificLinkParamsProvider) {
       providers.add(
           new CcSpecificLinkParamsProvider(
-              createCcLinkParamsStore(ccLinkingOutputs, ccCompilationInfo, forcePic)));
+              createCcLinkParamsStore(ccLinkingOutputs, ccCompilationContextInfo, forcePic)));
     } else {
       providers.put(
           new CcLinkParamsInfo(
-              createCcLinkParamsStore(ccLinkingOutputs, ccCompilationInfo, forcePic)));
+              createCcLinkParamsStore(ccLinkingOutputs, ccCompilationContextInfo, forcePic)));
     }
     return new LinkingInfo(
         providers.build(), outputGroups, ccLinkingOutputs, originalLinkingOutputs);
@@ -625,7 +626,7 @@ public final class CcLinkingHelper {
             ruleContext.getWorkspaceName(),
             ruleContext.getConfiguration().legacyExternalRunfiles());
     builder.addTargets(deps, RunfilesProvider.DEFAULT_RUNFILES);
-    builder.addTargets(deps, CppRunfilesProvider.runfilesFunction(linkingStatically));
+    builder.addTargets(deps, CcRunfilesInfo.runfilesFunction(linkingStatically));
     // Add the shared libraries to the runfiles.
     builder.addArtifacts(ccLinkingOutputs.getLibrariesForRunfiles(linkingStatically));
     return builder.build();
@@ -633,13 +634,13 @@ public final class CcLinkingHelper {
 
   private CcLinkParamsStore createCcLinkParamsStore(
       final CcLinkingOutputs ccLinkingOutputs,
-      final CcCompilationInfo ccCompilationInfo,
+      final CcCompilationContextInfo ccCompilationContextInfo,
       final boolean forcePic) {
     return new CcLinkParamsStore() {
       @Override
       protected void collect(
           CcLinkParams.Builder builder, boolean linkingStatically, boolean linkShared) {
-        builder.addLinkstamps(linkstamps.build(), ccCompilationInfo);
+        builder.addLinkstamps(linkstamps.build(), ccCompilationContextInfo);
         builder.addTransitiveTargets(
             deps, CcLinkParamsInfo.TO_LINK_PARAMS, CcSpecificLinkParamsProvider.TO_LINK_PARAMS);
         if (!neverlink) {
@@ -670,22 +671,22 @@ public final class CcLinkingHelper {
     return result.build();
   }
 
-  private CcExecutionDynamicLibrariesProvider collectExecutionDynamicLibraryArtifacts(
+  private CcExecutionDynamicLibrariesInfo collectExecutionDynamicLibraryArtifacts(
       List<LibraryToLink> executionDynamicLibraries) {
     Iterable<Artifact> artifacts = LinkerInputs.toLibraryArtifacts(executionDynamicLibraries);
     if (!Iterables.isEmpty(artifacts)) {
-      return new CcExecutionDynamicLibrariesProvider(
+      return new CcExecutionDynamicLibrariesInfo(
           NestedSetBuilder.wrap(Order.STABLE_ORDER, artifacts));
     }
 
     NestedSetBuilder<Artifact> builder = NestedSetBuilder.stableOrder();
-    for (CcExecutionDynamicLibrariesProvider dep :
-        AnalysisUtils.getProviders(deps, CcExecutionDynamicLibrariesProvider.class)) {
+    for (CcExecutionDynamicLibrariesInfo dep :
+        AnalysisUtils.getProviders(deps, CcExecutionDynamicLibrariesInfo.PROVIDER)) {
       builder.addTransitive(dep.getExecutionDynamicLibraryArtifacts());
     }
     return builder.isEmpty()
-        ? CcExecutionDynamicLibrariesProvider.EMPTY
-        : new CcExecutionDynamicLibrariesProvider(builder.build());
+        ? CcExecutionDynamicLibrariesInfo.EMPTY
+        : new CcExecutionDynamicLibrariesInfo(builder.build());
   }
 
   /**
@@ -879,8 +880,8 @@ public final class CcLinkingHelper {
             .addLinkopts(sonameLinkopts)
             .setRuntimeInputs(
                 ArtifactCategory.DYNAMIC_LIBRARY,
-                ccToolchain.getDynamicRuntimeLinkMiddleman(),
-                ccToolchain.getDynamicRuntimeLinkInputs())
+                ccToolchain.getDynamicRuntimeLinkMiddleman(featureConfiguration),
+                ccToolchain.getDynamicRuntimeLinkInputs(featureConfiguration))
             .addVariablesExtensions(variablesExtensions);
 
     if (featureConfiguration.isEnabled(CppRuleClasses.TARGETS_WINDOWS)) {

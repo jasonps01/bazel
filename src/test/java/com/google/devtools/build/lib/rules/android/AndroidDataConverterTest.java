@@ -17,8 +17,11 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.truth.StringSubject;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
+import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
+import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.rules.android.AndroidDataConverter.JoinerType;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.function.Function;
@@ -75,6 +78,25 @@ public class AndroidDataConverterTest {
                 .with(getFunction("another string"))
                 .build())
         .isEqualTo("q/w#r/t/y;some string;another string");
+  }
+
+  @Test
+  public void testGetVectorArg() {
+    AndroidDataConverter<String> converter =
+        AndroidDataConverter.<String>builder(JoinerType.SEMICOLON_AMPERSAND)
+            .with(x -> x + "1")
+            .with(x -> x + "2")
+            .build();
+
+    assertThat(
+        CustomCommandLine.builder()
+            .addAll(
+                "somekey",
+                converter.getVectorArg(
+                    NestedSetBuilder.create(Order.NAIVE_LINK_ORDER, "a", "b")))
+            .build()
+            .toString())
+        .isEqualTo("somekey a1;a2&b1;b2");
   }
 
   private static StringSubject assertMap(AndroidDataConverter<String> converter) {

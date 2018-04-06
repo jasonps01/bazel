@@ -26,7 +26,6 @@ import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.devtools.build.lib.events.Location;
-import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.Param;
 import com.google.devtools.build.lib.skylarkinterface.ParamType;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
@@ -54,7 +53,6 @@ import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
 /** Syntax node for a function call expression. */
-@AutoCodec
 public final class FuncallExpression extends Expression {
 
   /**
@@ -317,6 +315,21 @@ public final class FuncallExpression extends Expression {
     } catch (ExecutionException e) {
       throw new IllegalStateException("Method loading failed: " + e);
     }
+  }
+
+  /**
+   * Returns a {@link BuiltinCallable} representing a {@link SkylarkCallable}-annotated instance
+   * method of a given object with the given method name.
+   */
+  public static BuiltinCallable getBuiltinCallable(Object obj, String methodName) {
+    Class<?> objClass = obj.getClass();
+    List<MethodDescriptor> methodDescriptors = getMethods(objClass, methodName);
+    if (methodDescriptors.size() != 1) {
+      throw new IllegalStateException(String.format(
+          "Expected exactly 1 method named '%s' in %s, but found %s",
+          methodName, objClass, methodDescriptors.size()));
+    }
+    return new BuiltinCallable(methodName, obj, methodDescriptors.get(0));
   }
 
   /**

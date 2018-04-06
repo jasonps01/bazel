@@ -29,6 +29,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.events.Location;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
 import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoMode;
@@ -74,14 +75,13 @@ public final class CcToolchainProvider extends ToolchainInfo {
           /* dynamicRuntimeLinkInputs= */ NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
           /* dynamicRuntimeLinkMiddleman= */ null,
           /* dynamicRuntimeSolibDir= */ PathFragment.EMPTY_FRAGMENT,
-          CcCompilationInfo.EMPTY,
+          CcCompilationContextInfo.EMPTY,
           /* supportsParamFiles= */ false,
           /* supportsHeaderParsing= */ false,
           Variables.EMPTY,
           /* builtinIncludeFiles= */ ImmutableList.<Artifact>of(),
           /* coverageEnvironment= */ NestedSetBuilder.emptySet(Order.COMPILE_ORDER),
           /* linkDynamicLibraryTool= */ null,
-          /* environment= */ ImmutableMap.<String, String>of(),
           /* builtInIncludeDirectories= */ ImmutableList.<PathFragment>of(),
           /* sysroot= */ null,
           FdoMode.OFF);
@@ -106,14 +106,13 @@ public final class CcToolchainProvider extends ToolchainInfo {
   private final NestedSet<Artifact> dynamicRuntimeLinkInputs;
   @Nullable private final Artifact dynamicRuntimeLinkMiddleman;
   private final PathFragment dynamicRuntimeSolibDir;
-  private final CcCompilationInfo ccCompilationInfo;
+  private final CcCompilationContextInfo ccCompilationContextInfo;
   private final boolean supportsParamFiles;
   private final boolean supportsHeaderParsing;
   private final Variables buildVariables;
   private final ImmutableList<Artifact> builtinIncludeFiles;
   private final NestedSet<Pair<String, String>> coverageEnvironment;
   @Nullable private final Artifact linkDynamicLibraryTool;
-  private final ImmutableMap<String, String> environment;
   private final ImmutableList<PathFragment> builtInIncludeDirectories;
   @Nullable private final PathFragment sysroot;
   private final FdoMode fdoMode;
@@ -140,14 +139,13 @@ public final class CcToolchainProvider extends ToolchainInfo {
       NestedSet<Artifact> dynamicRuntimeLinkInputs,
       @Nullable Artifact dynamicRuntimeLinkMiddleman,
       PathFragment dynamicRuntimeSolibDir,
-      CcCompilationInfo ccCompilationInfo,
+      CcCompilationContextInfo ccCompilationContextInfo,
       boolean supportsParamFiles,
       boolean supportsHeaderParsing,
       Variables buildVariables,
       ImmutableList<Artifact> builtinIncludeFiles,
       NestedSet<Pair<String, String>> coverageEnvironment,
       Artifact linkDynamicLibraryTool,
-      ImmutableMap<String, String> environment,
       ImmutableList<PathFragment> builtInIncludeDirectories,
       @Nullable PathFragment sysroot,
       FdoMode fdoMode) {
@@ -172,14 +170,13 @@ public final class CcToolchainProvider extends ToolchainInfo {
     this.dynamicRuntimeLinkInputs = Preconditions.checkNotNull(dynamicRuntimeLinkInputs);
     this.dynamicRuntimeLinkMiddleman = dynamicRuntimeLinkMiddleman;
     this.dynamicRuntimeSolibDir = Preconditions.checkNotNull(dynamicRuntimeSolibDir);
-    this.ccCompilationInfo = Preconditions.checkNotNull(ccCompilationInfo);
+    this.ccCompilationContextInfo = Preconditions.checkNotNull(ccCompilationContextInfo);
     this.supportsParamFiles = supportsParamFiles;
     this.supportsHeaderParsing = supportsHeaderParsing;
     this.buildVariables = buildVariables;
     this.builtinIncludeFiles = builtinIncludeFiles;
     this.coverageEnvironment = coverageEnvironment;
     this.linkDynamicLibraryTool = linkDynamicLibraryTool;
-    this.environment = environment;
     this.builtInIncludeDirectories = builtInIncludeDirectories;
     this.sysroot = sysroot;
     this.fdoMode = fdoMode;
@@ -343,31 +340,51 @@ public final class CcToolchainProvider extends ToolchainInfo {
   }
 
   /**
-   * Returns the static runtime libraries.
+   * Returns true if the featureConfiguration includes statically linking the cpp runtimes.
+   *
+   * @param featureConfiguration the relevant FeatureConfiguration.
    */
-  public NestedSet<Artifact> getStaticRuntimeLinkInputs() {
-    return staticRuntimeLinkInputs;
+  public boolean shouldStaticallyLinkCppRuntimes(FeatureConfiguration featureConfiguration) {
+    return featureConfiguration.isEnabled(CppRuleClasses.STATIC_LINK_CPP_RUNTIMES);
   }
 
-  /**
-   * Returns an aggregating middleman that represents the static runtime libraries.
-   */
-  @Nullable public Artifact getStaticRuntimeLinkMiddleman() {
-    return staticRuntimeLinkMiddleman;
+  /** Returns the static runtime libraries. */
+  public NestedSet<Artifact> getStaticRuntimeLinkInputs(FeatureConfiguration featureConfiguration) {
+    if (shouldStaticallyLinkCppRuntimes(featureConfiguration)) {
+      return staticRuntimeLinkInputs;
+    } else {
+      return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
+    }
   }
 
-  /**
-   * Returns the dynamic runtime libraries.
-   */
-  public NestedSet<Artifact> getDynamicRuntimeLinkInputs() {
-    return dynamicRuntimeLinkInputs;
+  /** Returns an aggregating middleman that represents the static runtime libraries. */
+  @Nullable
+  public Artifact getStaticRuntimeLinkMiddleman(FeatureConfiguration featureConfiguration) {
+    if (shouldStaticallyLinkCppRuntimes(featureConfiguration)) {
+      return staticRuntimeLinkMiddleman;
+    } else {
+      return null;
+    }
   }
 
-  /**
-   * Returns an aggregating middleman that represents the dynamic runtime libraries.
-   */
-  @Nullable public Artifact getDynamicRuntimeLinkMiddleman() {
-    return dynamicRuntimeLinkMiddleman;
+  /** Returns the dynamic runtime libraries. */
+  public NestedSet<Artifact> getDynamicRuntimeLinkInputs(
+      FeatureConfiguration featureConfiguration) {
+    if (shouldStaticallyLinkCppRuntimes(featureConfiguration)) {
+      return dynamicRuntimeLinkInputs;
+    } else {
+      return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
+    }
+  }
+
+  /** Returns an aggregating middleman that represents the dynamic runtime libraries. */
+  @Nullable
+  public Artifact getDynamicRuntimeLinkMiddleman(FeatureConfiguration featureConfiguration) {
+    if (shouldStaticallyLinkCppRuntimes(featureConfiguration)) {
+      return dynamicRuntimeLinkMiddleman;
+    } else {
+      return null;
+    }
   }
 
   /**
@@ -379,9 +396,9 @@ public final class CcToolchainProvider extends ToolchainInfo {
     return dynamicRuntimeSolibDir;
   }
 
-  /** Returns the {@code CcCompilationInfo} for the toolchain. */
-  public CcCompilationInfo getCcCompilationInfo() {
-    return ccCompilationInfo;
+  /** Returns the {@code CcCompilationContextInfo} for the toolchain. */
+  public CcCompilationContextInfo getCcCompilationContextInfo() {
+    return ccCompilationContextInfo;
   }
 
   /**
@@ -506,10 +523,6 @@ public final class CcToolchainProvider extends ToolchainInfo {
    */
   public NestedSet<Pair<String, String>> getCoverageEnvironment() {
     return coverageEnvironment;
-  }
-
-  public ImmutableMap<String, String> getEnvironment() {
-    return environment;
   }
 
   /**
@@ -639,6 +652,16 @@ public final class CcToolchainProvider extends ToolchainInfo {
 
   public ImmutableList<String> getUnfilteredCompilerOptions(Iterable<String> features) {
     return toolchainInfo.getUnfilteredCompilerOptions(features, /* sysroot= */ null);
+  }
+
+  /**
+   * Unused, for compatibility with things internal to Google.
+   *
+   * <p>Deprecated: Use platforms.
+   */
+  @Deprecated
+  public String getTargetOS() {
+    return toolchainInfo.getTargetOS();
   }
 
   @SkylarkCallable(

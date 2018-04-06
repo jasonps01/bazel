@@ -57,7 +57,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.packages.RuleErrorConsumer;
-import com.google.devtools.build.lib.rules.cpp.CcCompilationInfo.Builder;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationContextInfo.Builder;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams.Linkstamp;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Tool;
@@ -113,22 +113,25 @@ public class CppHelper {
    * Merges the STL and toolchain contexts into context builder. The STL is automatically determined
    * using the ":stl" attribute.
    */
-  public static void mergeToolchainDependentCcCompilationInfo(
-      RuleContext ruleContext, CcToolchainProvider toolchain, Builder ccCompilationInfoBuilder) {
+  public static void mergeToolchainDependentCcCompilationContextInfo(
+      RuleContext ruleContext,
+      CcToolchainProvider toolchain,
+      Builder ccCompilationContextInfoBuilder) {
     if (ruleContext.getRule().getAttributeDefinition(":stl") != null) {
       TransitiveInfoCollection stl = ruleContext.getPrerequisite(":stl", Mode.TARGET);
       if (stl != null) {
-        CcCompilationInfo provider = stl.get(CcCompilationInfo.PROVIDER);
+        CcCompilationContextInfo provider = stl.get(CcCompilationContextInfo.PROVIDER);
         if (provider == null) {
           ruleContext.ruleError("Unable to merge the STL '" + stl.getLabel()
               + "' and toolchain contexts");
           return;
         }
-        ccCompilationInfoBuilder.mergeDependentCcCompilationInfo(provider);
+        ccCompilationContextInfoBuilder.mergeDependentCcCompilationContextInfo(provider);
       }
     }
     if (toolchain != null) {
-      ccCompilationInfoBuilder.mergeDependentCcCompilationInfo(toolchain.getCcCompilationInfo());
+      ccCompilationContextInfoBuilder.mergeDependentCcCompilationContextInfo(
+          toolchain.getCcCompilationContextInfo());
     }
   }
 
@@ -352,10 +355,11 @@ public class CppHelper {
       CppConfiguration config,
       CcToolchainProvider toolchain,
       Iterable<String> features,
-      Boolean sharedLib) {
+      boolean sharedLib,
+      boolean shouldStaticallyLinkCppRuntimes) {
     if (sharedLib) {
       return toolchain.getSharedLibraryLinkOptions(
-          toolchain.supportsEmbeddedRuntimes()
+          shouldStaticallyLinkCppRuntimes
               ? toolchain.getMostlyStaticSharedLinkFlags(
                   config.getCompilationMode(), config.getLipoMode())
               : toolchain.getDynamicLinkFlags(config.getCompilationMode(), config.getLipoMode()),
@@ -507,6 +511,38 @@ public class CppHelper {
   public static CcToolchainProvider getToolchainUsingDefaultCcToolchainAttribute(
       RuleContext ruleContext) {
     return getToolchain(ruleContext, CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME);
+  }
+
+  /**
+   * Convenience function for finding the dynamic runtime inputs for the current toolchain. Useful
+   * for non C++ rules that link against the C++ runtime.
+   */
+  public static NestedSet<Artifact> getDefaultCcToolchainDynamicRuntimeInputs(
+      RuleContext ruleContext) {
+    CcToolchainProvider defaultToolchain =
+        getToolchain(ruleContext, CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME);
+    if (defaultToolchain == null) {
+      return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
+    }
+    FeatureConfiguration featureConfiguration =
+        CcCommon.configureFeatures(ruleContext, defaultToolchain);
+    return defaultToolchain.getDynamicRuntimeLinkInputs(featureConfiguration);
+  }
+
+  /**
+   * Convenience function for finding the static runtime inputs for the current toolchain. Useful
+   * for non C++ rules that link against the C++ runtime.
+   */
+  public static NestedSet<Artifact> getDefaultCcToolchainStaticRuntimeInputs(
+      RuleContext ruleContext) {
+    CcToolchainProvider defaultToolchain =
+        getToolchain(ruleContext, CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME);
+    if (defaultToolchain == null) {
+      return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
+    }
+    FeatureConfiguration featureConfiguration =
+        CcCommon.configureFeatures(ruleContext, defaultToolchain);
+    return defaultToolchain.getStaticRuntimeLinkInputs(featureConfiguration);
   }
 
   /**
@@ -697,7 +733,7 @@ public class CppHelper {
 
   /**
    * Emits a warning on the rule if there are identical linkstamp artifacts with different {@code
-   * CcCompilationInfo}s.
+   * CcCompilationContextInfo}s.
    */
   public static void checkLinkstampsUnique(RuleErrorConsumer listener, CcLinkParams linkParams) {
     Map<Artifact, NestedSet<Artifact>> result = new LinkedHashMap<>();

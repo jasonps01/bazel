@@ -56,7 +56,6 @@ import com.google.devtools.build.lib.testutil.MoreAsserts;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -72,17 +71,6 @@ import org.junit.runners.JUnit4;
  */
 @RunWith(JUnit4.class)
 public class AndroidBinaryTest extends AndroidBuildViewTestCase {
-
-  @Before
-  public final void turnOffPackageLoadingChecks() throws Exception {
-    // By default, PackageLoader loads every package the test harness loads, in order to verify
-    // the PackageLoader works correctly. In this test, however, PackageLoader sometimes fails to
-    // load packages and causes the test to become flaky.
-    // Since PackageLoader gets generally good coverage from the rest of Bazel's tests, and because
-    // we believe there's nothing special from the point of view of package loading in this test,
-    // we disable this verification here.
-    initializeSkyframeExecutor(/*doPackageLoadingChecks=*/ false);
-  }
 
   @Before
   public void createFiles() throws Exception {
@@ -3398,26 +3386,6 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "    manifest = 'AndroidManifest.xml',",
         "    resource_files = [ 'res/values/values.xml' ], ",
         ")");
-  }
-
-  private void mockAndroidSdkWithAapt2() throws IOException {
-    scratch.file(
-        "sdk/BUILD",
-        "android_sdk(",
-        "    name = 'sdk',",
-        "    aapt = 'aapt',",
-        "    aapt2 = 'aapt2',",
-        "    adb = 'adb',",
-        "    aidl = 'aidl',",
-        "    android_jar = 'android.jar',",
-        "    apksigner = 'apksigner',",
-        "    dx = 'dx',",
-        "    framework_aidl = 'framework_aidl',",
-        "    main_dex_classes = 'main_dex_classes',",
-        "    main_dex_list_creator = 'main_dex_list_creator',",
-        "    proguard = 'proguard',",
-        "    shrinked_android_jar = 'shrinked_android_jar',",
-        "    zipalign = 'zipalign')");
   }
 
   @Test

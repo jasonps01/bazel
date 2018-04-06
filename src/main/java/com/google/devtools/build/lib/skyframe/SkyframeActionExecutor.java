@@ -389,7 +389,8 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
       ActionMetadataHandler metadataHandler,
       long actionStartTime,
       ActionExecutionContext actionExecutionContext,
-      ActionLookupData actionLookupData)
+      ActionLookupData actionLookupData,
+      boolean inputDiscoveryRan)
       throws ActionExecutionException, InterruptedException {
     Exception exception = badActionMap.get(action);
     if (exception != null) {
@@ -409,8 +410,10 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
     // Check to see if another action is already executing/has executed this value.
     Pair<ActionLookupData, FutureTask<ActionExecutionValue>> oldAction =
         buildActionMap.putIfAbsent(primaryOutput, Pair.of(actionLookupData, actionTask));
+    // true if this is a non-shared action or it's shared and to be executed.
+    boolean isPrimaryActionForTheValue = oldAction == null;
 
-    if (oldAction == null) {
+    if (isPrimaryActionForTheValue) {
       actionTask.run();
     } else {
       // Wait for other action to finish, so any actions that depend on its outputs can execute.
@@ -423,6 +426,15 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
           ActionExecutionException.class, InterruptedException.class);
       throw new IllegalStateException(e);
     } finally {
+      if (!isPrimaryActionForTheValue && action.discoversInputs() && inputDiscoveryRan) {
+        /**
+         * If this is a shared action that does input discovery, but was not executed, we need to
+         * remove it from the active actions pool (it was added there by {@link
+         * ActionRunner#call()}).
+         */
+        // TODO(b/72764586): Cleanup once we can properly skip input discovery for shared actions
+        statusReporterRef.get().remove(action);
+      }
       String message = action.getProgressMessage();
       if (message != null) {
         // Tell the receiver that the action has completed *before* telling the reporter.
@@ -496,7 +508,7 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
       long actionStartTime,
       Iterable<Artifact> resolvedCacheArtifacts,
       Map<String, String> clientEnv) {
-    profiler.startTask(ProfilerTask.ACTION_CHECK, action);
+    startProfileAction(ProfilerTask.ACTION_CHECK, action);
     Token token =
         actionCacheChecker.getTokenIfNeedToExecute(
             action, resolvedCacheArtifacts, clientEnv, explain ? reporter : null, metadataHandler);
@@ -641,6 +653,10 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
     this.actionInputPrefetcher = actionInputPrefetcher;
   }
 
+  private void startProfileAction(ProfilerTask task, Action action) {
+    profiler.startTask(task, action.describe());
+  }
+
   private class ActionRunner implements Callable<ActionExecutionValue> {
     private final ExtendedEventHandler eventHandler;
     private final Action action;
@@ -666,7 +682,7 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
 
     @Override
     public ActionExecutionValue call() throws ActionExecutionException, InterruptedException {
-      profiler.startTask(ProfilerTask.ACTION, action);
+      startProfileAction(ProfilerTask.ACTION, action);
       try {
         if (actionCacheChecker.isActionExecutionProhibited(action)) {
           // We can't execute an action (e.g. because --check_???_up_to_date option was used). Fail
@@ -828,7 +844,7 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
           context.getFileOutErr(),
           outputDumped);
     } finally {
-      statusReporter.remove(action);
+      statusReporterRef.get().remove(action);
       eventHandler.post(new ActionCompletionEvent(actionStartTime, action, actionLookupData));
     }
   }
@@ -883,7 +899,7 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
       Action action,
       ActionExecutionContext actionExecutionContext)
           throws ActionExecutionException, InterruptedException {
-    profiler.startTask(ProfilerTask.ACTION_EXECUTE, action);
+    startProfileAction(ProfilerTask.ACTION_EXECUTE, action);
     // ActionExecutionExceptions that occur as the thread is interrupted are
     // assumed to be a result of that, so we throw InterruptedException
     // instead.
@@ -922,7 +938,7 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
       Preconditions.checkState(action.inputsDiscovered(),
           "Action %s successfully executed, but inputs still not known", action);
 
-      profiler.startTask(ProfilerTask.ACTION_COMPLETE, action);
+      startProfileAction(ProfilerTask.ACTION_COMPLETE, action);
       try {
         if (!checkOutputs(action, metadataHandler)) {
           reportError("not all outputs were created or valid", null, action,

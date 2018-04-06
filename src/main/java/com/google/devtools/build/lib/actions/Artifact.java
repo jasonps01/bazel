@@ -94,20 +94,18 @@ import javax.annotation.Nullable;
  *   <li>A 'Fileset' special Artifact. This is a legacy type of Artifact and should not be used by
  *       new rule implementations.
  * </ul>
- *
- * <p>This class is "theoretically" final; it should not be subclassed except by {@link
- * SpecialArtifact}.
  */
 @Immutable
 @SkylarkModule(
-    name = "File",
-    category = SkylarkModuleCategory.BUILTIN,
-    doc = "This object is created during the analysis phase to represent a file or directory that "
-        + "will be read or written during the execution phase. It is not an open file handle, and "
-        + "cannot be used to directly read or write file contents. Rather, you use it to construct "
-        + "the action graph in a rule implementation function by passing it to action-creating "
-        + "functions. See the <a href='../rules.$DOC_EXT#files'>Rules page</a> for more "
-        + "information."
+  name = "File",
+  category = SkylarkModuleCategory.BUILTIN,
+  doc =
+      "This object is created during the analysis phase to represent a file or directory that "
+          + "will be read or written during the execution phase. It is not an open file handle, "
+          + "and cannot be used to directly read or write file contents. Rather, you use it to "
+          + "construct the action graph in a rule implementation function by passing it to "
+          + "action-creating functions. See the "
+          + "<a href='../rules.$DOC_EXT#files'>Rules page</a> for more information."
 )
 @AutoCodec
 public class Artifact
@@ -422,6 +420,31 @@ public class Artifact
     return false;
   }
 
+  /** Only callable if isSourceArtifact() is true. */
+  public SourceArtifact asSourceArtifact() {
+    throw new IllegalStateException("Not a source artifact!");
+  }
+
+  /** {@link Artifact#isSourceArtifact() is true.
+   *
+   * <p>Source artifacts have the property that unlike for output artifacts, direct file system
+   * access for their contents should be safe, even in a distributed context.
+   *
+   * TODO(shahan): move {@link Artifact#getPath} to this subclass.
+   * */
+  @AutoCodec
+  public static final class SourceArtifact extends Artifact {
+    @AutoCodec.VisibleForSerialization
+    SourceArtifact(ArtifactRoot root, PathFragment execPath, ArtifactOwner owner) {
+      super(root, execPath, owner);
+    }
+
+    @Override
+    public SourceArtifact asSourceArtifact() {
+      return this;
+    }
+  }
+
   /**
    * Special artifact types.
    *
@@ -676,28 +699,11 @@ public class Artifact
       return "[" + root + "]" + rootRelativePath;
     } else {
       // Derived Artifact: path and root are under execRoot
-      PathFragment execRoot = trimTail(getPath().asFragment(), execPath);
-      return "[["
-          + execRoot
-          + "]"
-          + root.getRoot().asPath().asFragment().relativeTo(execRoot)
-          + "]"
-          + rootRelativePath;
+      //
+      // TODO(blaze-team): this is misleading beacuse execution_root isn't unique. Dig the
+      // workspace name out and print that also.
+      return "[[<execution_root>]" + root.getExecPath() + "]" + rootRelativePath;
     }
-  }
-
-  /**
-   * Serializes this artifact to a string that has enough data to reconstruct the artifact.
-   */
-  public final String serializeToString() {
-    // In theory, it should be enough to serialize execPath and rootRelativePath (which is a suffix
-    // of execPath). However, in practice there is code around that uses other attributes which
-    // needs cleaning up.
-    String result = execPath + " /" + rootRelativePath.toString().length();
-    if (getOwner() != null) {
-      result += " " + getOwner();
-    }
-    return result;
   }
 
   // ---------------------------------------------------------------------------

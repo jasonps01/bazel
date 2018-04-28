@@ -20,13 +20,12 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
-import com.google.devtools.build.lib.analysis.ShellConfiguration;
+import com.google.devtools.build.lib.analysis.ShToolchain;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.LauncherFileWriteAction;
@@ -46,11 +45,11 @@ import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsStore;
+import com.google.devtools.build.lib.rules.cpp.CcLinkingInfo;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder.Compression;
 import com.google.devtools.build.lib.rules.java.JavaCcLinkParamsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
-import com.google.devtools.build.lib.rules.java.JavaCompilationArgs;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
@@ -63,6 +62,7 @@ import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
 import com.google.devtools.build.lib.rules.java.JavaSourceJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaTargetAttributes;
+import com.google.devtools.build.lib.rules.java.JavaToolchainProvider;
 import com.google.devtools.build.lib.rules.java.JavaUtil;
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
@@ -396,25 +396,17 @@ public class BazelJavaSemantics implements JavaSemantics {
     if (OS.getCurrent() == OS.WINDOWS) {
       Artifact newExecutable =
           ruleContext.getImplicitOutputArtifact(ruleContext.getTarget().getName() + ".cmd");
+      PathFragment shExecutable = ShToolchain.getPathOrError(ruleContext);
       ruleContext.registerAction(
           new TemplateExpansionAction(
               ruleContext.getActionOwner(),
               newExecutable,
               STUB_SCRIPT_WINDOWS,
               ImmutableList.of(
-                  Substitution.of(
-                      "%bash_exe_path%",
-                      ruleContext
-                          .getFragment(ShellConfiguration.class)
-                          .getShellExecutable()
-                          .getPathString()),
+                  Substitution.of("%bash_exe_path%", shExecutable.getPathString()),
                   Substitution.of(
                       "%cygpath_exe_path%",
-                      ruleContext
-                          .getFragment(ShellConfiguration.class)
-                          .getShellExecutable()
-                          .replaceName("cygpath.exe")
-                          .getPathString())),
+                      shExecutable.replaceName("cygpath.exe").getPathString())),
               true));
       return newExecutable;
     } else {
@@ -522,12 +514,8 @@ public class BazelJavaSemantics implements JavaSemantics {
     // The dep may be a simple JAR and not a java rule, hence we can't simply do
     // dep.getProvider(JavaCompilationArgsProvider.class).getRecursiveJavaCompilationArgs(),
     // so we reuse the logic within JavaCompilationArgs to handle both scenarios.
-    JavaCompilationArgs args =
-        JavaCompilationArgs.builder()
-            .addTransitiveTargets(
-                ImmutableList.copyOf(deps), /*recursive=*/ true, ClasspathType.RUNTIME_ONLY)
-            .build();
-    return args.getRuntimeJars();
+    return JavaCompilationArgsProvider.legacyFromTargets(ImmutableList.copyOf(deps))
+        .getRuntimeJars();
   }
 
   @Override
@@ -566,36 +554,32 @@ public class BazelJavaSemantics implements JavaSemantics {
   }
 
   @Override
-  public Iterable<String> getExtraJavacOpts(RuleContext ruleContext) {
-    return ImmutableList.<String>of();
+  public ImmutableList<String> getCompatibleJavacOptions(
+      RuleContext ruleContext, JavaToolchainProvider toolchain) {
+    return ImmutableList.of();
   }
 
   @Override
-  public void addProviders(RuleContext ruleContext,
+  public void addProviders(
+      RuleContext ruleContext,
       JavaCommon javaCommon,
-      List<String> jvmFlags,
-      Artifact classJar,
-      Artifact srcJar,
-      Artifact genJar,
       Artifact gensrcJar,
-      ImmutableMap<Artifact, Artifact> compilationToRuntimeJarMap,
-      NestedSetBuilder<Artifact> filesBuilder,
       RuleConfiguredTargetBuilder ruleBuilder) {
-    if (!isJavaBinaryOrJavaTest(ruleContext)) {
-      // TODO(plf): Figure out whether we can remove support for C++ dependencies in Bazel.
-      ruleBuilder.addNativeDeclaredProvider(
-          new CcLinkParamsInfo(
-              new CcLinkParamsStore() {
-                @Override
-                protected void collect(
-                    CcLinkParams.Builder builder, boolean linkingStatically, boolean linkShared) {
-                  builder.addTransitiveTargets(
-                      javaCommon.targetsTreatedAsDeps(ClasspathType.BOTH),
-                      JavaCcLinkParamsProvider.TO_LINK_PARAMS,
-                      CcLinkParamsInfo.TO_LINK_PARAMS);
-                }
-              }));
-    }
+    // TODO(plf): Figure out whether we can remove support for C++ dependencies in Bazel.
+    CcLinkingInfo.Builder ccLinkingInfoBuilder = CcLinkingInfo.Builder.create();
+    ccLinkingInfoBuilder.setCcLinkParamsInfo(
+        new CcLinkParamsInfo(
+            new CcLinkParamsStore() {
+              @Override
+              protected void collect(
+                  CcLinkParams.Builder builder, boolean linkingStatically, boolean linkShared) {
+                builder.addTransitiveTargets(
+                    javaCommon.targetsTreatedAsDeps(ClasspathType.BOTH),
+                    JavaCcLinkParamsProvider.TO_LINK_PARAMS,
+                    CcLinkParamsInfo.TO_LINK_PARAMS);
+              }
+            }));
+    ruleBuilder.addNativeDeclaredProvider(ccLinkingInfoBuilder.build());
   }
 
   // TODO(dmarting): simplify that logic when we remove the legacy Bazel java_test behavior.
@@ -802,12 +786,6 @@ public class BazelJavaSemantics implements JavaSemantics {
   @Override
   public void addArtifactToJavaTargetAttribute(JavaTargetAttributes.Builder builder,
       Artifact srcArtifact) {
-  }
-
-  @Override
-  public void commonDependencyProcessing(RuleContext ruleContext,
-      JavaTargetAttributes.Builder attributes,
-      Collection<? extends TransitiveInfoCollection> deps) {
   }
 
   @Override

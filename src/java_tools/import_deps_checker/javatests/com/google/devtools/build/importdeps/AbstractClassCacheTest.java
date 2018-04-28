@@ -64,7 +64,8 @@ public abstract class AbstractClassCacheTest {
                       "ConstructorAnnotation",
                       "ParameterAnnotation",
                       "TypeAnnotation",
-                      "AnnotationAnnotation")
+                      "AnnotationAnnotation",
+                      "AnnotationFlag")
                   .map(name -> "LibraryAnnotations$" + name)
                   .collect(ImmutableList.toImmutableList()))
           .build()
@@ -78,7 +79,11 @@ public abstract class AbstractClassCacheTest {
 
   final Path libraryInterfaceJar = getPathFromSystemProperty("classcache.test.LibraryInterface");
   final ImmutableList<String> libraryInterfacePositives =
-      ImmutableList.of(PACKAGE_NAME + "LibraryInterface", PACKAGE_NAME + "LibraryInterface$Func");
+      ImmutableList.of(
+          PACKAGE_NAME + "LibraryInterface",
+          PACKAGE_NAME + "LibraryInterface$Func",
+          PACKAGE_NAME + "LibraryInterface$One",
+          PACKAGE_NAME + "LibraryInterface$Two");
 
   static Path getPathFromSystemProperty(String propertyName) {
     String path =

@@ -5,7 +5,7 @@ py_binary(
     srcs = ["bar.py"],
     data = ["bar-py-data.txt"],
     main = "bar.py",
-    deps = ["@bazel_tools//tools/runfiles:py-runfiles"],
+    deps = ["@bazel_tools//tools/python/runfiles"],
 )
 
 java_binary(
@@ -14,4 +14,11 @@ java_binary(
     data = ["bar-java-data.txt"],
     main_class = "Bar",
     deps = ["@bazel_tools//tools/runfiles:java-runfiles"],
+)
+
+sh_binary(
+    name = "bar-sh",
+    srcs = ["bar.sh"],
+    data = ["bar-sh-data.txt"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
 )

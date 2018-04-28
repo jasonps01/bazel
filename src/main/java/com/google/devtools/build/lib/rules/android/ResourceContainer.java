@@ -23,6 +23,8 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
+import com.google.devtools.build.lib.packages.RuleErrorConsumer;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
@@ -40,7 +42,7 @@ import javax.annotation.Nullable;
   category = SkylarkModuleCategory.NONE,
   doc = "The Android resources contributed by a single target."
 )
-public abstract class ResourceContainer implements MergableAndroidData {
+public abstract class ResourceContainer implements ValidatedAndroidData {
   /** The type of resource in question: either asset or a resource. */
   public enum ResourceType {
     ASSETS("assets"),
@@ -63,6 +65,7 @@ public abstract class ResourceContainer implements MergableAndroidData {
   @Nullable
   public abstract String getJavaPackage();
 
+  @Override
   @Nullable
   public abstract Artifact getApk();
 
@@ -71,39 +74,50 @@ public abstract class ResourceContainer implements MergableAndroidData {
     doc = "Returns the manifest for the target.",
     structField = true
   )
+  @Override
   public abstract Artifact getManifest();
 
+  @Override
   @Nullable
   public abstract Artifact getJavaSourceJar();
 
   @Nullable
   public abstract Artifact getJavaClassJar();
 
-  abstract AndroidAssets getAssets();
+  @Override
+  public ImmutableList<Artifact> getAssets() {
+    return getAndroidAssets().getAssets();
+  }
+
+  abstract AndroidAssets getAndroidAssets();
+
+  @Override
+  public ImmutableList<Artifact> getResources() {
+    return getAndroidResources().getResources();
+  }
 
   @VisibleForTesting
-  public abstract AndroidResources getResources();
+  public abstract AndroidResources getAndroidResources();
 
   /** @deprecated We are moving towards decoupling assets and resources */
   @Deprecated
   public ImmutableList<Artifact> getArtifacts(ResourceType resourceType) {
-    return resourceType == ResourceType.ASSETS
-        ? getAssets().getAssets()
-        : getResources().getResources();
+    return resourceType == ResourceType.ASSETS ? getAssets() : getResources();
   }
 
+  @Override
   public Iterable<Artifact> getArtifacts() {
-    return Iterables.concat(getAssets().getAssets(), getResources().getResources());
+    return Iterables.concat(getAssets(), getResources());
   }
 
   @Override
   public ImmutableList<PathFragment> getResourceRoots() {
-    return getResources().getResourceRoots();
+    return getAndroidResources().getResourceRoots();
   }
 
   @Override
   public ImmutableList<PathFragment> getAssetRoots() {
-    return getAssets().getAssetRoots();
+    return getAndroidAssets().getAssetRoots();
   }
 
   /**
@@ -118,11 +132,10 @@ public abstract class ResourceContainer implements MergableAndroidData {
    */
   @Deprecated
   public ImmutableList<PathFragment> getRoots(ResourceType resourceType) {
-    return resourceType == ResourceType.ASSETS
-        ? getAssets().getAssetRoots()
-        : getResources().getResourceRoots();
+    return resourceType == ResourceType.ASSETS ? getAssetRoots() : getResourceRoots();
   }
 
+  @Override
   public abstract boolean isManifestExported();
 
   @Nullable
@@ -161,6 +174,11 @@ public abstract class ResourceContainer implements MergableAndroidData {
   @Nullable
   public abstract Artifact getAapt2JavaSourceJar();
 
+  @Nullable
+  @Override
+  @Deprecated
+  public abstract Artifact getMergedResources();
+
   // The limited hashCode and equals behavior is necessary to avoid duplication when building with
   // fat_apk_cpu set. Artifacts generated in different configurations will naturally be different
   // and non-equal objects, causing the ResourceContainer not to be automatically deduplicated at
@@ -193,22 +211,25 @@ public abstract class ResourceContainer implements MergableAndroidData {
    * Returns a copy of this container with filtered resources, or the original if no resources
    * should be filtered. The original container is unchanged.
    */
-  public ResourceContainer filter(ResourceFilter filter, boolean isDependency) {
-    Optional<AndroidResources> filteredResources = getResources().maybeFilter(filter, isDependency);
+  public ResourceContainer filter(
+      RuleErrorConsumer errorConsumer, ResourceFilter filter, boolean isDependency)
+      throws RuleErrorException {
+    Optional<? extends AndroidResources> filteredResources =
+        getAndroidResources().maybeFilter(errorConsumer, filter, isDependency);
 
     if (!filteredResources.isPresent()) {
       // No filtering was done; return this container
       return this;
     }
-    return toBuilder().setResources(filteredResources.get()).build();
+    return toBuilder().setAndroidResources(filteredResources.get()).build();
   }
 
   /** Creates a new builder with default values. */
   public static Builder builder() {
     return new AutoValue_ResourceContainer.Builder()
         .setJavaPackageFrom(Builder.JavaPackageSource.MANIFEST)
-        .setAssets(AndroidAssets.empty())
-        .setResources(AndroidResources.empty());
+        .setAndroidAssets(AndroidAssets.empty())
+        .setAndroidResources(AndroidResources.empty());
   }
 
   /**
@@ -297,9 +318,9 @@ public abstract class ResourceContainer implements MergableAndroidData {
 
     public abstract Builder setJavaClassJar(@Nullable Artifact javaClassJar);
 
-    public abstract Builder setAssets(AndroidAssets assets);
+    public abstract Builder setAndroidAssets(AndroidAssets assets);
 
-    public abstract Builder setResources(AndroidResources resources);
+    public abstract Builder setAndroidResources(AndroidResources resources);
 
     public abstract Builder setManifestExported(boolean manifestExported);
 
@@ -314,6 +335,8 @@ public abstract class ResourceContainer implements MergableAndroidData {
     public abstract Builder setAapt2JavaSourceJar(@Nullable Artifact javaSourceJar);
 
     public abstract Builder setAapt2RTxt(@Nullable Artifact rTxt);
+
+    public abstract Builder setMergedResources(@Nullable Artifact mergedResources);
 
     abstract ResourceContainer autoBuild();
 

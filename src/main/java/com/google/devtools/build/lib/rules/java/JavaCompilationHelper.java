@@ -39,6 +39,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
+import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaClasspathMode;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -479,8 +480,18 @@ public final class JavaCompilationHelper {
    * @param manifestProto The artifact for the manifest proto emitted from JavaBuilder
    * @param genClassJar The artifact for the gen jar to output
    */
-  public void createGenJarAction(Artifact classJar, Artifact manifestProto,
+  public void createGenJarAction(
+      Artifact classJar,
+      Artifact manifestProto,
       Artifact genClassJar) {
+    createGenJarAction(
+        classJar, manifestProto, genClassJar, JavaRuntimeInfo.forHost(getRuleContext()));
+  }
+
+  public void createGenJarAction(Artifact classJar,
+      Artifact manifestProto,
+      Artifact genClassJar,
+      JavaRuntimeInfo hostJavabase) {
     getRuleContext()
         .registerAction(
             new SpawnAction.Builder()
@@ -488,9 +499,9 @@ public final class JavaCompilationHelper {
                 .addInput(classJar)
                 .addOutput(genClassJar)
                 .addTransitiveInputs(
-                    JavaRuntimeInfo.forHost(getRuleContext()).javaBaseInputsMiddleman())
+                    hostJavabase.javaBaseInputsMiddleman())
                 .setJarExecutable(
-                    JavaCommon.getHostJavaExecutable(ruleContext),
+                    JavaCommon.getHostJavaExecutable(hostJavabase),
                     getGenClassJar(ruleContext),
                     javaToolchain.getJvmOptions())
                 .addCommandLine(
@@ -698,12 +709,11 @@ public final class JavaCompilationHelper {
   }
 
   private void addLibrariesToAttributesInternal(Iterable<? extends TransitiveInfoCollection> deps) {
-    JavaCompilationArgs args = JavaCompilationArgs.builder()
-        .addTransitiveTargets(deps).build();
+    JavaCompilationArgs args =
+        JavaCompilationArgsProvider.legacyFromTargets(deps).getRecursiveJavaCompilationArgs();
 
-    NestedSet<Artifact> directJars = isStrict()
-        ? getNonRecursiveCompileTimeJarsFromCollection(deps)
-        : null;
+    NestedSet<Artifact> directJars =
+        isStrict() ? getNonRecursiveCompileTimeJarsFromCollection(deps) : null;
     addArgsAndJarsToAttributes(args, directJars);
   }
 
@@ -714,7 +724,10 @@ public final class JavaCompilationHelper {
   private NestedSet<Artifact> getNonRecursiveCompileTimeJarsFromCollection(
       Iterable<? extends TransitiveInfoCollection> deps) {
     JavaCompilationArgs.Builder builder = JavaCompilationArgs.builder();
-    builder.addTransitiveTargets(deps, /*recursive=*/false);
+    builder.addTransitiveCompilationArgs(
+        JavaCompilationArgsProvider.legacyFromTargets(deps),
+        /*recursive=*/ false,
+        ClasspathType.BOTH);
     return builder.build().getCompileTimeJars();
   }
 

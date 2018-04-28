@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
+import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain;
 import com.google.protobuf.TextFormat;
 import java.util.List;
@@ -32,7 +33,7 @@ import java.util.List;
  **/
 public class LinkBuildVariablesTestCase extends BuildViewTestCase {
 
-  private CppLinkAction getCppLinkAction(ConfiguredTarget target, Link.LinkTargetType type) {
+  protected CppLinkAction getCppLinkAction(ConfiguredTarget target, Link.LinkTargetType type) {
     Artifact linkerOutput = null;
     switch (type) {
       case STATIC_LIBRARY:
@@ -44,8 +45,10 @@ public class LinkBuildVariablesTestCase extends BuildViewTestCase {
         linkerOutput = getBinArtifact("lib" + target.getLabel().getName() + "pic.a", target);
         break;
       case NODEPS_DYNAMIC_LIBRARY:
-      case DYNAMIC_LIBRARY:
         linkerOutput = getBinArtifact("lib" + target.getLabel().getName() + ".so", target);
+        break;
+      case DYNAMIC_LIBRARY:
+        linkerOutput = getBinArtifact(target.getLabel().getName(), target);
         break;
       case EXECUTABLE:
         linkerOutput = getExecutable(target);
@@ -68,7 +71,8 @@ public class LinkBuildVariablesTestCase extends BuildViewTestCase {
   public static CcToolchainFeatures buildFeatures(String... toolchain) throws Exception {
     CToolchain.Builder toolchainBuilder = CToolchain.newBuilder();
     TextFormat.merge(Joiner.on("").join(toolchain), toolchainBuilder);
-    return new CcToolchainFeatures(toolchainBuilder.buildPartial());
+    return new CcToolchainFeatures(
+        toolchainBuilder.buildPartial(), /* crosstoolTop= */ PathFragment.EMPTY_FRAGMENT);
   }
 
   /** Returns the value of a given sequence variable in context of the given Variables instance. */

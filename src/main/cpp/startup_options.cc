@@ -23,6 +23,7 @@
 #include "src/main/cpp/util/errors.h"
 #include "src/main/cpp/util/exit_code.h"
 #include "src/main/cpp/util/file.h"
+#include "src/main/cpp/util/logging.h"
 #include "src/main/cpp/util/numbers.h"
 #include "src/main/cpp/util/strings.h"
 #include "src/main/cpp/workspace_layout.h"
@@ -56,9 +57,6 @@ bool NullaryStartupFlag::IsValid(const std::string &arg) const {
   return GetNullaryOption(arg.c_str(), ("--" + name_).c_str()) ||
       GetNullaryOption(arg.c_str(), ("--no" + name_).c_str());
 }
-
-StartupOptions::StartupOptions(const WorkspaceLayout* workspace_layout)
-    : StartupOptions("Bazel", workspace_layout) {}
 
 void StartupOptions::RegisterNullaryStartupFlag(const std::string &flag_name) {
   valid_startup_flags.insert(std::unique_ptr<NullaryStartupFlag>(
@@ -96,14 +94,15 @@ StartupOptions::StartupOptions(const string &product_name,
   if (testing) {
     output_root = MakeAbsolute(blaze::GetEnv("TEST_TMPDIR"));
     max_idle_secs = 15;
-    fprintf(stderr,
-            "INFO: $TEST_TMPDIR defined: output root default is '%s' and "
-            "max_idle_secs default is '%d'.\n",
-            output_root.c_str(),
-            max_idle_secs);
+    BAZEL_LOG(USER) << "$TEST_TMPDIR defined: output root default is '"
+                    << output_root << "' and max_idle_secs default is '"
+                    << max_idle_secs << "'.";
   } else {
     output_root = workspace_layout->GetOutputRoot();
     max_idle_secs = 3 * 3600;
+    BAZEL_LOG(INFO) << "output root is '" << output_root
+                    << "' and max_idle_secs default is '" << max_idle_secs
+                    << "'.";
   }
 
 #if defined(COMPILER_MSVC) || defined(__CYGWIN__)
@@ -129,13 +128,9 @@ StartupOptions::StartupOptions(const string &product_name,
   RegisterNullaryStartupFlag("experimental_oom_more_eagerly");
   RegisterNullaryStartupFlag("fatal_event_bus_exceptions");
   RegisterNullaryStartupFlag("host_jvm_debug");
-  RegisterNullaryStartupFlag("master_bazelrc");
-  RegisterNullaryStartupFlag("master_blazerc");
   RegisterNullaryStartupFlag("watchfs");
   RegisterNullaryStartupFlag("write_command_log");
   RegisterNullaryStartupFlag("expand_configs_in_place");
-  RegisterUnaryStartupFlag("bazelrc");
-  RegisterUnaryStartupFlag("blazerc");
   RegisterUnaryStartupFlag("command_port");
   RegisterUnaryStartupFlag("connect_timeout_secs");
   RegisterUnaryStartupFlag("experimental_oom_more_eagerly_threshold");
@@ -230,30 +225,6 @@ blaze_exit_code::ExitCode StartupOptions::ProcessArg(
              NULL) {
     host_jvm_args.push_back(value);
     option_sources["host_jvm_args"] = rcfile;  // NB: This is incorrect
-  } else if ((value = GetUnaryOption(arg, next_arg, "--bazelrc")) != NULL) {
-    if (!rcfile.empty()) {
-      *error = "Can't specify --bazelrc in the .bazelrc file.";
-      return blaze_exit_code::BAD_ARGV;
-    }
-  } else if ((value = GetUnaryOption(arg, next_arg, "--blazerc")) != NULL) {
-    if (!rcfile.empty()) {
-      *error = "Can't specify --blazerc in the .blazerc file.";
-      return blaze_exit_code::BAD_ARGV;
-    }
-  } else if (GetNullaryOption(arg, "--nomaster_blazerc") ||
-             GetNullaryOption(arg, "--master_blazerc")) {
-    if (!rcfile.empty()) {
-      *error = "Can't specify --[no]master_blazerc in .blazerc file.";
-      return blaze_exit_code::BAD_ARGV;
-    }
-    option_sources["blazerc"] = rcfile;
-  } else if (GetNullaryOption(arg, "--nomaster_bazelrc") ||
-             GetNullaryOption(arg, "--master_bazelrc")) {
-    if (!rcfile.empty()) {
-      *error = "Can't specify --[no]master_bazelrc in .bazelrc file.";
-      return blaze_exit_code::BAD_ARGV;
-    }
-    option_sources["blazerc"] = rcfile;
   } else if (GetNullaryOption(arg, "--batch")) {
     batch = true;
     option_sources["batch"] = rcfile;
@@ -421,13 +392,6 @@ blaze_exit_code::ExitCode StartupOptions::ProcessArgs(
   return blaze_exit_code::SUCCESS;
 }
 
-blaze_exit_code::ExitCode StartupOptions::ProcessArgExtra(
-    const char *arg, const char *next_arg, const string &rcfile,
-    const char **value, bool *is_processed, string *error) {
-  *is_processed = false;
-  return blaze_exit_code::SUCCESS;
-}
-
 string StartupOptions::GetDefaultHostJavabase() const {
   return blaze::GetDefaultHostJavabase();
 }
@@ -463,10 +427,11 @@ string StartupOptions::GetJvm() {
       blaze_util::JoinPath(GetHostJavabase(), GetJavaBinaryUnderJavabase());
   if (!blaze_util::CanExecuteFile(java_program)) {
     if (!blaze_util::PathExists(java_program)) {
-      fprintf(stderr, "Couldn't find java at '%s'.\n", java_program.c_str());
+      BAZEL_LOG(ERROR) << "Couldn't find java at '" << java_program << "'.";
     } else {
-      fprintf(stderr, "Java at '%s' exists but is not executable: %s\n",
-              java_program.c_str(), blaze_util::GetLastErrorString().c_str());
+      BAZEL_LOG(ERROR) << "Java at '" << java_program
+                       << "' exists but is not executable: "
+                       << blaze_util::GetLastErrorString();
     }
     exit(1);
   }
@@ -483,10 +448,9 @@ string StartupOptions::GetJvm() {
       blaze_util::CanReadFile(jre_java_exe)) {
     return java_program;
   }
-  fprintf(stderr,
-          "Problem with java installation: "
-          "couldn't find/access rt.jar or java in %s\n",
-          GetHostJavabase().c_str());
+  BAZEL_LOG(ERROR) << "Problem with java installation: couldn't find/access "
+                      "rt.jar or java in "
+                   << GetHostJavabase();
   exit(1);
 }
 

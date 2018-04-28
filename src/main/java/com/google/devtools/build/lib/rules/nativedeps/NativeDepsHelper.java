@@ -219,10 +219,13 @@ public abstract class NativeDepsHelper {
     FdoSupportProvider fdoSupport =
         CppHelper.getFdoSupportUsingDefaultCcToolchainAttribute(ruleContext);
     FeatureConfiguration featureConfiguration =
-        CcCommon.configureFeatures(
+        CcCommon.configureFeaturesOrReportRuleError(
             ruleContext,
-            /* requestedFeatures= */ ImmutableSet.of(STATIC_LINKING_MODE),
-            /* unsupportedFeatures= */ ImmutableSet.of(),
+            /* requestedFeatures= */ ImmutableSet.<String>builder()
+                .addAll(ruleContext.getFeatures())
+                .add(STATIC_LINKING_MODE)
+                .build(),
+            /* unsupportedFeatures= */ ruleContext.getDisabledFeatures(),
             toolchain);
     CppLinkActionBuilder builder =
         new CppLinkActionBuilder(

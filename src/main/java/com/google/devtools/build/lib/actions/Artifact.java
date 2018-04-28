@@ -27,9 +27,14 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata.MiddlemanType;
+import com.google.devtools.build.lib.actions.ArtifactResolver.ArtifactResolverSupplier;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.shell.ShellUtils;
+import com.google.devtools.build.lib.skyframe.serialization.DeserializationContext;
+import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationContext;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
@@ -43,6 +48,9 @@ import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
+import com.google.protobuf.CodedInputStream;
+import com.google.protobuf.CodedOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -106,6 +114,10 @@ import javax.annotation.Nullable;
           + "construct the action graph in a rule implementation function by passing it to "
           + "action-creating functions. See the "
           + "<a href='../rules.$DOC_EXT#files'>Rules page</a> for more information."
+          + ""
+          + "<p>When a <code>File</code> is passed to an <a href='Args.html'><code>Args</code></a> "
+          + "object without using a <code>map_each</code> function, it is converted to a string by "
+          + "taking the value of its <code>path</code> field."
 )
 @AutoCodec
 public class Artifact
@@ -167,6 +179,32 @@ public class Artifact
   private final ArtifactOwner owner;
 
   /**
+   * The {@code rootRelativePath is a few characters shorter than the {@code execPath} for derived
+   * artifacts, so we save a few bytes by serializing it rather than the {@code execPath},
+   * especially when the {@code root} is common to many artifacts and therefore memoized.
+   */
+  @AutoCodec.VisibleForSerialization
+  @AutoCodec.Instantiator
+  static Artifact createForSerialization(
+      ArtifactRoot root, ArtifactOwner owner, PathFragment rootRelativePath) {
+    if (rootRelativePath == null || rootRelativePath.isAbsolute() != root.getRoot().isAbsolute()) {
+      throw new IllegalArgumentException(
+          rootRelativePath
+              + ": illegal rootRelativePath for "
+              + rootRelativePath
+              + " (root: "
+              + root
+              + ")");
+    }
+    PathFragment rootExecPath = root.getExecPath();
+    return new Artifact(
+        root,
+        rootExecPath.isEmpty() ? rootRelativePath : rootExecPath.getRelative(rootRelativePath),
+        rootRelativePath,
+        owner);
+  }
+
+  /**
    * Constructs an artifact for the specified path, root and execPath. The root must be an ancestor
    * of path, and execPath must be a non-absolute tail of path. Outside of testing, this method
    * should only be called by ArtifactFactory. The ArtifactOwner may be null.
@@ -186,13 +224,24 @@ public class Artifact
    * </pre>
    */
   @VisibleForTesting
-  @AutoCodec.Instantiator
   public Artifact(ArtifactRoot root, PathFragment execPath, ArtifactOwner owner) {
-    Preconditions.checkNotNull(root);
-    if (execPath == null || execPath.isAbsolute() != root.getRoot().isAbsolute()) {
+    this(
+        Preconditions.checkNotNull(root),
+        Preconditions.checkNotNull(execPath, "Null execPath not allowed (root %s", root),
+        root.getExecPath().isEmpty() ? execPath : execPath.relativeTo(root.getExecPath()),
+        Preconditions.checkNotNull(owner));
+    if (execPath.isAbsolute() != root.getRoot().isAbsolute()) {
       throw new IllegalArgumentException(
           execPath + ": illegal execPath for " + execPath + " (root: " + root + ")");
     }
+  }
+
+  private Artifact(
+      ArtifactRoot root,
+      PathFragment execPath,
+      PathFragment rootRelativePath,
+      ArtifactOwner owner) {
+    Preconditions.checkNotNull(root);
     if (execPath.isEmpty()) {
       throw new IllegalArgumentException(
           "it is illegal to create an artifact with an empty execPath");
@@ -200,12 +249,7 @@ public class Artifact
     this.hashCode = execPath.hashCode();
     this.root = root;
     this.execPath = execPath;
-    PathFragment rootExecPath = root.getExecPath();
-    if (rootExecPath.isEmpty()) {
-      this.rootRelativePath = execPath;
-    } else {
-      this.rootRelativePath = execPath.relativeTo(root.getExecPath());
-    }
+    this.rootRelativePath = rootRelativePath;
     this.owner = Preconditions.checkNotNull(owner);
   }
 
@@ -432,10 +476,9 @@ public class Artifact
    *
    * TODO(shahan): move {@link Artifact#getPath} to this subclass.
    * */
-  @AutoCodec
   public static final class SourceArtifact extends Artifact {
-    @AutoCodec.VisibleForSerialization
-    SourceArtifact(ArtifactRoot root, PathFragment execPath, ArtifactOwner owner) {
+    @VisibleForTesting
+    public SourceArtifact(ArtifactRoot root, PathFragment execPath, ArtifactOwner owner) {
       super(root, execPath, owner);
     }
 
@@ -703,6 +746,37 @@ public class Artifact
       // TODO(blaze-team): this is misleading beacuse execution_root isn't unique. Dig the
       // workspace name out and print that also.
       return "[[<execution_root>]" + root.getExecPath() + "]" + rootRelativePath;
+    }
+  }
+
+  /** {@link ObjectCodec} for {@link SourceArtifact} */
+  private static class SourceArtifactCodec implements ObjectCodec<SourceArtifact> {
+
+    @Override
+    public Class<? extends SourceArtifact> getEncodedClass() {
+      return SourceArtifact.class;
+    }
+
+    @Override
+    public void serialize(
+        SerializationContext context, SourceArtifact obj, CodedOutputStream codedOut)
+        throws SerializationException, IOException {
+      context.serialize(obj.getExecPath(), codedOut);
+      context.serialize(obj.getRoot(), codedOut);
+      context.serialize(obj.getArtifactOwner(), codedOut);
+    }
+
+    @Override
+    public SourceArtifact deserialize(DeserializationContext context, CodedInputStream codedIn)
+        throws SerializationException, IOException {
+      PathFragment execPath = context.deserialize(codedIn);
+      ArtifactRoot artifactRoot = context.deserialize(codedIn);
+      ArtifactOwner owner = context.deserialize(codedIn);
+      return (SourceArtifact)
+          context
+              .getDependency(ArtifactResolverSupplier.class)
+              .get()
+              .getSourceArtifact(execPath, artifactRoot.getRoot(), owner);
     }
   }
 

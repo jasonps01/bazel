@@ -15,6 +15,7 @@
 package com.google.devtools.build.lib.analysis.config;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
@@ -613,6 +614,14 @@ public final class BuildOptions implements Cloneable, Serializable {
       return differingOptions.equals(that.differingOptions)
           && extraFirstFragmentClasses.equals(that.extraFirstFragmentClasses)
           && this.extraSecondFragments.equals(that.extraSecondFragments);
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(this)
+          .add("differingOptions", differingOptions)
+          .add("extraFirstFragmentClasses", extraFirstFragmentClasses)
+          .add("extraSecondFragments", extraSecondFragments).toString();
     }
 
     @Override

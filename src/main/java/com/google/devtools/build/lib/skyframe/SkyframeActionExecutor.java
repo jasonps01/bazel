@@ -614,6 +614,7 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
             clientEnv,
             env);
     try {
+      actionExecutionContext.getEventBus().post(ActionStatusMessage.analysisStrategy(action));
       return action.discoverInputs(actionExecutionContext);
     } catch (ActionExecutionException e) {
       throw processAndThrow(

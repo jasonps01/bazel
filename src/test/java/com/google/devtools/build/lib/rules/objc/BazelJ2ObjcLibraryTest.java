@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.AbstractAction;
+import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionInputHelper;
@@ -34,7 +35,6 @@ import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
 import com.google.devtools.build.lib.actions.CommandAction;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
-import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -51,7 +51,6 @@ import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.ByteArrayOutputStream;
-import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -439,11 +438,8 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
     SpawnAction j2objcAction = (SpawnAction) getGeneratingAction(headers);
     assertThat(j2objcAction.getOutputs()).containsAllOf(headers, sources);
 
-    Artifact paramFile = getFirstArtifactEndingWith(j2objcAction.getInputs(), ".param.j2objc");
-    ParameterFileWriteAction paramFileAction =
-        (ParameterFileWriteAction) getGeneratingAction(paramFile);
     assertContainsSublist(
-        ImmutableList.copyOf(paramFileAction.getContents()),
+        ImmutableList.copyOf(paramFileArgsForAction(j2objcAction)),
         ImmutableList.of(
             "--output_gen_source_dir",
             sources.getExecPathString(),
@@ -677,15 +673,10 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
         ")");
 
     CommandAction linkAction = linkAction("//x:test");
-    List<String> linkArgs = normalizeBashArgs(linkAction.getArguments());
     ConfiguredTarget target = getConfiguredTargetInAppleBinaryTransition("//x:test");
     String binDir =
         getConfiguration(target).getBinDirectory(RepositoryName.MAIN).getExecPathString();
-    Artifact fileList = getFirstArtifactEndingWith(linkAction.getInputs(), "test-linker.objlist");
-    ParameterFileWriteAction filelistWriteAction =
-        (ParameterFileWriteAction) getGeneratingAction(fileList);
-    assertThat(linkArgs).contains(fileList.getExecPathString());
-    assertThat(filelistWriteAction.getContents())
+    assertThat(paramFileArgsForAction(linkAction))
         .containsAllOf(
             binDir + "/java/c/y/libylib_j2objc.a",
             // All jre libraries mus appear after java libraries in the link order.
@@ -706,18 +697,13 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
     addSimpleJ2ObjcLibraryWithJavaPlugin();
     Artifact archive = j2objcArchive("//java/com/google/app/test:transpile", "test");
     CommandAction archiveAction = (CommandAction) getGeneratingAction(archive);
-    Artifact archiveObjList =
-        getFirstArtifactEndingWith(archiveAction.getInputs(), "-archive.objlist");
     Artifact objectFilesFromGenJar =
         getFirstArtifactEndingWith(archiveAction.getInputs(), "source_files");
     Artifact normalObjectFile = getFirstArtifactEndingWith(archiveAction.getInputs(), "test.o");
 
-    ParameterFileWriteAction paramFileAction =
-        (ParameterFileWriteAction) getGeneratingAction(archiveObjList);
-
     // Test that the archive obj list param file contains the individual object files inside
     // the object file tree artifact.
-    assertThat(paramFileAction.getContents(DUMMY_ARTIFACT_EXPANDER))
+    assertThat(paramFileCommandLineForAction(archiveAction).arguments(DUMMY_ARTIFACT_EXPANDER))
         .containsExactly(
             objectFilesFromGenJar.getExecPathString() + "/children1",
             objectFilesFromGenJar.getExecPathString() + "/children2",
@@ -898,6 +884,59 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
             "java/com/google/dummy/_j2objc/dummy/java/com/google/dummy/dummy.m"));
   }
 
+  // Tests that a j2objc library can acquire java library information from a skylark rule target.
+  @Test
+  public void testJ2ObjcLibraryDepThroughSkylarkRule() throws Exception {
+    scratch.file("examples/inner.java");
+    scratch.file("examples/outer.java");
+    scratch.file(
+        "examples/fake_rule.bzl",
+        "def _fake_rule_impl(ctx):",
+        "  myProvider = ctx.attr.deps[0][JavaInfo]",
+        "  return struct(providers = [myProvider])",
+        "",
+        "fake_rule = rule(",
+        "  implementation = _fake_rule_impl,",
+        "  attrs = {'deps': attr.label_list()},",
+        "  provides = [JavaInfo],",
+        ")");
+    scratch.file(
+        "examples/BUILD",
+        "package(default_visibility=['//visibility:public'])",
+        "load('//examples:fake_rule.bzl', 'fake_rule')",
+        "java_library(",
+        "    name = 'inner',",
+        "    srcs = ['inner.java'])",
+        "",
+        "fake_rule(",
+        "    name = 'propagator',",
+        "    deps = [':inner'])",
+        "",
+        "java_library(",
+        "    name = 'outer',",
+        "    srcs = ['outer.java'],",
+        "    deps = [':propagator'])",
+        "",
+        "j2objc_library(",
+        "    name = 'transpile',",
+        "    deps = [",
+        "        ':outer',",
+        "    ])",
+        "",
+        "objc_library(",
+        "    name = 'lib',",
+        "    srcs = ['lib.m'],",
+        "    deps = [':transpile'])");
+
+    ConfiguredTarget objcTarget = getConfiguredTarget("//examples:lib");
+
+    ObjcProvider provider = objcTarget.get(ObjcProvider.SKYLARK_CONSTRUCTOR);
+
+    // The only way that //examples:lib can see inner's archive is through the skylark rule.
+    assertThat(Artifact.toRootRelativePaths(provider.get(ObjcProvider.LIBRARY)))
+        .contains("examples/libinner_j2objc.a");
+  }
+
   @Test
   public void testJ2ObjcTranspiledHeaderInCompilationAction() throws Exception {
     scratch.file("app/lib.m");
@@ -917,6 +956,88 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
   }
 
   @Test
+  public void testProtoToolchainForJ2ObjcFlag() throws Exception {
+    useConfiguration("--proto_toolchain_for_j2objc=//tools/j2objc:alt_j2objc_proto_toolchain");
+
+    scratch.file("tools/j2objc/proto_plugin_binary");
+    scratch.file("tools/j2objc/alt_proto_runtime.h");
+    scratch.file("tools/j2objc/alt_proto_runtime.m");
+    scratch.file("tools/j2objc/some_blacklisted_proto.proto");
+
+    scratch.overwriteFile(
+        "tools/j2objc/BUILD",
+        "package(default_visibility=['//visibility:public'])",
+        "exports_files(['j2objc_deploy.jar'])",
+        "filegroup(",
+        "    name = 'j2objc_wrapper',",
+        "    srcs = ['j2objc_wrapper.py'],",
+        ")",
+        "filegroup(",
+        "    name = 'blacklisted_protos',",
+        "    srcs = ['some_blacklisted_proto.proto'],",
+        ")",
+        "filegroup(",
+        "    name = 'j2objc_header_map',",
+        "    srcs = ['j2objc_header_map.py'],",
+        ")",
+        "proto_lang_toolchain(",
+        "    name = 'alt_j2objc_proto_toolchain',",
+        "    command_line = '--PLUGIN_j2objc_out=file_dir_mapping,generate_class_mappings:$(OUT)',",
+        "    plugin = ':alt_proto_plugin',",
+        "    runtime = ':alt_proto_runtime',",
+        "    blacklisted_protos = [':blacklisted_protos'],",
+        ")",
+        j2ObjcCompatibleProtoLibrary(
+            "   name = 'blacklisted_proto_library',",
+            "   srcs = ['some_blacklisted_proto.proto'],"),
+        "objc_library(",
+        "    name = 'alt_proto_runtime',",
+        "    hdrs = ['alt_proto_runtime.h'],",
+        "    srcs = ['alt_proto_runtime.m'],",
+        ")",
+        "filegroup(",
+        "    name = 'alt_proto_plugin',",
+        "    srcs = ['proto_plugin_binary']",
+        ")");
+
+    scratch.file("java/com/google/dummy/test/proto/test.java");
+    scratch.file("java/com/google/dummy/test/proto/test.proto");
+    scratch.file(
+        "java/com/google/dummy/test/proto/BUILD",
+        "package(default_visibility=['//visibility:public'])",
+        j2ObjcCompatibleProtoLibrary(
+            "    name = 'test_proto',",
+            "    srcs = ['test.proto'],",
+            "    deps = ['//tools/j2objc:blacklisted_proto_library'],"),
+        "",
+        "java_library(",
+        "    name = 'test',",
+        "    srcs = ['test.java'],",
+        "    deps = [':test_proto'])",
+        "",
+        "j2objc_library(",
+        "    name = 'transpile',",
+        "    deps = ['test'])");
+
+    ConfiguredTarget j2objcLibraryTarget =
+        getConfiguredTarget("//java/com/google/dummy/test/proto:transpile");
+    ObjcProvider provider = j2objcLibraryTarget.get(ObjcProvider.SKYLARK_CONSTRUCTOR);
+    assertThat(Artifact.toRootRelativePaths(provider.get(ObjcProvider.LIBRARY)))
+        .containsExactly(
+            TestConstants.TOOLS_REPOSITORY_PATH_PREFIX
+                + "third_party/java/j2objc/libjre_core_lib.a",
+            "tools/j2objc/libalt_proto_runtime.a",
+            "java/com/google/dummy/test/proto/libtest_j2objc.a",
+            "java/com/google/dummy/test/proto/libtest_proto_j2objc.a");
+    assertThat(Artifact.toRootRelativePaths(provider.get(ObjcProvider.HEADER)))
+        .containsExactly(
+            TestConstants.TOOLS_REPOSITORY_PATH_PREFIX + "third_party/java/j2objc/jre_core.h",
+            "tools/j2objc/alt_proto_runtime.h",
+            "java/com/google/dummy/test/proto/test.j2objc.pb.h",
+            "java/com/google/dummy/test/proto/_j2objc/test/java/com/google/dummy/test/proto/test.h");
+  }
+
+  @Test
   public void testJ2ObjcDeadCodeRemovalActionWithOptFlag() throws Exception {
     useConfiguration("--j2objc_dead_code_removal");
     addSimpleJ2ObjcLibraryWithEntryClasses();
@@ -926,9 +1047,7 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
     Artifact prunedArchive =
         getBinArtifact(
             "_j2objc_pruned/app/java/com/google/app/test/libtest_j2objc_pruned.a", appTarget);
-    Artifact paramFile =
-        getBinArtifact("_j2objc_pruned/app/java/com/google/app/test/test.param.j2objc", appTarget);
-
+    Action action = getGeneratingAction(prunedArchive);
     ConfiguredTarget javaTarget =
         getConfiguredTargetInAppleBinaryTransition("//java/com/google/app/test:test");
     Artifact inputArchive = getBinArtifact("libtest_j2objc.a", javaTarget);
@@ -939,10 +1058,8 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
     String execPath =
         getConfiguration(javaTarget).getBinDirectory(RepositoryName.MAIN).getExecPath() + "/";
 
-    ParameterFileWriteAction paramFileAction =
-        (ParameterFileWriteAction) getGeneratingAction(paramFile);
     assertContainsSublist(
-        ImmutableList.copyOf(paramFileAction.getContents()),
+        ImmutableList.copyOf(paramFileArgsForAction(action)),
         new ImmutableList.Builder<String>()
             .add("--input_archive")
             .add(inputArchive.getExecPathString())
@@ -970,7 +1087,6 @@ public class BazelJ2ObjcLibraryTest extends J2ObjcLibraryTest {
             .add(
                 TestConstants.TOOLS_REPOSITORY_PATH_PREFIX
                     + "tools/objc/j2objc_dead_code_pruner.py")
-            .add("@" + paramFile.getExecPathString())
             .build());
     assertThat(deadCodeRemovalAction.getOutputs()).containsExactly(prunedArchive);
   }

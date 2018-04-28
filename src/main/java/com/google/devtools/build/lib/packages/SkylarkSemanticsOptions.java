@@ -144,6 +144,32 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
   )
   public boolean incompatibleDisallowDictPlus;
 
+  @Option(
+    name = "incompatible_disallow_filetype",
+    defaultValue = "false",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    metadataTags = {
+      OptionMetadataTag.INCOMPATIBLE_CHANGE,
+      OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
+    },
+    help = "If set to true, function `FileType` is not available."
+  )
+  public boolean incompatibleDisallowFileType;
+
+  @Option(
+    name = "incompatible_disallow_slash_operator",
+    defaultValue = "false",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    metadataTags = {
+      OptionMetadataTag.INCOMPATIBLE_CHANGE,
+      OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
+    },
+    help = "If set to true, the `/` operator is disabled. Use `//` for integer division."
+  )
+  public boolean incompatibleDisallowSlashOperator;
+
   /** Controls legacy arguments to ctx.actions.Args#add. */
   @Option(
     name = "incompatible_disallow_old_style_args_add",
@@ -158,34 +184,6 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
     help = "If set to true, vectorized calls to Args#add are disallowed."
   )
   public boolean incompatibleDisallowOldStyleArgsAdd;
-
-  @Option(
-    name = "incompatible_disallow_three_arg_vardef",
-    defaultValue = "false",
-    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {
-      OptionMetadataTag.INCOMPATIBLE_CHANGE,
-      OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
-    },
-    help = "If set to true, three-argument `vardef()` functions are disallowed."
-  )
-  public boolean incompatibleDisallowThreeArgVardef;
-
-  @Option(
-    name = "incompatible_disallow_toplevel_if_statement",
-    defaultValue = "true",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {
-      OptionMetadataTag.INCOMPATIBLE_CHANGE,
-      OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
-    },
-    help =
-        "If set to true, 'if' statements are forbidden at the top-level "
-            + "(outside a function definition)"
-  )
-  public boolean incompatibleDisallowToplevelIfStatement;
 
   @Option(
     name = "incompatible_new_actions_api",
@@ -281,9 +279,9 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
         .incompatibleDisableGlobTracking(incompatibleDisableGlobTracking)
         .incompatibleDisableObjcProviderResources(incompatibleDisableObjcProviderResources)
         .incompatibleDisallowDictPlus(incompatibleDisallowDictPlus)
+        .incompatibleDisallowFileType(incompatibleDisallowFileType)
         .incompatibleDisallowOldStyleArgsAdd(incompatibleDisallowOldStyleArgsAdd)
-        .incompatibleDisallowThreeArgVardef(incompatibleDisallowThreeArgVardef)
-        .incompatibleDisallowToplevelIfStatement(incompatibleDisallowToplevelIfStatement)
+        .incompatibleDisallowSlashOperator(incompatibleDisallowSlashOperator)
         .incompatibleNewActionsApi(incompatibleNewActionsApi)
         .incompatiblePackageNameIsAFunction(incompatiblePackageNameIsAFunction)
         .incompatibleRemoveNativeGitRepository(incompatibleRemoveNativeGitRepository)

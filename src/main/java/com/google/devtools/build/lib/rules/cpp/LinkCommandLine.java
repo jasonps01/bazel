@@ -45,17 +45,15 @@ import javax.annotation.Nullable;
 public final class LinkCommandLine extends CommandLine {
   private final String actionName;
   private final String forcedToolPath;
-  private final PathFragment crosstoolTopPathFragment;
   private final CcToolchainFeatures.Variables variables;
   // The feature config can be null for tests.
   @Nullable private final FeatureConfiguration featureConfiguration;
   private final ImmutableList<Artifact> buildInfoHeaderArtifacts;
   private final Iterable<LinkerInput> linkerInputs;
-  private final Iterable<LinkerInput> runtimeInputs;
   private final LinkTargetType linkTargetType;
   private final LinkStaticness linkStaticness;
   private final ImmutableList<String> linkopts;
-  @Nullable private final PathFragment runtimeSolibDir;
+  @Nullable private final PathFragment toolchainLibrariesSolibDir;
   private final boolean nativeDeps;
   private final boolean useTestOnlyFlags;
 
@@ -65,14 +63,12 @@ public final class LinkCommandLine extends CommandLine {
   LinkCommandLine(
       String actionName,
       String forcedToolPath,
-      PathFragment crosstoolTopPathFragment,
       ImmutableList<Artifact> buildInfoHeaderArtifacts,
       Iterable<LinkerInput> linkerInputs,
-      Iterable<LinkerInput> runtimeInputs,
       LinkTargetType linkTargetType,
       LinkStaticness linkStaticness,
       ImmutableList<String> linkopts,
-      @Nullable PathFragment runtimeSolibDir,
+      @Nullable PathFragment toolchainLibrariesSolibDir,
       boolean nativeDeps,
       boolean useTestOnlyFlags,
       @Nullable Artifact paramFile,
@@ -81,16 +77,14 @@ public final class LinkCommandLine extends CommandLine {
 
     this.actionName = actionName;
     this.forcedToolPath = forcedToolPath;
-    this.crosstoolTopPathFragment = crosstoolTopPathFragment;
     this.variables = variables;
     this.featureConfiguration = featureConfiguration;
     this.buildInfoHeaderArtifacts = Preconditions.checkNotNull(buildInfoHeaderArtifacts);
     this.linkerInputs = Preconditions.checkNotNull(linkerInputs);
-    this.runtimeInputs = Preconditions.checkNotNull(runtimeInputs);
     this.linkTargetType = Preconditions.checkNotNull(linkTargetType);
     this.linkStaticness = Preconditions.checkNotNull(linkStaticness);
     this.linkopts = linkopts;
-    this.runtimeSolibDir = runtimeSolibDir;
+    this.toolchainLibrariesSolibDir = toolchainLibrariesSolibDir;
     this.nativeDeps = nativeDeps;
     this.useTestOnlyFlags = useTestOnlyFlags;
     this.paramFile = paramFile;
@@ -109,11 +103,6 @@ public final class LinkCommandLine extends CommandLine {
   /** Returns the (ordered, immutable) list of paths to the linker's input files. */
   public Iterable<LinkerInput> getLinkerInputs() {
     return linkerInputs;
-  }
-
-  /** Returns the runtime inputs to the linker. */
-  public Iterable<LinkerInput> getRuntimeInputs() {
-    return runtimeInputs;
   }
 
   /**
@@ -141,7 +130,7 @@ public final class LinkCommandLine extends CommandLine {
   public String getLinkerPathString() {
     return featureConfiguration
         .getToolForAction(linkTargetType.getActionName())
-        .getToolPath(crosstoolTopPathFragment)
+        .getToolPathFragment()
         .getPathString();
   }
 
@@ -150,8 +139,9 @@ public final class LinkCommandLine extends CommandLine {
    * libraries either do not exist (because they do not come from the depot) or they are in the
    * regular solib directory.
    */
-  @Nullable public PathFragment getRuntimeSolibDir() {
-    return runtimeSolibDir;
+  @Nullable
+  public PathFragment getToolchainLibrariesSolibDir() {
+    return toolchainLibrariesSolibDir;
   }
 
   /**
@@ -226,7 +216,6 @@ public final class LinkCommandLine extends CommandLine {
     private final String forcedToolPath;
     private final FeatureConfiguration featureConfiguration;
     private final String actionName;
-    private final PathFragment crosstoolTopPathFragment;
     private final Variables variables;
 
     public ParamFileCommandLine(
@@ -235,14 +224,12 @@ public final class LinkCommandLine extends CommandLine {
         String forcedToolPath,
         FeatureConfiguration featureConfiguration,
         String actionName,
-        PathFragment crosstoolTopPathFragment,
         Variables variables) {
       this.paramsFile = paramsFile;
       this.linkTargetType = linkTargetType;
       this.forcedToolPath = forcedToolPath;
       this.featureConfiguration = featureConfiguration;
       this.actionName = actionName;
-      this.crosstoolTopPathFragment = crosstoolTopPathFragment;
       this.variables = variables;
     }
 
@@ -255,7 +242,6 @@ public final class LinkCommandLine extends CommandLine {
               featureConfiguration,
               actionName,
               linkTargetType,
-              crosstoolTopPathFragment,
               variables);
       return splitCommandline(paramsFile, argv, linkTargetType).getSecond();
     }
@@ -269,7 +255,6 @@ public final class LinkCommandLine extends CommandLine {
               featureConfiguration,
               actionName,
               linkTargetType,
-              crosstoolTopPathFragment,
               variables);
       return splitCommandline(paramsFile, argv, linkTargetType).getSecond();
     }
@@ -286,7 +271,6 @@ public final class LinkCommandLine extends CommandLine {
         forcedToolPath,
         featureConfiguration,
         actionName,
-        crosstoolTopPathFragment,
         variables);
   }
 
@@ -376,7 +360,6 @@ public final class LinkCommandLine extends CommandLine {
         featureConfiguration,
         actionName,
         linkTargetType,
-        crosstoolTopPathFragment,
         variables);
   }
 
@@ -386,7 +369,6 @@ public final class LinkCommandLine extends CommandLine {
       FeatureConfiguration featureConfiguration,
       String actionName,
       LinkTargetType linkTargetType,
-      PathFragment crosstoolTopPathFragment,
       Variables variables) {
     List<String> argv = new ArrayList<>();
     if (forcedToolPath != null) {
@@ -398,7 +380,7 @@ public final class LinkCommandLine extends CommandLine {
       argv.add(
           featureConfiguration
               .getToolForAction(linkTargetType.getActionName())
-              .getToolPath(crosstoolTopPathFragment)
+              .getToolPathFragment()
               .getPathString());
     }
     argv.addAll(featureConfiguration.getCommandLine(actionName, variables, expander));
@@ -433,17 +415,15 @@ public final class LinkCommandLine extends CommandLine {
     private String forcedToolPath;
     private ImmutableList<Artifact> buildInfoHeaderArtifacts = ImmutableList.of();
     private Iterable<LinkerInput> linkerInputs = ImmutableList.of();
-    private Iterable<LinkerInput> runtimeInputs = ImmutableList.of();
     @Nullable private LinkTargetType linkTargetType;
     private LinkStaticness linkStaticness = LinkStaticness.FULLY_STATIC;
     private ImmutableList<String> linkopts = ImmutableList.of();
-    @Nullable private PathFragment runtimeSolibDir;
+    @Nullable private PathFragment toolchainLibrariesSolibDir;
     private boolean nativeDeps;
     private boolean useTestOnlyFlags;
     @Nullable private Artifact paramFile;
     private Variables variables;
     private FeatureConfiguration featureConfiguration;
-    private PathFragment crosstoolTopPathFragment;
 
     public Builder(RuleContext ruleContext) {
       this.ruleContext = ruleContext;
@@ -471,14 +451,12 @@ public final class LinkCommandLine extends CommandLine {
       return new LinkCommandLine(
           actionName,
           forcedToolPath,
-          crosstoolTopPathFragment,
           buildInfoHeaderArtifacts,
           linkerInputs,
-          runtimeInputs,
           linkTargetType,
           linkStaticness,
           linkopts,
-          runtimeSolibDir,
+          toolchainLibrariesSolibDir,
           nativeDeps,
           useTestOnlyFlags,
           paramFile,
@@ -517,11 +495,6 @@ public final class LinkCommandLine extends CommandLine {
      */
     public Builder setLinkerInputs(Iterable<LinkerInput> linkerInputs) {
       this.linkerInputs = CollectionUtils.makeImmutable(linkerInputs);
-      return this;
-    }
-
-    public Builder setRuntimeInputs(ImmutableList<LinkerInput> runtimeInputs) {
-      this.runtimeInputs = runtimeInputs;
       return this;
     }
 
@@ -586,14 +559,8 @@ public final class LinkCommandLine extends CommandLine {
       return this;
     }
 
-    public Builder setRuntimeSolibDir(PathFragment runtimeSolibDir) {
-      this.runtimeSolibDir = runtimeSolibDir;
-      return this;
-    }
-
-    /** Sets the path to the CROSSTOOL, to be used in finding paths to tools (e.g. the linker) */
-    public Builder setCrosstoolTopPathFragment(PathFragment crosstoolTopPathFragment) {
-      this.crosstoolTopPathFragment = crosstoolTopPathFragment;
+    public Builder setToolchainLibrariesSolibDir(PathFragment toolchainLibrariesSolibDir) {
+      this.toolchainLibrariesSolibDir = toolchainLibrariesSolibDir;
       return this;
     }
   }

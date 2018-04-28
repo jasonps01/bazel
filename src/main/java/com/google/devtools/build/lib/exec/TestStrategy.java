@@ -28,7 +28,7 @@ import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.actions.TestExecException;
 import com.google.devtools.build.lib.actions.UserExecException;
-import com.google.devtools.build.lib.analysis.ShellConfiguration;
+import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.PerLabelOptions;
 import com.google.devtools.build.lib.analysis.test.TestActionContext;
 import com.google.devtools.build.lib.analysis.test.TestResult;
@@ -184,8 +184,7 @@ public abstract class TestStrategy implements TestActionContext {
       // the --run_under parameter and getCommand only returns the first such token.
       boolean needsShell = !command.contains("/");
       if (needsShell) {
-        args.add(testAction.getConfiguration().getFragment(ShellConfiguration.class)
-            .getShellExecutable().getPathString());
+        args.add(testAction.getShExecutable().getPathString());
         args.add("-c");
         args.add("\"$@\"");
         args.add("/bin/sh"); // Sets $0.
@@ -238,7 +237,8 @@ public abstract class TestStrategy implements TestActionContext {
    * but ends up with the same effective value as all other rules in that bucket.
    */
   protected final Duration getTimeout(TestRunnerAction testAction) {
-    return executionOptions.testTimeout.get(testAction.getTestProperties().getTimeout());
+    BuildConfiguration configuration = testAction.getConfiguration();
+    return configuration.getTestTimeout().get(testAction.getTestProperties().getTimeout());
   }
 
   /*

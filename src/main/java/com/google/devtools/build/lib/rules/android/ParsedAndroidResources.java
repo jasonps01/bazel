@@ -17,15 +17,19 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
+import com.google.devtools.build.lib.packages.RuleErrorConsumer;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidAaptVersion;
 import java.util.Objects;
+import java.util.Optional;
 import javax.annotation.Nullable;
 
 /** Wraps parsed (and, if requested, compiled) android resources. */
-public class ParsedAndroidResources extends AndroidResources {
+public class ParsedAndroidResources extends AndroidResources
+    implements CompiledMergableAndroidData {
   private final Artifact symbols;
   @Nullable private final Artifact compiledSymbols;
   private final Label label;
+  private final StampedAndroidManifest manifest;
 
   public static ParsedAndroidResources parseFrom(
       RuleContext ruleContext, AndroidResources resources, StampedAndroidManifest manifest)
@@ -41,10 +45,7 @@ public class ParsedAndroidResources extends AndroidResources {
       // TODO(corysmith): Centralize the data binding processing and zipping into a single
       // action. Data binding processing needs to be triggered here as well as the merger to
       // avoid aapt2 from throwing an error during compilation.
-      builder
-          .setDataBindingInfoZip(DataBinding.getSuffixedInfoFile(ruleContext, "_unused"))
-          .setManifest(manifest.getManifest())
-          .setJavaPackage(manifest.getPackage());
+      builder.setDataBindingInfoZip(DataBinding.getSuffixedInfoFile(ruleContext, "_unused"));
     }
 
     return builder
@@ -53,63 +54,105 @@ public class ParsedAndroidResources extends AndroidResources {
             isAapt2
                 ? ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_COMPILED_SYMBOLS)
                 : null)
-        .build(resources);
+        .build(resources, manifest);
   }
 
   public static ParsedAndroidResources of(
       AndroidResources resources,
       Artifact symbols,
       @Nullable Artifact compiledSymbols,
-      Label label) {
-    return new ParsedAndroidResources(
-        resources,
-        symbols,
-        compiledSymbols,
-        label);
+      Label label,
+      StampedAndroidManifest manifest) {
+    return new ParsedAndroidResources(resources, symbols, compiledSymbols, label, manifest);
   }
 
-  ParsedAndroidResources(ParsedAndroidResources other) {
-    this(other, other.symbols, other.compiledSymbols, other.label);
+  ParsedAndroidResources(ParsedAndroidResources other, StampedAndroidManifest manifest) {
+    this(other, other.symbols, other.compiledSymbols, other.label, manifest);
   }
 
   private ParsedAndroidResources(
       AndroidResources resources,
       Artifact symbols,
       @Nullable Artifact compiledSymbols,
-      Label label) {
+      Label label,
+      StampedAndroidManifest manifest) {
     super(resources);
     this.symbols = symbols;
     this.compiledSymbols = compiledSymbols;
     this.label = label;
+    this.manifest = manifest;
   }
 
+  @Override
   public Artifact getSymbols() {
     return symbols;
   }
 
+  @Override
   @Nullable
   public Artifact getCompiledSymbols() {
     return compiledSymbols;
   }
 
+  @Override
+  public Iterable<Artifact> getArtifacts() {
+    return getResources();
+  }
+
+  @Override
+  public Artifact getManifest() {
+    return manifest.getManifest();
+  }
+
+  @Override
+  public boolean isManifestExported() {
+    return manifest.isExported();
+  }
+
+  @Override
   public Label getLabel() {
     return label;
   }
 
+  public String getJavaPackage() {
+    return manifest.getPackage();
+  }
+
+  public StampedAndroidManifest getStampedManifest() {
+    return manifest;
+  }
+
+  /** Merges this target's resources with resources from dependencies. */
+  public MergedAndroidResources merge(RuleContext ruleContext, boolean neverlink)
+      throws InterruptedException {
+    return MergedAndroidResources.mergeFrom(ruleContext, this, neverlink);
+  }
+
+  @Override
+  public Optional<? extends ParsedAndroidResources> maybeFilter(
+      RuleErrorConsumer errorConsumer, ResourceFilter resourceFilter, boolean isDependency)
+      throws RuleErrorException {
+    return super.maybeFilter(errorConsumer, resourceFilter, isDependency)
+        .map(
+            resources ->
+                ParsedAndroidResources.of(resources, symbols, compiledSymbols, label, manifest));
+  }
+
   @Override
   public boolean equals(Object object) {
-    if (!(object instanceof ParsedAndroidResources) || !super.equals(object)) {
+    if (!super.equals(object)) {
       return false;
     }
 
     ParsedAndroidResources other = (ParsedAndroidResources) object;
     return symbols.equals(other.symbols)
         && Objects.equals(compiledSymbols, other.compiledSymbols)
-        && label.equals(other.label);
+        && label.equals(other.label)
+        && manifest.equals(other.manifest);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), symbols, compiledSymbols, label);
+    return Objects.hash(super.hashCode(), symbols, compiledSymbols, label, manifest);
   }
 }

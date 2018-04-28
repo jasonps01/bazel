@@ -14,9 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-gold_file=$1
-shift
+set -u
 
+gold_output_file=$1
+shift
+gold_stderr_file=$1
+shift
 expected_exit_code=$1
 shift
 
@@ -36,35 +39,49 @@ else
   output="${tmpdir}"
 fi
 
-actual_file="${output}/actual_result.txt"
+output_file="${output}/actual_result.txt"
 checker_stderr="${output}/checker_stderr.txt"
 
 # Run the checker command.
-$@ --output "${actual_file}" 2> ${checker_stderr}
+$@ --output "${output_file}" 2> ${checker_stderr}
 
 checker_ret=$?
 if [[ "${checker_ret}" != ${expected_exit_code} ]]; then
   echo "Checker error!!! ${checker_ret}, expected=${expected_exit_code}"
   cat ${checker_stderr}
-  exit ${checker_ret}
+  exit 1 # Exit with an error.
 fi
 
-diff "${gold_file}" "${actual_file}"
-gold_actual_ret=$?
+diff "${gold_output_file}" "${output_file}"
+gold_output_ret=$?
 
-# The actual file and the stderr of the checker should be the same.
-diff "${actual_file}" "${checker_stderr}"
-checker_stderr_actual_ret=$?
-
-if [[ "${gold_actual_ret}" != 0 ]] || [[ "${checker_stderr_actual_ret}" != 0 ]]; then
+if [[ "${gold_output_ret}" != 0 ]] ; then
   echo "============== Actual Output =============="
-  cat "${actual_file}"
+  cat "${output_file}"
   echo "" # New line.
-  echo "===========================================\n"
+  echo "==========================================="
 
+  echo "============== Expected Output =============="
+  cat "${gold_output_file}"
+  echo "" # New line.
+  echo "==========================================="
+
+  exit 1
+fi
+
+diff "${gold_stderr_file}" "${checker_stderr}"
+gold_stderr_ret=$?
+
+if [[ "${gold_stderr_ret}" != 0 ]]; then
   echo "============== Checker Stderr =============="
   cat "${checker_stderr}"
   echo "" # New line.
   echo "==========================================="
+
+  echo "============== Expected Stderr =============="
+  cat "${gold_stderr_file}"
+  echo "" # New line.
+  echo "==========================================="
+
+  exit 1
 fi
-exit ${ret}

@@ -15,10 +15,13 @@ package com.google.devtools.build.importdeps;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.io.Files.asCharSink;
+import static com.google.common.io.MoreFiles.asCharSink;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
+import com.google.devtools.build.lib.view.proto.Deps.Dependencies;
 import com.google.devtools.common.options.Converter;
+import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionEffectTag;
@@ -26,7 +29,9 @@ import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.ShellQuotedParamsFilePreProcessor;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -84,7 +89,7 @@ public class Main {
 
     @Option(
       name = "output",
-      defaultValue = "",
+      defaultValue = "null",
       category = "output",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.UNKNOWN},
@@ -94,19 +99,55 @@ public class Main {
     public Path output;
 
     @Option(
+        name = "jdeps_output",
+        defaultValue = "null",
+        category = "output",
+        documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+        effectTags = {OptionEffectTag.UNKNOWN},
+        converter = PathConverter.class,
+        help = "Output path to save the result.")
+    public Path jdepsOutput;
+
+    @Option(
+        name = "rule_label",
+        defaultValue = "",
+        category = "output",
+        documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+        effectTags = {OptionEffectTag.UNKNOWN},
+        help = "The rule label of the current target under analysis.")
+    public String ruleLabel;
+
+    // TODO (cnsun): remove this flag.
+    @Option(
       name = "fail_on_errors",
-      defaultValue = "true",
+      defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.UNKNOWN},
+      deprecationWarning = "This will be replaced with --checking_mode.",
       help = "Fail on incomplete dependencies, otherwise emit warnings."
     )
     public boolean failOnErrors;
+
+    @Option(
+      name = "checking_mode",
+      defaultValue = "null",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      converter = CheckingModeConverter.class,
+      help = "Controls the behavior of the checker."
+    )
+    public CheckingMode checkingMode;
   }
 
   /** A randomly picked large exit code to avoid collision with other common exit codes. */
   private static final int DEPS_ERROR_EXIT_CODE = 199;
 
   public static void main(String[] args) throws IOException {
+    System.exit(checkDeps(args));
+  }
+
+  @VisibleForTesting
+  static int checkDeps(String[] args) throws IOException {
     Options options = parseCommandLineOptions(args);
 
     if (!Files.exists(options.output)) {
@@ -119,27 +160,41 @@ public class Main {
             ImmutableList.copyOf(options.bootclasspath),
             ImmutableList.copyOf(options.classpath),
             ImmutableList.copyOf(options.inputJars))) {
-      if (!checker.check()) {
+      if (!checker.check() && options.checkingMode != CheckingMode.SILENCE) {
         String result = checker.computeResultOutput();
         checkState(!result.isEmpty(), "The result should NOT be empty.");
-        exitCode = options.failOnErrors ? DEPS_ERROR_EXIT_CODE : 0;
-
-        System.err.println(
-            (options.failOnErrors ? "ERROR" : "WARNING")
-                + ": The dependencies for the jars "
-                + options.inputJars
-                + " are not complete. bootclasspath = "
-                + options.bootclasspath
-                + ", classpath = "
-                + options.classpath);
-        System.err.println(result);
-        asCharSink(options.output.toFile(), StandardCharsets.UTF_8).write(result);
+        exitCode = options.checkingMode == CheckingMode.ERROR ? DEPS_ERROR_EXIT_CODE : 0;
+        printErrorMessage(result, options);
+        asCharSink(options.output, StandardCharsets.UTF_8).write(result);
+      }
+      if (options.jdepsOutput != null) {
+        Dependencies dependencies = checker.emitJdepsProto(options.ruleLabel);
+        try (OutputStream os =
+            new BufferedOutputStream(Files.newOutputStream(options.jdepsOutput))) {
+          dependencies.writeTo(os);
+        }
       }
     }
-    System.exit(exitCode);
+    return exitCode;
   }
 
-  private static Options parseCommandLineOptions(String[] args) throws IOException {
+  private static void printErrorMessage(String detailedErrorMessage, Options options) {
+    checkArgument(
+        options.checkingMode == CheckingMode.ERROR || options.checkingMode == CheckingMode.WARNING);
+    System.err.print(options.checkingMode == CheckingMode.ERROR ? "ERROR" : "WARNING");
+    System.err.printf(
+        ": The dependencies for the following %d jar(s) are not complete.\n",
+        options.inputJars.size());
+    int index = 1;
+    for (Path jar : options.inputJars) {
+      System.err.printf("    %3d.%s\n", index++, jar.toString());
+    }
+    System.err.println("The details are listed below:");
+    System.err.print(detailedErrorMessage);
+  }
+
+  @VisibleForTesting
+  static Options parseCommandLineOptions(String[] args) throws IOException {
     OptionsParser optionsParser = OptionsParser.newOptionsParser(Options.class);
     optionsParser.setAllowResidue(false);
     optionsParser.enableParamsFileSupport(
@@ -148,7 +203,17 @@ public class Main {
     Options options = optionsParser.getOptions(Options.class);
 
     checkArgument(!options.inputJars.isEmpty(), "--input is required");
+    checkArgument(options.output != null, "--output is required");
     checkArgument(!options.bootclasspath.isEmpty(), "--bootclasspath_entry is required");
+    checkArgument(
+        options.jdepsOutput == null || !Files.isDirectory(options.jdepsOutput),
+        "Invalid value of --jdeps_output: '%s'",
+        options.jdepsOutput);
+    if (options.checkingMode == null) {
+      // Convert --fail_on_errors to --checking_mode
+      options.checkingMode = options.failOnErrors ? CheckingMode.ERROR : CheckingMode.WARNING;
+    }
+
     return options;
   }
 
@@ -193,5 +258,27 @@ public class Main {
     public ExistingPathConverter() {
       super(true);
     }
+  }
+
+  /** Converter for {@link CheckingMode} */
+  public static class CheckingModeConverter extends EnumConverter<CheckingMode> {
+    public CheckingModeConverter() {
+      super(CheckingMode.class, "The checking mode for the dependency checker.");
+    }
+  }
+
+  /**
+   * The checking mode of the dependency checker.
+   */
+  public enum CheckingMode {
+    /** Emit 'errors' on missing or incomplete dependencies. */
+    ERROR,
+    /** Emit 'warnings' on missing or incomplete dependencies. */
+    WARNING,
+    /**
+     * Emit 'nothing' on missing or incomplete dependencies. This is mainly used to dump jdeps
+     * protos.
+     */
+    SILENCE
   }
 }

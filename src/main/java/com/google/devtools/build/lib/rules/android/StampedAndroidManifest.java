@@ -16,32 +16,56 @@ package com.google.devtools.build.lib.rules.android;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import javax.annotation.Nullable;
 
 /** An {@link AndroidManifest} stamped with the correct package. */
 @Immutable
 public class StampedAndroidManifest extends AndroidManifest {
 
-  StampedAndroidManifest(
-      RuleContext ruleContext, Artifact manifest, String pkg, boolean isDummy) {
-    super(ruleContext, manifest, pkg, isDummy);
+  StampedAndroidManifest(Artifact manifest, @Nullable String pkg, boolean exported) {
+    super(manifest, pkg, exported);
   }
 
   @Override
-  StampedAndroidManifest stamp() {
+  public StampedAndroidManifest stamp(RuleContext ruleContext) {
     // This manifest is already stamped
     return this;
   }
 
   /**
-   * Gets the manifest artifact wrapped by this object. Stamped manifests are guaranteed to have a
-   * non-null manifest artifact.
+   * Gets the manifest artifact wrapped by this object.
+   *
+   * <p>The manifest is guaranteed to be stamped with the correct Android package.
    */
   @Override
-  Artifact getManifest() {
+  public Artifact getManifest() {
     return super.getManifest();
   }
 
-  public AndroidManifestInfo toProvider() {
-    return AndroidManifestInfo.of(getManifest(), getPackage(), isDummy());
+  ProcessedAndroidManifest withProcessedManifest(Artifact processedManifest) {
+    return new ProcessedAndroidManifest(processedManifest, getPackage(), isExported());
+  }
+
+  /** Creates an empty manifest stamped with the default Java package for this target. */
+  public static StampedAndroidManifest createEmpty(RuleContext ruleContext, boolean exported) {
+    String pkg = AndroidCommon.getJavaPackage(ruleContext);
+    return new StampedAndroidManifest(
+        ApplicationManifest.generateManifest(ruleContext, pkg), pkg, exported);
+  }
+
+  public StampedAndroidManifest addMobileInstallStubApplication(RuleContext ruleContext)
+      throws InterruptedException {
+    return new StampedAndroidManifest(
+        ApplicationManifest.addMobileInstallStubApplication(ruleContext, getManifest()),
+        getPackage(),
+        isExported());
+  }
+
+  public StampedAndroidManifest createSplitManifest(
+      RuleContext ruleContext, String splitName, boolean hasCode) {
+    return new StampedAndroidManifest(
+        ApplicationManifest.createSplitManifest(ruleContext, getManifest(), splitName, hasCode),
+        getPackage(),
+        isExported());
   }
 }

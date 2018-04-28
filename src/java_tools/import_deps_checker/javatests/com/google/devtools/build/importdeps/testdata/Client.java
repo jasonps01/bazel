@@ -14,6 +14,7 @@
 package com.google.devtools.build.importdeps.testdata;
 
 import com.google.devtools.build.importdeps.testdata.LibraryAnnotations.AnnotationAnnotation;
+import com.google.devtools.build.importdeps.testdata.LibraryAnnotations.AnnotationFlag;
 import com.google.devtools.build.importdeps.testdata.LibraryAnnotations.ClassAnnotation;
 import com.google.devtools.build.importdeps.testdata.LibraryAnnotations.ConstructorAnnotation;
 import com.google.devtools.build.importdeps.testdata.LibraryAnnotations.FieldAnnotation;
@@ -27,15 +28,19 @@ import java.lang.annotation.Target;
 import java.util.Objects;
 
 /** Client class that uses several libraries. */
-@ClassAnnotation
-public class Client<@TypeAnnotation T> extends Library implements LibraryInterface {
+@ClassAnnotation(
+  friends = {Library.class, LibraryException.class},
+  nested = @SuppressWarnings({"unused", "unchecked"})
+)
+public class Client<@TypeAnnotation T> extends Library
+    implements LibraryInterface, LibraryInterface.One, LibraryInterface.Two {
 
   @SuppressWarnings("unused")
   @FieldAnnotation
   private Library.Class1 field;
 
   @SuppressWarnings("unused")
-  @FieldAnnotation
+  @FieldAnnotation({1, 2, 3})
   private LibraryAnnotations annotations;
 
   public static final Class1 I = Class1.I;
@@ -43,8 +48,9 @@ public class Client<@TypeAnnotation T> extends Library implements LibraryInterfa
   @ConstructorAnnotation
   public Client() {}
 
-  @MethodAnnotation
-  public void method(@ParameterAnnotation int p, Library.Class2 p2) throws LibraryException {
+  @MethodAnnotation(name = "method")
+  public void method(@ParameterAnnotation(position = 0) int p, Library.Class2 p2)
+      throws LibraryException {
     Objects.nonNull(p2); // javac9 silently uses Objects.
     Class3 c3 = new Class3();
     Class4 c4 = c3.field;
@@ -60,6 +66,8 @@ public class Client<@TypeAnnotation T> extends Library implements LibraryInterfa
     Object[] copy = array.clone();
     array = (Class8[][]) copy;
     System.out.println(array.clone().length);
+    Integer b = Integer.valueOf(0);
+    System.out.println(b);
   }
 
   public void testEnums() {
@@ -71,12 +79,34 @@ public class Client<@TypeAnnotation T> extends Library implements LibraryInterfa
   /** An inner annotation. */
   @Retention(RetentionPolicy.RUNTIME)
   @Target(ElementType.TYPE)
-  @AnnotationAnnotation
+  @AnnotationAnnotation(AnnotationFlag.Y)
   public @interface NestedAnnotation {}
+
+  @Override
+  public void callOne() {
+    // Do nothing.
+  }
+
+  @Override
+  public void callTwo() {
+    // Do nothing.
+  }
 
   public enum EnumTest {
     A,
     B,
     C
+  }
+
+  private class InnerClassWithSyntheticConstructorParam {
+    // This constructor has a synthetic parameter for the outer object (b/78024300).  If there are
+    // parameter annotations then ASM generates "java/lang/Synthetic" annotations on the synthetic
+    // parameters, but java/lang/Synthetic doesn't exist!
+    InnerClassWithSyntheticConstructorParam(@ParameterAnnotation(position = 2) int p) {}
+
+    @Override
+    public String toString() {
+      return String.valueOf(field);
+    }
   }
 }

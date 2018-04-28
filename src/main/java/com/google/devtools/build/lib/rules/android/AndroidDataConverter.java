@@ -32,6 +32,18 @@ import java.util.stream.Collectors;
  */
 public class AndroidDataConverter<T> extends ParametrizedMapFn<T> {
 
+  /**
+   * Converts Android data to the "SerializedAndroidData" format used by the Android data processing
+   * actions.
+   */
+  static final AndroidDataConverter<MergableAndroidData> MERGABLE_DATA_CONVERTER =
+      AndroidDataConverter.<MergableAndroidData>builder(JoinerType.SEMICOLON_AMPERSAND)
+          .withRoots(MergableAndroidData::getResourceRoots)
+          .withRoots(MergableAndroidData::getAssetRoots)
+          .withLabel(MergableAndroidData::getLabel)
+          .withArtifact(MergableAndroidData::getSymbols)
+          .build();
+
   /** Indicates the type of joiner between options expected by the command line. */
   public enum JoinerType {
     COLON_COMMA(":", ","),
@@ -121,13 +133,7 @@ public class AndroidDataConverter<T> extends ParametrizedMapFn<T> {
     }
 
     Builder<T> withRoots(Function<T, ImmutableList<PathFragment>> rootsFunction) {
-      return with(
-          t ->
-              rootsFunction
-                  .apply(t)
-                  .stream()
-                  .map(PathFragment::toString)
-                  .collect(Collectors.joining("#")));
+      return with(t -> rootsToString(rootsFunction.apply(t)));
     }
 
     Builder<T> withArtifact(Function<T, Artifact> artifactFunction) {
@@ -147,5 +153,9 @@ public class AndroidDataConverter<T> extends ParametrizedMapFn<T> {
     AndroidDataConverter<T> build() {
       return new AndroidDataConverter<>(inner.build(), joinerType);
     }
+  }
+
+  static String rootsToString(ImmutableList<PathFragment> roots) {
+    return roots.stream().map(PathFragment::toString).collect(Collectors.joining("#"));
   }
 }

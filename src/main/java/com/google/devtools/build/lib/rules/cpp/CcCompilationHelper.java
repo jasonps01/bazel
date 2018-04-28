@@ -21,7 +21,6 @@ import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -55,6 +54,7 @@ import com.google.devtools.build.lib.rules.cpp.CppConfiguration.HeadersCheckingM
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.syntax.SkylarkNestedSet;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.Pair;
@@ -128,8 +128,11 @@ public final class CcCompilationHelper {
   /** Function for extracting module maps from CppCompilationDependencies. */
   private static final Function<TransitiveInfoCollection, CppModuleMap> CPP_DEPS_TO_MODULES =
       dep -> {
-        CcCompilationContextInfo ccCompilationContextInfo =
-            dep.get(CcCompilationContextInfo.PROVIDER);
+        CcCompilationInfo ccCompilationInfo = dep.get(CcCompilationInfo.PROVIDER);
+        CcCompilationContextInfo ccCompilationContextInfo = null;
+        if (ccCompilationInfo != null) {
+          ccCompilationContextInfo = ccCompilationInfo.getCcCompilationContextInfo();
+        }
         return ccCompilationContextInfo == null ? null : ccCompilationContextInfo.getCppModuleMap();
       };
 
@@ -150,17 +153,14 @@ public final class CcCompilationHelper {
     private final TransitiveInfoProviderMap providers;
     private final Map<String, NestedSet<Artifact>> outputGroups;
     private final CcCompilationOutputs compilationOutputs;
-    private final CcCompilationContextInfo ccCompilationContextInfo;
 
     private CompilationInfo(
         TransitiveInfoProviderMap providers,
         Map<String, NestedSet<Artifact>> outputGroups,
-        CcCompilationOutputs compilationOutputs,
-        CcCompilationContextInfo ccCompilationContextInfo) {
+        CcCompilationOutputs compilationOutputs) {
       this.providers = providers;
       this.outputGroups = outputGroups;
       this.compilationOutputs = compilationOutputs;
-      this.ccCompilationContextInfo = ccCompilationContextInfo;
     }
 
     public TransitiveInfoProviderMap getProviders() {
@@ -171,14 +171,29 @@ public final class CcCompilationHelper {
       return outputGroups;
     }
 
+    @SkylarkCallable(name = "cc_output_groups", documented = false)
+    public Map<String, SkylarkNestedSet> getSkylarkOutputGroups() {
+      Map<String, SkylarkNestedSet> skylarkOutputGroups = new TreeMap<>();
+      for (Map.Entry<String, NestedSet<Artifact>> entry : outputGroups.entrySet()) {
+        skylarkOutputGroups.put(
+            entry.getKey(), SkylarkNestedSet.of(Artifact.class, entry.getValue()));
+      }
+      return skylarkOutputGroups;
+    }
+
     @SkylarkCallable(name = "cc_compilation_outputs", documented = false)
     public CcCompilationOutputs getCcCompilationOutputs() {
       return compilationOutputs;
     }
 
     @SkylarkCallable(name = "cc_compilation_info", documented = false)
+    public CcCompilationInfo getCcCompilationInfo() {
+      return (CcCompilationInfo) providers.getProvider(CcCompilationInfo.PROVIDER.getKey());
+    }
+
     public CcCompilationContextInfo getCcCompilationContextInfo() {
-      return ccCompilationContextInfo;
+      return ((CcCompilationInfo) providers.getProvider(CcCompilationInfo.PROVIDER.getKey()))
+          .getCcCompilationContextInfo();
     }
   }
 
@@ -221,7 +236,6 @@ public final class CcCompilationHelper {
   private final FeatureConfiguration featureConfiguration;
   private final CcToolchainProvider ccToolchain;
   private final FdoSupportProvider fdoSupport;
-  private final ImmutableSet<String> features;
   private boolean useDeps = true;
   private boolean generateModuleMap = true;
   private String purpose = null;
@@ -286,7 +300,6 @@ public final class CcCompilationHelper {
     this.configuration = Preconditions.checkNotNull(configuration);
     this.cppConfiguration =
         Preconditions.checkNotNull(ruleContext.getFragment(CppConfiguration.class));
-    this.features = ruleContext.getFeatures();
     setGenerateNoPicAction(
         !CppHelper.usePicForDynamicLibraries(ruleContext, ccToolchain)
             || !CppHelper.usePicForBinaries(ruleContext, ccToolchain));
@@ -314,8 +327,10 @@ public final class CcCompilationHelper {
   }
 
   /** Sets fields that overlap for cc_library and cc_binary rules. */
-  public CcCompilationHelper fromCommon(CcCommon common) {
-    setCopts(common.getCopts());
+  public CcCompilationHelper fromCommon(CcCommon common, ImmutableList<String> additionalCopts) {
+    Preconditions.checkNotNull(additionalCopts);
+
+    setCopts(Iterables.concat(common.getCopts(), additionalCopts));
     addDefines(common.getDefines());
     addDeps(ruleContext.getPrerequisites("deps", Mode.TARGET));
     addLooseIncludeDirs(common.getLooseIncludeDirs());
@@ -517,8 +532,8 @@ public final class CcCompilationHelper {
     return this;
   }
 
-  public CcCompilationHelper setCopts(ImmutableList<String> copts) {
-    this.copts = Preconditions.checkNotNull(copts);
+  public CcCompilationHelper setCopts(Iterable<String> copts) {
+    this.copts = ImmutableList.copyOf(copts);
     return this;
   }
 
@@ -731,7 +746,9 @@ public final class CcCompilationHelper {
                 new CppDebugFileProvider(
                     dwoArtifacts.getDwoArtifacts(), dwoArtifacts.getPicDwoArtifacts()),
                 collectTransitiveLipoInfo(ccOutputs));
-    providers.put(ccCompilationContextInfo);
+    CcCompilationInfo.Builder ccCompilationInfoBuilder = CcCompilationInfo.Builder.create();
+    ccCompilationInfoBuilder.setCcCompilationContextInfo(ccCompilationContextInfo);
+    providers.put(ccCompilationInfoBuilder.build());
 
     Map<String, NestedSet<Artifact>> outputGroups = new TreeMap<>();
     outputGroups.put(OutputGroupInfo.TEMP_FILES, getTemps(ccOutputs));
@@ -747,8 +764,7 @@ public final class CcCompilationHelper {
           CcCommon.collectCompilationPrerequisites(ruleContext, ccCompilationContextInfo));
     }
 
-    return new CompilationInfo(
-        providers.build(), outputGroups, ccOutputs, ccCompilationContextInfo);
+    return new CompilationInfo(providers.build(), outputGroups, ccOutputs);
   }
 
   @Immutable
@@ -922,7 +938,7 @@ public final class CcCompilationHelper {
 
     if (useDeps) {
       ccCompilationContextInfoBuilder.mergeDependentCcCompilationContextInfos(
-          AnalysisUtils.getProviders(deps, CcCompilationContextInfo.PROVIDER));
+          CcCompilationInfo.getCcCompilationContextInfos(deps));
       ccCompilationContextInfoBuilder.mergeDependentCcCompilationContextInfos(
           depCcCompilationContextInfos);
     }
@@ -1097,10 +1113,10 @@ public final class CcCompilationHelper {
     List<CppModuleMap> result =
         deps.stream().map(CPP_DEPS_TO_MODULES).collect(toCollection(ArrayList::new));
     if (ruleContext.getRule().getAttributeDefinition(":stl") != null) {
-      CcCompilationContextInfo stl =
-          ruleContext.getPrerequisite(":stl", Mode.TARGET, CcCompilationContextInfo.PROVIDER);
+      CcCompilationInfo stl =
+          ruleContext.getPrerequisite(":stl", Mode.TARGET, CcCompilationInfo.PROVIDER);
       if (stl != null) {
-        result.add(stl.getCppModuleMap());
+        result.add(stl.getCcCompilationContextInfo().getCppModuleMap());
       }
     }
 
@@ -1208,15 +1224,16 @@ public final class CcCompilationHelper {
     for (Artifact source : sourceArtifacts) {
       String outputName =
           FileSystemUtils.removeExtension(source.getRootRelativePath()).getBaseName();
-      count.put(outputName, count.getOrDefault(outputName, 0) + 1);
+      count.put(outputName.toLowerCase(),
+          count.getOrDefault(outputName.toLowerCase(), 0) + 1);
     }
 
     for (Artifact source : sourceArtifacts) {
       String outputName =
           FileSystemUtils.removeExtension(source.getRootRelativePath()).getBaseName();
-      if (count.getOrDefault(outputName, 0) > 1) {
-        int num = number.getOrDefault(outputName, 0);
-        number.put(outputName, num + 1);
+      if (count.getOrDefault(outputName.toLowerCase(), 0) > 1) {
+        int num = number.getOrDefault(outputName.toLowerCase(), 0);
+        number.put(outputName.toLowerCase(), num + 1);
         outputName = num + "/" + outputName;
       }
       // If prefixDir is set, prepend it to the outputName
@@ -1475,7 +1492,7 @@ public final class CcCompilationHelper {
       Artifact ltoIndexingFile,
       ImmutableMap<String, String> additionalBuildVariables) {
     Artifact sourceFile = builder.getSourceFile();
-    Builder<String> userCompileFlags = ImmutableList.builder();
+    ImmutableList.Builder<String> userCompileFlags = ImmutableList.builder();
     userCompileFlags.addAll(getCoptsFromOptions(cppConfiguration, sourceFile.getExecPathString()));
     userCompileFlags.addAll(copts);
     if (sourceFile != null && sourceLabel != null) {
@@ -1520,8 +1537,7 @@ public final class CcCompilationHelper {
         CppHelper.getFdoBuildStamp(ruleContext, fdoSupport.getFdoSupport()),
         dotdFileExecPath,
         ImmutableList.copyOf(variablesExtensions),
-        allAdditionalBuildVariables.build(),
-        features);
+        allAdditionalBuildVariables.build());
   }
 
   /**
@@ -1980,7 +1996,9 @@ public final class CcCompilationHelper {
       //    implementation (with caching results of this method) to avoid O(N^2) slowdown.
       if (ruleContext.getRule().isAttrDefined("deps", BuildType.LABEL_LIST)) {
         for (TransitiveInfoCollection dep : ruleContext.getPrerequisites("deps", Mode.TARGET)) {
-          if (dep.get(CcCompilationContextInfo.PROVIDER) != null
+          CcCompilationInfo ccCompilationInfo = dep.get(CcCompilationInfo.PROVIDER);
+          if (ccCompilationInfo != null
+              && ccCompilationInfo.getCcCompilationContextInfo() != null
               && InstrumentedFilesCollector.shouldIncludeLocalSources(configuration, dep)) {
             return true;
           }

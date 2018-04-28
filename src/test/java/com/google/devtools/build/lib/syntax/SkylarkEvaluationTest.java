@@ -14,15 +14,11 @@
 package com.google.devtools.build.lib.syntax;
 
 import static com.google.common.truth.Truth.assertThat;
+import static java.util.stream.Collectors.joining;
 
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
-import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
-import com.google.devtools.build.lib.analysis.configuredtargets.FileConfiguredTarget;
-import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.events.Location;
@@ -114,6 +110,15 @@ public class SkylarkEvaluationTest extends EvaluationTest {
 
   @SkylarkModule(name = "Mock", doc = "")
   static class Mock {
+    @SkylarkCallable(name = "MockFn", selfCall = true, documented = false,
+        parameters = {
+            @Param(name = "pos", positional = true, type = String.class),
+        }
+    )
+    public static String selfCall(String myName) {
+      return "I'm a mock named " + myName;
+    }
+
     @SkylarkCallable(documented = false)
     public static Integer valueOf(String str) {
       return Integer.valueOf(str);
@@ -163,7 +168,25 @@ public class SkylarkEvaluationTest extends EvaluationTest {
       return ImmutableMap.of("a", ImmutableList.of("b", "c"));
     }
 
-    
+    @SkylarkCallable(
+      name = "legacy_method",
+      documented = false,
+      parameters = {
+        @Param(name = "pos", positional = true, type = Boolean.class),
+        @Param(name = "legacyNamed", type = Boolean.class, positional = true, named = false,
+            legacyNamed = true),
+        @Param(name = "named", type = Boolean.class, positional = false, named = true),
+      })
+    public String legacyMethod(Boolean pos, Boolean legacyNamed, Boolean named) {
+      return "legacy_method("
+          + pos
+          + ", "
+          + legacyNamed
+          + ", "
+          + named
+          + ")";
+    }
+
     @SkylarkCallable(
       name = "with_params",
       documented = false,
@@ -363,6 +386,82 @@ public class SkylarkEvaluationTest extends EvaluationTest {
             FuncallExpression.getBuiltinCallable(this, nativeFunction));
       }
       return NativeProvider.STRUCT.create(builder.build(), "no native callable '%s'");
+    }
+
+    @SkylarkCallable(
+      name = "with_args_and_env",
+      documented = false,
+      parameters = {
+        @Param(name = "pos1", type = Integer.class),
+        @Param(name = "pos2", defaultValue = "False", type = Boolean.class),
+        @Param(name = "named", type = Boolean.class, positional = false, named = true),
+      },
+      extraPositionals = @Param(name = "args"),
+      useEnvironment = true
+    )
+    public String withArgsAndEnv(
+        Integer pos1, boolean pos2, boolean named, SkylarkList<?> args, Environment env) {
+      String argsString =
+          "args(" + args.stream().map(Printer::debugPrint).collect(joining(", ")) + ")";
+      return "with_args_and_env("
+          + pos1
+          + ", "
+          + pos2
+          + ", "
+          + named
+          + ", "
+          + argsString
+          + ", "
+          + env.isGlobal()
+          + ")";
+    }
+
+    @SkylarkCallable(
+      name = "with_kwargs",
+      documented = false,
+      parameters = {
+        @Param(name = "pos", defaultValue = "False", type = Boolean.class),
+        @Param(name = "named", type = Boolean.class, positional = false, named = true),
+      },
+      extraKeywords = @Param(name = "kwargs")
+    )
+    public String withKwargs(boolean pos, boolean named, SkylarkDict<?, ?> kwargs)
+        throws EvalException {
+      String kwargsString =
+          "kwargs("
+              + kwargs
+                  .getContents(String.class, Object.class, "kwargs")
+                  .entrySet()
+                  .stream()
+                  .map(entry -> entry.getKey() + "=" + entry.getValue())
+                  .collect(joining(", "))
+              + ")";
+      return "with_kwargs(" + pos + ", " + named + ", " + kwargsString + ")";
+    }
+
+    @SkylarkCallable(
+      name = "with_args_and_kwargs",
+      documented = false,
+      parameters = {
+        @Param(name = "foo", named = true, positional = true, type = String.class),
+      },
+      extraPositionals = @Param(name = "args"),
+      extraKeywords = @Param(name = "kwargs")
+    )
+    public String withArgsAndKwargs(String foo, SkylarkList<?> args, SkylarkDict<?, ?> kwargs)
+        throws EvalException {
+      String argsString =
+          "args(" + args.stream().map(Printer::debugPrint).collect(joining(", ")) + ")";
+      String kwargsString =
+          "kwargs("
+              + kwargs
+                  .getContents(String.class, Object.class, "kwargs")
+                  .entrySet()
+                  .stream()
+                  .map(entry -> entry.getKey() + "=" + entry.getValue())
+                  .collect(joining(", "))
+              + ")";
+      return "with_args_and_kwargs(" + foo + ", " + argsString + ", " + kwargsString + ")";
     }
 
     @Override
@@ -944,6 +1043,68 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   }
 
   @Test
+  public void testLegacyNamed() throws Exception {
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "b = mock.legacy_method(True, legacyNamed=True, named=True)")
+        .testLookup("b", "legacy_method(true, true, true)");
+
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "b = mock.legacy_method(True, True, named=True)")
+        .testLookup("b", "legacy_method(true, true, true)");
+
+    // Verify legacyNamed also works with proxy method objects.
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "m = mock.proxy_methods_object()",
+            "b = m.legacy_method(True, legacyNamed=True, named=True)")
+        .testLookup("b", "legacy_method(true, true, true)");
+
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "m = mock.proxy_methods_object()",
+            "b = m.legacy_method(True, True, named=True)")
+        .testLookup("b", "legacy_method(true, true, true)");
+  }
+
+  /**
+   * This test verifies an error is raised when a method parameter is set both positionally and
+   * by name.
+   */
+  @Test
+  public void testArgSpecifiedBothByNameAndPosition() throws Exception {
+    // in with_params, 'posOrNamed' is positional parameter index 2. So by specifying both
+    // posOrNamed by name and three positional parameters, there is a conflict.
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .testIfErrorContains("got multiple values for keyword argument 'posOrNamed'",
+            "mock.with_params(1, True, True, posOrNamed=True, named=True)");
+  }
+
+  @Test
+  public void testTooManyPositionalArgs() throws Exception {
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .testIfErrorContains("expected no more than 3 positional arguments, but got 4",
+            "mock.with_params(1, True, True, 'toomany', named=True)");
+
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .testIfErrorContains("expected no more than 3 positional arguments, but got 5",
+            "mock.with_params(1, True, True, 'toomany', 'alsotoomany', named=True)");
+
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .testIfErrorContains("expected no more than 1 positional arguments, but got 2",
+            "mock.is_empty('a', 'b')");
+  }
+
+  @Test
   public void testJavaCallWithPositionalAndKwargs() throws Exception {
     new SkylarkTest()
         .update("mock", new Mock())
@@ -1051,6 +1212,25 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   }
 
   @Test
+  public void testSelfCall() throws Exception {
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("v = mock('bestmock')")
+        .testLookup("v", "I'm a mock named bestmock");
+
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("mockfunction = mock", "v = mockfunction('bestmock')")
+        .testLookup("v", "I'm a mock named bestmock");
+
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .testIfErrorContains(
+            "expected string for 'pos' while calling MockFn but got int instead: 1",
+            "v = mock(1)");
+  }
+
+  @Test
   public void testStructAccessAsFuncall() throws Exception {
     foobar.configure(getClass().getDeclaredField("foobar").getAnnotation(SkylarkSignature.class));
     new SkylarkTest()
@@ -1073,6 +1253,107 @@ public class SkylarkEvaluationTest extends EvaluationTest {
         .update("mock", new Mock())
         .setUp("b = mock.with_params_and_extra(1, True, named=True)")
         .testLookup("b", "with_params_and_extra(1, true, false, true, false, a, 1, 3, true, true)");
+  }
+
+  @Test
+  public void testJavaFunctionWithExtraArgsAndEnv() throws Exception {
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("b = mock.with_args_and_env(1, True, 'extraArg1', 'extraArg2', named=True)")
+        .testLookup("b", "with_args_and_env(1, true, true, args(extraArg1, extraArg2), true)");
+
+    // Use an args list.
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "myargs = ['extraArg2']",
+            "b = mock.with_args_and_env(1, True, 'extraArg1', named=True, *myargs)")
+        .testLookup("b", "with_args_and_env(1, true, true, args(extraArg1, extraArg2), true)");
+  }
+
+  @Test
+  public void testJavaFunctionWithExtraKwargs() throws Exception {
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("b = mock.with_kwargs(True, extraKey1=True, named=True, extraKey2='x')")
+        .testLookup("b", "with_kwargs(true, true, kwargs(extraKey1=true, extraKey2=x))");
+
+    // Use a kwargs dict.
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "mykwargs = {'extraKey2':'x', 'named':True}",
+            "b = mock.with_kwargs(True, extraKey1=True, **mykwargs)")
+        .testLookup("b", "with_kwargs(true, true, kwargs(extraKey1=true, extraKey2=x))");
+  }
+
+  @Test
+  public void testJavaFunctionWithArgsAndKwargs() throws Exception {
+    // Foo is used positionally
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("b = mock.with_args_and_kwargs('foo', 'bar', 'baz', extraKey1=True, extraKey2='x')")
+        .testLookup(
+            "b", "with_args_and_kwargs(foo, args(bar, baz), kwargs(extraKey1=true, extraKey2=x))");
+
+    // Use an args list and a kwargs dict
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "mykwargs = {'extraKey1':True}",
+            "myargs = ['baz']",
+            "b = mock.with_args_and_kwargs('foo', 'bar', extraKey2='x', *myargs, **mykwargs)")
+        .testLookup(
+            "b", "with_args_and_kwargs(foo, args(bar, baz), kwargs(extraKey2=x, extraKey1=true))");
+
+    // Foo is used by name
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("b = mock.with_args_and_kwargs(foo='foo', extraKey1=True)")
+        .testLookup("b", "with_args_and_kwargs(foo, args(), kwargs(extraKey1=true))");
+
+    // Empty args and kwargs.
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("b = mock.with_args_and_kwargs('foo')")
+        .testLookup("b", "with_args_and_kwargs(foo, args(), kwargs())");
+  }
+
+  @Test
+  public void testProxyMethodsObjectWithArgsAndKwargs() throws Exception {
+    // Foo is used positionally
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "m = mock.proxy_methods_object()",
+            "b = m.with_args_and_kwargs('foo', 'bar', 'baz', extraKey1=True, extraKey2='x')")
+        .testLookup(
+            "b", "with_args_and_kwargs(foo, args(bar, baz), kwargs(extraKey1=true, extraKey2=x))");
+
+    // Use an args list and a kwargs dict
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "mykwargs = {'extraKey1':True}",
+            "myargs = ['baz']",
+            "m = mock.proxy_methods_object()",
+            "b = m.with_args_and_kwargs('foo', 'bar', extraKey2='x', *myargs, **mykwargs)")
+        .testLookup(
+            "b", "with_args_and_kwargs(foo, args(bar, baz), kwargs(extraKey2=x, extraKey1=true))");
+
+    // Foo is used by name
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp(
+            "m = mock.proxy_methods_object()",
+            "b = m.with_args_and_kwargs(foo='foo', extraKey1=True)")
+        .testLookup("b", "with_args_and_kwargs(foo, args(), kwargs(extraKey1=true))");
+
+    // Empty args and kwargs.
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("m = mock.proxy_methods_object()", "b = m.with_args_and_kwargs('foo')")
+        .testLookup("b", "with_args_and_kwargs(foo, args(), kwargs())");
   }
 
   @Test
@@ -1548,6 +1829,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
             "dir(mock)",
             "function",
             "is_empty",
+            "legacy_method",
             "nullfunc_failing",
             "nullfunc_working",
             "proxy_methods_object",
@@ -1559,7 +1841,10 @@ public class SkylarkEvaluationTest extends EvaluationTest {
             "struct_field_callable",
             "value_of",
             "voidfunc",
+            "with_args_and_env",
+            "with_args_and_kwargs",
             "with_extra",
+            "with_kwargs",
             "with_params",
             "with_params_and_extra");
   }
@@ -1580,8 +1865,8 @@ public class SkylarkEvaluationTest extends EvaluationTest {
         .update("mock", new NativeInfoMock())
         .testEval(
             "dir(mock)",
-            "['callable_string', 'struct_field_callable', "
-                + "'struct_field_none', 'struct_field_string']");
+            "['callable_string', 'struct_field_callable', 'struct_field_none', "
+                + "'struct_field_string', 'to_json', 'to_proto']");
   }
 
   @Test
@@ -1601,15 +1886,6 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     new SkylarkTest().testIfExactError(
         "unexpected keywords 'end', 'other' in call to print(*args, sep: string = \" \")",
         "print(end='x', other='y')");
-  }
-
-  @Test
-  public void testSkylarkTypes() {
-    assertThat(EvalUtils.getSkylarkType(FileConfiguredTarget.class))
-        .isEqualTo(TransitiveInfoCollection.class);
-    assertThat(EvalUtils.getSkylarkType(RuleConfiguredTarget.class))
-        .isEqualTo(TransitiveInfoCollection.class);
-    assertThat(EvalUtils.getSkylarkType(SpecialArtifact.class)).isEqualTo(Artifact.class);
   }
 
   // Override tests in EvaluationTest incompatible with Skylark

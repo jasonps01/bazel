@@ -223,11 +223,15 @@ public class DepsCheckerClassVisitor extends ClassVisitor {
         checkType(((Type) value)); // Class literals.
         return;
       }
-      if (PRIMITIVE_TYPES.contains(value.getClass())) {
-        checkType(Type.getType(value.getClass()));
+      Class<?> clazz = value.getClass();
+      if (PRIMITIVE_TYPES.contains(clazz)) {
         return;
       }
-      throw new UnsupportedOperationException("Unhandled value " + value);
+      checkState(
+          clazz.isArray() && clazz.getComponentType().isPrimitive(),
+          "Unexpected value %s of type %s",
+          value,
+          clazz);
     }
 
     @Override
@@ -284,6 +288,9 @@ public class DepsCheckerClassVisitor extends ClassVisitor {
 
     @Override
     public AnnotationVisitor visitParameterAnnotation(int parameter, String desc, boolean visible) {
+      if ("Ljava/lang/Synthetic;".equals(desc)) {
+        return null; // ASM sometimes makes up this annotation, so we can ignore it (b/78024300)
+      }
       checkDescriptor(desc);
       return defaultAnnotationChecker;
     }

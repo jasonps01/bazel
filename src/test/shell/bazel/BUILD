@@ -117,13 +117,6 @@ sh_test(
 )
 
 sh_test(
-    name = "persistent_test_runner_test",
-    size = "large",
-    srcs = ["persistent_test_runner_test.sh"],
-    data = [":test-deps"],
-)
-
-sh_test(
     name = "bazel_build_event_stream_test",
     size = "medium",
     srcs = ["bazel_build_event_stream_test.sh"],
@@ -317,6 +310,12 @@ sh_test(
 )
 
 sh_test(
+    name = "skylark_prefetching_test",
+    srcs = ["skylark_prefetching_test.sh"],
+    data = [":test-deps"],
+)
+
+sh_test(
     name = "external_skylark_load_test",
     size = "large",
     srcs = ["external_skylark_load_test.sh"],
@@ -394,6 +393,21 @@ sh_test(
 )
 
 sh_test(
+    name = "bazel_docker_sandboxing_test",
+    timeout = "eternal",
+    srcs = ["bazel_docker_sandboxing_test.sh"],
+    args = ["$(location //:bazel-distfile)"],
+    data = [
+        ":test-deps",
+        "//:bazel-distfile",
+    ],
+    tags = [
+        "local",
+        "manual",
+    ],
+)
+
+sh_test(
     name = "bazel_sandboxing_test",
     size = "large",
     srcs = ["bazel_sandboxing_test.sh"],
@@ -452,7 +466,7 @@ sh_test(
     size = "large",
     srcs = ["bazel_repository_cache_test.sh"],
     data = [":test-deps"],
-    shard_count = 4,
+    shard_count = 6,
 )
 
 sh_test(
@@ -551,4 +565,13 @@ sh_test(
 test_suite(
     name = "all_tests",
     visibility = ["//visibility:public"],
+)
+
+test_suite(
+    name = "all_windows_tests",
+    tests = [
+        ":bazel_bootstrap_distfile_test",
+        ":bazel_windows_example_test",
+    ],
+    visibility = ["//src/test/shell:__pkg__"],
 )

@@ -147,7 +147,7 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
       return signV1;
     }
 
-    /** Wheter to sign the APK with the apksigner tool with APK Signature Schema V2. */
+    /** Whether to sign the APK with the apksigner tool with APK Signature Schema V2. */
     public boolean signV2() {
       return signV2;
     }
@@ -785,6 +785,29 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     )
     public AndroidRobolectricTestDeprecationLevel robolectricTestDeprecationLevel;
 
+    @Option(
+        name = "android_decouple_data_processing",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {
+          OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION,
+          OptionEffectTag.ACTION_COMMAND_LINES
+        },
+        help =
+            "If true, Android data (assets, resources, and manifests) will be processed seperately "
+                + "when possible. Otherwise, they will all be processed together.")
+    public boolean decoupleDataProcessing;
+
+    // TODO(cushon): make this the default, and delete it
+    @Option(
+      name = "experimental_android_enforce_strict_deps_for_binaries_under_test",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS},
+      help = "If enabled, strict dependencies are enforced for android_test.binary_under_test"
+    )
+    public boolean enforceStrictDepsForBinariesUnderTest;
+
     @Override
     public FragmentOptions getHost() {
       Options host = (Options) super.getHost();
@@ -807,6 +830,7 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
       host.manifestMerger = manifestMerger;
       host.androidAaptVersion = androidAaptVersion;
       host.allowAndroidLibraryDepsWithoutSrcs = allowAndroidLibraryDepsWithoutSrcs;
+      host.enforceStrictDepsForBinariesUnderTest = enforceStrictDepsForBinariesUnderTest;
       return host;
     }
   }
@@ -862,6 +886,8 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
   private final boolean skipParsingAction;
   private final boolean fixedResourceNeverlinking;
   private final AndroidRobolectricTestDeprecationLevel robolectricTestDeprecationLevel;
+  private final boolean decoupleDataProcessing;
+  private final boolean enforceStrictDepsForBinariesUnderTest;
 
   AndroidConfiguration(Options options) throws InvalidConfigurationException {
     this.sdk = options.sdk;
@@ -899,6 +925,8 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     this.skipParsingAction = options.skipParsingAction;
     this.fixedResourceNeverlinking = options.fixedResourceNeverlinking;
     this.robolectricTestDeprecationLevel = options.robolectricTestDeprecationLevel;
+    this.decoupleDataProcessing = options.decoupleDataProcessing;
+    this.enforceStrictDepsForBinariesUnderTest = options.enforceStrictDepsForBinariesUnderTest;
 
     if (incrementalDexingShardsAfterProguard < 0) {
       throw new InvalidConfigurationException(
@@ -948,7 +976,9 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
       boolean useParallelDex2Oat,
       boolean skipParsingAction,
       boolean fixedResourceNeverlinking,
-      AndroidRobolectricTestDeprecationLevel robolectricTestDeprecationLevel) {
+      AndroidRobolectricTestDeprecationLevel robolectricTestDeprecationLevel,
+      boolean decoupleDataProcessing,
+      boolean enforceStrictDepsForBinariesUnderTest) {
     this.sdk = sdk;
     this.cpu = cpu;
     this.useIncrementalNativeLibs = useIncrementalNativeLibs;
@@ -981,6 +1011,8 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     this.skipParsingAction = skipParsingAction;
     this.fixedResourceNeverlinking = fixedResourceNeverlinking;
     this.robolectricTestDeprecationLevel = robolectricTestDeprecationLevel;
+    this.decoupleDataProcessing = decoupleDataProcessing;
+    this.enforceStrictDepsForBinariesUnderTest = enforceStrictDepsForBinariesUnderTest;
   }
 
   public String getCpu() {
@@ -1126,6 +1158,14 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
 
   public AndroidRobolectricTestDeprecationLevel getRobolectricTestDeprecationLevel() {
     return robolectricTestDeprecationLevel;
+  }
+
+  public boolean decoupleDataProcessing() {
+    return decoupleDataProcessing;
+  }
+
+  public boolean getEnforceStrictDepsForBinariesUnderTest() {
+    return enforceStrictDepsForBinariesUnderTest;
   }
 
   @Override

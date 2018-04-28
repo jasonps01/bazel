@@ -18,11 +18,8 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Verify;
-import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableMap.Builder;
-import com.google.common.collect.ListMultimap;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Options.MakeVariableSource;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
@@ -32,6 +29,7 @@ import com.google.devtools.build.lib.analysis.config.PerLabelOptions;
 import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
 import com.google.devtools.build.lib.analysis.skylark.annotations.SkylarkConfigurationField;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
@@ -45,7 +43,6 @@ import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
-import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain;
@@ -161,8 +158,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   private final boolean convertLipoToThinLto;
   private final PathFragment crosstoolTopPathFragment;
 
-  private final Path fdoProfileAbsolutePath;
-  private final Label fdoProfileLabel;
+  private final PathFragment fdoPath;
+  private final Label fdoOptimizeLabel;
 
   // TODO(bazel-team): All these labels (except for ccCompilerRuleLabel) can be removed once the
   // transition to the cc_compiler rule is complete.
@@ -214,35 +211,15 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     PathFragment crosstoolTopPathFragment =
         params.crosstoolTop.getPackageIdentifier().getPathUnderExecRoot();
     CppToolchainInfo cppToolchainInfo =
-        CppToolchainInfo.create(toolchain, crosstoolTopPathFragment, params.crosstoolTop);
-
-    ListMultimap<CompilationMode, String> cFlags = ArrayListMultimap.create();
-    ListMultimap<CompilationMode, String> cxxFlags = ArrayListMultimap.create();
-    for (CrosstoolConfig.CompilationModeFlags flags : toolchain.getCompilationModeFlagsList()) {
-      // Remove this when CROSSTOOL files no longer contain 'coverage'.
-      if (flags.getMode() == CrosstoolConfig.CompilationMode.COVERAGE) {
-        continue;
-      }
-      CompilationMode realmode = CppToolchainInfo.importCompilationMode(flags.getMode());
-      cFlags.putAll(realmode, flags.getCompilerFlagList());
-      cxxFlags.putAll(realmode, flags.getCxxFlagList());
-    }
+        CppToolchainInfo.create(toolchain, crosstoolTopPathFragment, params.ccToolchainLabel);
 
     CompilationMode compilationMode = params.commonOptions.compilationMode;
 
-    ListMultimap<LipoMode, String> lipoCFlags = ArrayListMultimap.create();
-    ListMultimap<LipoMode, String> lipoCxxFlags = ArrayListMultimap.create();
-    for (CrosstoolConfig.LipoModeFlags flags : toolchain.getLipoModeFlagsList()) {
-      LipoMode realmode = flags.getMode();
-      lipoCFlags.putAll(realmode, flags.getCompilerFlagList());
-      lipoCxxFlags.putAll(realmode, flags.getCxxFlagList());
-    }
-
     ImmutableList.Builder<String> coptsBuilder =
         ImmutableList.<String>builder()
-            .addAll(toolchain.getCompilerFlagList())
-            .addAll(cFlags.get(compilationMode))
-            .addAll(lipoCFlags.get(cppOptions.getLipoMode()));
+            .addAll(cppToolchainInfo.getCompilerFlags())
+            .addAll(cppToolchainInfo.getCFlagsByCompilationMode().get(compilationMode))
+            .addAll(cppToolchainInfo.getLipoCFlags().get(cppOptions.getLipoMode()));
     if (cppOptions.experimentalOmitfp) {
       coptsBuilder.add("-fomit-frame-pointer");
       coptsBuilder.add("-fasynchronous-unwind-tables");
@@ -251,9 +228,9 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
 
     ImmutableList.Builder<String> cxxOptsBuilder =
         ImmutableList.<String>builder()
-            .addAll(toolchain.getCxxFlagList())
-            .addAll(cxxFlags.get(compilationMode))
-            .addAll(lipoCxxFlags.get(cppOptions.getLipoMode()));
+            .addAll(cppToolchainInfo.getCxxFlags())
+            .addAll(cppToolchainInfo.getCxxFlagsByCompilationMode().get(compilationMode))
+            .addAll(cppToolchainInfo.getLipoCxxFlags().get(cppOptions.getLipoMode()));
 
     ImmutableList.Builder<String> linkoptsBuilder = ImmutableList.builder();
     linkoptsBuilder.addAll(cppOptions.linkoptList);
@@ -267,8 +244,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
         Preconditions.checkNotNull(params.commonOptions.cpu),
         cppOptions.convertLipoToThinLto,
         crosstoolTopPathFragment,
-        params.fdoProfileAbsolutePath,
-        params.fdoProfileLabel,
+        params.fdoPath,
+        params.fdoOptimizeLabel,
         params.ccToolchainLabel,
         params.stlLabel,
         params.sysrootLabel == null
@@ -277,36 +254,29 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
         params.sysrootLabel,
         new FlagList(
             coptsBuilder.build(),
-            FlagList.convertOptionalOptions(toolchain.getOptionalCompilerFlagList()),
             ImmutableList.copyOf(cppOptions.coptList)),
         new FlagList(
             cxxOptsBuilder.build(),
-            ImmutableList.of(),
             ImmutableList.copyOf(cppOptions.cxxoptList)),
         new FlagList(
             ImmutableList.copyOf(toolchain.getUnfilteredCxxFlagList()),
-            ImmutableList.of(),
             ImmutableList.of()),
         ImmutableList.copyOf(cppOptions.conlyoptList),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.FULLY_STATIC),
-            ImmutableList.of(),
             ImmutableList.of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.MOSTLY_STATIC),
-            ImmutableList.of(),
             ImmutableList.of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.MOSTLY_STATIC_LIBRARIES),
-            ImmutableList.of(),
             ImmutableList.of()),
         new FlagList(
             cppToolchainInfo.configureLinkerOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.DYNAMIC),
-            ImmutableList.of(),
             ImmutableList.of()),
         ImmutableList.copyOf(cppOptions.coptList),
         ImmutableList.copyOf(cppOptions.cxxoptList),
@@ -332,8 +302,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
       String desiredCpu,
       boolean convertLipoToThinLto,
       PathFragment crosstoolTopPathFragment,
-      Path fdoProfileAbsolutePath,
-      Label fdoProfileLabel,
+      PathFragment fdoPath,
+      Label fdoOptimizeLabel,
       Label ccToolchainLabel,
       Label stlLabel,
       PathFragment nonConfiguredSysroot,
@@ -364,8 +334,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     this.desiredCpu = desiredCpu;
     this.convertLipoToThinLto = convertLipoToThinLto;
     this.crosstoolTopPathFragment = crosstoolTopPathFragment;
-    this.fdoProfileAbsolutePath = fdoProfileAbsolutePath;
-    this.fdoProfileLabel = fdoProfileLabel;
+    this.fdoPath = fdoPath;
+    this.fdoOptimizeLabel = fdoOptimizeLabel;
     this.ccToolchainLabel = ccToolchainLabel;
     this.stlLabel = stlLabel;
     this.nonConfiguredSysroot = nonConfiguredSysroot;
@@ -593,19 +563,22 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
             + "in addition to the ones returned by this method"
   )
   @Deprecated
-  public ImmutableList<String> getCompilerOptions(Iterable<String> features) {
-    return compilerFlags.evaluate(features);
+  public ImmutableList<String> getCompilerOptions(Iterable<String> featuresNotUsedAnymore) {
+    return compilerFlags.evaluate();
   }
 
   /**
-   * Returns the list of additional C-specific options to use for compiling
-   * C. These should be go on the command line after the common options
-   * returned by {@link #getCompilerOptions}.
+   * Returns the list of additional C-specific options to use for compiling C. These should be go on
+   * the command line after the common options returned by {@link #getCompilerOptions}.
    */
-  @SkylarkCallable(name = "c_options", structField = true,
-      doc = "Returns the list of additional C-specific options to use for compiling C. "
-      + "These should be go on the command line after the common options returned by "
-      + "<code>compiler_options</code>")
+  // TODO(b/64384912): Migrate skylark callers and remove.
+  @SkylarkCallable(
+      name = "c_options",
+      structField = true,
+      doc =
+          "Returns the list of additional C-specific options to use for compiling C. "
+              + "These should be go on the command line after the common options returned by "
+              + "<code>compiler_options</code>")
   public ImmutableList<String> getCOptions() {
     return cOptions;
   }
@@ -625,17 +598,17 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
             + "<code>compiler_options</code>"
   )
   @Deprecated
-  public ImmutableList<String> getCxxOptions(Iterable<String> features) {
-    return cxxFlags.evaluate(features);
+  public ImmutableList<String> getCxxOptions(Iterable<String> featuresNotUsedAnymore) {
+    return cxxFlags.evaluate();
   }
 
   /**
    * Returns the default list of options which cannot be filtered by BUILD rules. These should be
    * appended to the command line after filtering.
    *
-   * @deprecated since it uses nonconfigured sysroot. Use
-   * {@link CcToolchainProvider#getUnfilteredCompilerOptionsWithSysroot(Iterable)} if you *really*
-   * need to.
+   * @deprecated since it uses nonconfigured sysroot. Use {@link
+   *     CcToolchainProvider#getUnfilteredCompilerOptionsWithSysroot(Iterable)} if you *really* need
+   *     to.
    */
   // TODO(b/65401585): Migrate existing uses to cc_toolchain and cleanup here.
   @Deprecated
@@ -646,25 +619,23 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
             + "rules. These should be appended to the command line after filtering."
   )
   public ImmutableList<String> getUnfilteredCompilerOptionsWithLegacySysroot(
-      Iterable<String> features) {
-    return getUnfilteredCompilerOptionsDoNotUse(features, nonConfiguredSysroot);
+      Iterable<String> featuresNotUsedAnymore) {
+    return getUnfilteredCompilerOptionsDoNotUse(nonConfiguredSysroot);
   }
 
   /**
-   * @deprecated since it hardcodes --sysroot flag. Use
-   * {@link com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration}
-   * instead.
+   * @deprecated since it hardcodes --sysroot flag. Use {@link
+   *     com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration} instead.
    */
   // TODO(b/65401585): Migrate existing uses to cc_toolchain and cleanup here.
   @Deprecated
-  ImmutableList<String> getUnfilteredCompilerOptionsDoNotUse(
-      Iterable<String> features, @Nullable PathFragment sysroot) {
+  ImmutableList<String> getUnfilteredCompilerOptionsDoNotUse(@Nullable PathFragment sysroot) {
     if (sysroot == null) {
-      return unfilteredCompilerFlags.evaluate(features);
+      return unfilteredCompilerFlags.evaluate();
     }
     return ImmutableList.<String>builder()
         .add("--sysroot=" + sysroot)
-        .addAll(unfilteredCompilerFlags.evaluate(features))
+        .addAll(unfilteredCompilerFlags.evaluate())
         .build();
   }
 
@@ -732,10 +703,10 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
    * Returns the immutable list of linker options for fully statically linked outputs. Does not
    * include command-line options passed via --linkopt or --linkopts.
    *
-   * @param features default settings affecting this link
+   * @param featuresNotUsedAnymore
    * @param sharedLib true if the output is a shared lib, false if it's an executable
    *     <p>Deprecated: Use {@link CppHelper#getFullyStaticLinkOptions(CppConfiguration,
-   *     CcToolchainProvider, Iterable, Boolean)}
+   *     CcToolchainProvider, Boolean)}
    */
   // TODO(b/64384912): Migrate skylark users to cc_common and remove.
   @SkylarkCallable(
@@ -747,11 +718,11 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   )
   @Deprecated
   public ImmutableList<String> getFullyStaticLinkOptions(
-      Iterable<String> features, Boolean sharedLib) {
+      Iterable<String> featuresNotUsedAnymore, Boolean sharedLib) {
     if (sharedLib) {
-      return getSharedLibraryLinkOptions(mostlyStaticLinkFlags, features);
+      return getSharedLibraryLinkOptions(mostlyStaticLinkFlags);
     } else {
-      return fullyStaticLinkFlags.evaluate(features);
+      return fullyStaticLinkFlags.evaluate();
     }
   }
 
@@ -759,10 +730,10 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
    * Returns the immutable list of linker options for mostly statically linked outputs. Does not
    * include command-line options passed via --linkopt or --linkopts.
    *
-   * @param features default settings affecting this link
+   * @param featuresNotUsedAnymore
    * @param sharedLib true if the output is a shared lib, false if it's an executable
-   *     <p>Deprecated: Use {@link CppHelper#getMostlyStaticLinkOptions(CppConfiguration,
-   *     CcToolchainProvider, Iterable, Boolean)}
+   *     <p>Deprecated: Use {@link CppHelper#getMostlyStaticLinkOptions( CppConfiguration,
+   *     CcToolchainProvider, boolean, boolean)}
    */
   // TODO(b/64384912): Migrate skylark users to cc_common and remove.
   @SkylarkCallable(
@@ -774,15 +745,14 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   )
   @Deprecated
   public ImmutableList<String> getMostlyStaticLinkOptions(
-      Iterable<String> features, Boolean sharedLib) {
+      Iterable<String> featuresNotUsedAnymore, Boolean sharedLib) {
     if (sharedLib) {
       return getSharedLibraryLinkOptions(
           cppToolchainInfo.supportsEmbeddedRuntimes()
               ? mostlyStaticSharedLinkFlags
-              : dynamicLinkFlags,
-          features);
+              : dynamicLinkFlags);
     } else {
-      return mostlyStaticLinkFlags.evaluate(features);
+      return mostlyStaticLinkFlags.evaluate();
     }
   }
 
@@ -790,10 +760,10 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
    * Returns the immutable list of linker options for artifacts that are not fully or mostly
    * statically linked. Does not include command-line options passed via --linkopt or --linkopts.
    *
-   * @param features default settings affecting this link
+   * @param featuresNotUsedAnymore
    * @param sharedLib true if the output is a shared lib, false if it's an executable
    *     <p>Deprecated: Use {@link CppHelper#getDynamicLinkOptions(CppConfiguration,
-   *     CcToolchainProvider, Iterable, Boolean)}
+   *     CcToolchainProvider, Boolean)}
    */
   // TODO(b/64384912): Migrate skylark users to cc_common and remove.
   @SkylarkCallable(
@@ -804,11 +774,12 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
             + "passed via --linkopt or --linkopts."
   )
   @Deprecated
-  public ImmutableList<String> getDynamicLinkOptions(Iterable<String> features, Boolean sharedLib) {
+  public ImmutableList<String> getDynamicLinkOptions(
+      Iterable<String> featuresNotUsedAnymore, Boolean sharedLib) {
     if (sharedLib) {
-      return getSharedLibraryLinkOptions(dynamicLinkFlags, features);
+      return getSharedLibraryLinkOptions(dynamicLinkFlags);
     } else {
-      return dynamicLinkFlags.evaluate(features);
+      return dynamicLinkFlags.evaluate();
     }
   }
 
@@ -819,9 +790,8 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
    * <p>Deprecated: Use {@link CcToolchainProvider#getSharedLibraryLinkOptions}
    */
   // TODO(b/64384912): Migrate skylark dependants and delete.
-  private ImmutableList<String> getSharedLibraryLinkOptions(
-      FlagList flags, Iterable<String> features) {
-    return cppToolchainInfo.getSharedLibraryLinkOptions(flags, features);
+  private ImmutableList<String> getSharedLibraryLinkOptions(FlagList flags) {
+    return cppToolchainInfo.getSharedLibraryLinkOptions(flags);
   }
 
   /**
@@ -871,6 +841,23 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     return stlLabel;
   }
 
+  @SkylarkConfigurationField(
+      name = "stl",
+      doc = "The label of the STL target",
+      defaultLabel = "//third_party/stl",
+      defaultInToolRepository = false
+  )
+  public Label getSkylarkStl() {
+    if (stlLabel == null) {
+      try {
+        return Label.parseAbsolute("//third_party/stl");
+      } catch (LabelSyntaxException e) {
+        throw new IllegalStateException("STL label not formatted correctly", e);
+      }
+    }
+    return stlLabel;
+  }
+
   /**
    * Returns the currently active LIPO compilation mode.
    */
@@ -901,7 +888,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   /**
    * Returns true if LLVM FDO Optimization should be applied for this configuration.
    *
-   * <p>Deprecated: Use {@link CppConfiguration#isLLVMOptimizedFdo(boolean)}
+   * <p>Deprecated: Use {@link CcToolchain#isLLVMOptimizedFdo(boolean, PathFragment)}
    */
   // TODO(b/64384912): Remove in favor of overload with isLLVMCompiler.
   @Deprecated
@@ -911,14 +898,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
             || CppFileTypes.LLVM_PROFILE_RAW.matches(cppOptions.getFdoOptimize())
             || (isLLVMCompiler()
                 && cppOptions.getFdoOptimize().endsWith(".zip")));
-  }
-
-  /** Returns true if LLVM FDO Optimization should be applied for this configuration. */
-  public boolean isLLVMOptimizedFdo(boolean isLLVMCompiler) {
-    return cppOptions.getFdoOptimize() != null
-        && (CppFileTypes.LLVM_PROFILE.matches(cppOptions.getFdoOptimize())
-            || CppFileTypes.LLVM_PROFILE_RAW.matches(cppOptions.getFdoOptimize())
-            || (isLLVMCompiler && cppOptions.getFdoOptimize().endsWith(".zip")));
   }
 
   /** Returns true if LIPO optimization is implied by the flags of this build. */
@@ -1220,18 +1199,29 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
       }
     }
 
+    // FDO
+    if (cppOptions.getFdoOptimize() != null && cppOptions.getFdoProfileLabel() != null) {
+      reporter.handle(Event.error("Both --fdo_optimize and --fdo_profile specified"));
+    }
+
     if (cppOptions.getFdoInstrument() != null) {
-      if (cppOptions.getFdoOptimize() != null) {
+      if (cppOptions.getFdoOptimize() != null || cppOptions.getFdoProfileLabel() != null) {
         reporter.handle(
             Event.error(
-                "Cannot instrument and optimize for FDO at the same time. "
-                    + "Remove one of the '--fdo_instrument' and '--fdo_optimize' options"));
+                "Cannot instrument and optimize for FDO at the same time. Remove one of the "
+                    + "'--fdo_instrument' and '--fdo_optimize/--fdo_profile' options"));
       }
       if (!cppOptions.coptList.contains("-Wno-error")) {
         // This is effectively impossible. --fdo_instrument adds this value, and only invocation
         // policy could remove it.
         reporter.handle(Event.error("Cannot instrument FDO without --copt including -Wno-error."));
       }
+    }
+
+    if (cppOptions.getLipoMode() != LipoMode.OFF && cppOptions.getFdoProfileLabel() != null) {
+      reporter.handle(
+          Event.error(
+              "LIPO options can not be used with --fdo_profile. Use --fdo_optimize instead"));
     }
 
     if (cppOptions.getLipoMode() != LipoMode.OFF
@@ -1284,7 +1274,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
   }
 
   @Override
-  public void addGlobalMakeVariables(Builder<String, String> globalMakeEnvBuilder) {
+  public void addGlobalMakeVariables(ImmutableMap.Builder<String, String> globalMakeEnvBuilder) {
     if (!cppOptions.enableMakeVariables) {
       return;
     }
@@ -1345,12 +1335,20 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
     return cppOptions.getFdoInstrument();
   }
 
-  public Path getFdoProfileAbsolutePath() {
-    return fdoProfileAbsolutePath;
+  public PathFragment getFdoPath() {
+    return fdoPath;
+  }
+
+  public Label getFdoOptimizeLabel() {
+    return fdoOptimizeLabel;
   }
 
   public Label getFdoProfileLabel() {
-    return fdoProfileLabel;
+    return cppOptions.getFdoProfileLabel();
+  }
+
+  public boolean isFdoAbsolutePathEnabled() {
+    return cppOptions.enableFdoProfileAbsolutePath;
   }
 
   public boolean useLLVMCoverageMapFormat() {

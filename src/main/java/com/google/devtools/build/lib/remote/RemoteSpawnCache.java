@@ -21,11 +21,12 @@ import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.actions.SpawnResult.Status;
 import com.google.devtools.build.lib.actions.Spawns;
 import com.google.devtools.build.lib.actions.cache.Metadata;
+import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.SpawnCache;
-import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionPolicy;
+import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.remote.TreeNodeRepository.TreeNode;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.remote.util.DigestUtil.ActionKey;
@@ -88,12 +89,12 @@ final class RemoteSpawnCache implements SpawnCache {
   }
 
   @Override
-  public CacheHandle lookup(Spawn spawn, SpawnExecutionPolicy policy)
+  public CacheHandle lookup(Spawn spawn, SpawnExecutionContext context)
       throws InterruptedException, IOException, ExecException {
     // Temporary hack: the TreeNodeRepository should be created and maintained upstream!
     TreeNodeRepository repository =
-        new TreeNodeRepository(execRoot, policy.getActionInputFileCache(), digestUtil);
-    SortedMap<PathFragment, ActionInput> inputMap = policy.getInputMapping();
+        new TreeNodeRepository(execRoot, context.getActionInputFileCache(), digestUtil);
+    SortedMap<PathFragment, ActionInput> inputMap = context.getInputMapping();
     TreeNode inputRoot = repository.buildFromActionInputs(inputMap);
     repository.computeMerkleDigests(inputRoot);
     Command command = RemoteSpawnRunner.buildCommand(spawn.getArguments(), spawn.getEnvironment());
@@ -103,7 +104,7 @@ final class RemoteSpawnCache implements SpawnCache {
             digestUtil.compute(command),
             repository.getMerkleDigest(inputRoot),
             spawn.getExecutionPlatform(),
-            policy.getTimeout(),
+            context.getTimeout(),
             Spawns.mayBeCached(spawn));
 
     // Look up action cache, and reuse the action output if it is found.
@@ -122,7 +123,7 @@ final class RemoteSpawnCache implements SpawnCache {
         // We don't cache failed actions, so we know the outputs exist.
         // For now, download all outputs locally; in the future, we can reuse the digests to
         // just update the TreeNodeRepository and continue the build.
-        remoteCache.download(result, execRoot, policy.getFileOutErr());
+        remoteCache.download(result, execRoot, context.getFileOutErr());
         SpawnResult spawnResult =
             new SpawnResult.Builder()
                 .setStatus(Status.SUCCESS)
@@ -160,8 +161,8 @@ final class RemoteSpawnCache implements SpawnCache {
         }
 
         @Override
-        public void store(SpawnResult result)
-            throws ExecException, InterruptedException, IOException {
+        public void store(SpawnResult result, Collection<Path> files)
+            throws InterruptedException, IOException {
           if (options.experimentalGuardAgainstConcurrentChanges) {
             try {
               checkForConcurrentModifications();
@@ -175,10 +176,8 @@ final class RemoteSpawnCache implements SpawnCache {
                   && Status.SUCCESS.equals(result.status())
                   && result.exitCode() == 0;
           Context previous = withMetadata.attach();
-          Collection<Path> files =
-              RemoteSpawnRunner.resolveActionInputs(execRoot, spawn.getOutputFiles());
           try {
-            remoteCache.upload(actionKey, execRoot, files, policy.getFileOutErr(), uploadAction);
+            remoteCache.upload(actionKey, execRoot, files, context.getFileOutErr(), uploadAction);
           } catch (IOException e) {
             if (verboseFailures) {
               report(Event.debug("Upload to remote cache failed: " + e.getMessage()));
@@ -197,7 +196,10 @@ final class RemoteSpawnCache implements SpawnCache {
 
         private void checkForConcurrentModifications() throws IOException {
           for (ActionInput input : inputMap.values()) {
-            Metadata metadata = policy.getActionInputFileCache().getMetadata(input);
+            if (input instanceof VirtualActionInput) {
+              continue;
+            }
+            Metadata metadata = context.getActionInputFileCache().getMetadata(input);
             if (metadata instanceof FileArtifactValue) {
               FileArtifactValue artifactValue = (FileArtifactValue) metadata;
               Path path = execRoot.getRelative(input.getExecPath());

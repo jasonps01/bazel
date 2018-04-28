@@ -16,7 +16,6 @@ package com.google.devtools.build.lib.sandbox;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.ImmutableSet.Builder;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -27,7 +26,7 @@ import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
 import com.google.devtools.build.lib.actions.cache.VirtualActionInput.EmptyActionInput;
 import com.google.devtools.build.lib.analysis.test.TestConfiguration;
 import com.google.devtools.build.lib.exec.SpawnInputExpander;
-import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionPolicy;
+import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.rules.fileset.FilesetActionContext;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -65,11 +64,8 @@ public final class SandboxHelpers {
    * host filesystem where the input files can be found.
    */
   public static Map<PathFragment, Path> getInputFiles(
-      Spawn spawn,
-      SpawnExecutionPolicy policy,
-      Path execRoot)
-          throws IOException {
-    return postProcess(policy.getInputMapping(), spawn, policy.getArtifactExpander(), execRoot);
+      Spawn spawn, SpawnExecutionContext context, Path execRoot) throws IOException {
+    return postProcess(context.getInputMapping(), spawn, context.getArtifactExpander(), execRoot);
   }
 
   /**
@@ -114,7 +110,7 @@ public final class SandboxHelpers {
   }
 
   public static ImmutableSet<PathFragment> getOutputFiles(Spawn spawn) {
-    Builder<PathFragment> outputFiles = ImmutableSet.builder();
+    ImmutableSet.Builder<PathFragment> outputFiles = ImmutableSet.builder();
     for (ActionInput output : spawn.getOutputFiles()) {
       outputFiles.add(PathFragment.create(output.getExecPathString()));
     }

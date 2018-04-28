@@ -51,7 +51,7 @@ public class CodecScanner {
    * @see CodecRegisterer
    */
   @SuppressWarnings("unchecked")
-  public static ObjectCodecRegistry.Builder initializeCodecRegistry(String packagePrefix)
+  static ObjectCodecRegistry.Builder initializeCodecRegistry(String packagePrefix)
       throws IOException, ReflectiveOperationException {
     log.info("Building ObjectCodecRegistry");
     ArrayList<Class<? extends ObjectCodec<?>>> codecs = new ArrayList<>();
@@ -69,8 +69,6 @@ public class CodecScanner {
                   .endsWith(CodecScanningConstants.REGISTERED_SINGLETON_SUFFIX)) {
                 processLikelyConstant(classInfo.load(), builder);
               } else {
-                // Assumes that anything with a class name matching the above won't need to be
-                // serialized.
                 builder.addClassName(classInfo.getName().intern());
               }
             });
@@ -116,7 +114,8 @@ public class CodecScanner {
           e);
     }
     try {
-      builder.addConstant(Preconditions.checkNotNull(field.get(null), "%s %s", field, type));
+      builder.addReferenceConstant(
+          Preconditions.checkNotNull(field.get(null), "%s %s", field, type));
     } catch (IllegalAccessException e) {
       throw new IllegalStateException("Could not access field " + field + " for " + type, e);
     }
@@ -193,7 +192,7 @@ public class CodecScanner {
     throw new IllegalStateException(registererType + " doesn't directly implement CodecRegisterer");
   }
 
-  /** Return the {@link ClassInfo} objects matching {@code packagePrefix}, sorted by name. */
+  /** Return the {@link ClassInfo} objects matching {@code packagePrefix} sorted by name. */
   private static Stream<ClassInfo> getClassInfos(String packagePrefix) throws IOException {
     return ClassPath.from(ClassLoader.getSystemClassLoader())
         .getResources()

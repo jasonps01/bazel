@@ -29,10 +29,11 @@ import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfig
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig;
+import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain;
 import com.google.devtools.common.options.OptionsParsingException;
+import com.google.protobuf.TextFormat;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -511,56 +512,9 @@ public class CcToolchainTest extends BuildViewTestCase {
 
     assertDoesNotContainSublist(
         CppHelper.getCompilerOptions(
-            getConfiguration(lib).getFragment(CppConfiguration.class),
-            toolchain,
-            Collections.emptyList()),
+            getConfiguration(lib).getFragment(CppConfiguration.class), toolchain),
         "--param",
         "df-double-quote-threshold-factor=0");
-  }
-
-  @Test
-  public void testFeatures() throws Exception {
-    writeDummyCcToolchain();
-
-    String originalCrosstool = analysisMock.ccSupport().readCrosstoolFile();
-    getAnalysisMock()
-        .ccSupport()
-        .setupCrosstoolWithRelease(
-            mockToolsConfig, MockCcSupport.addOptionalDefaultCoptsToCrosstool(originalCrosstool));
-
-    scratch.file("lib/BUILD", "cc_library(", "   name = 'lib',", "   srcs = ['a.cc'],", ")");
-
-    useConfiguration();
-    ConfiguredTarget lib = getConfiguredTarget("//lib");
-    CcToolchainProvider toolchain =
-        CppHelper.getToolchainUsingDefaultCcToolchainAttribute(getRuleContext(lib));
-
-    String defaultSettingFalse = "crosstool_default_false";
-    List<String> copts =
-        CppHelper.getCompilerOptions(
-            getConfiguration(lib).getFragment(CppConfiguration.class),
-            toolchain,
-            Collections.emptyList());
-    assertThat(copts).doesNotContain("-DDEFAULT_FALSE");
-    copts =
-        CppHelper.getCompilerOptions(
-            getConfiguration(lib).getFragment(CppConfiguration.class),
-            toolchain,
-            ImmutableList.of(defaultSettingFalse));
-    assertThat(copts).contains("-DDEFAULT_FALSE");
-
-    useConfiguration("--copt", "-DCOPT");
-    lib = getConfiguredTarget("//lib");
-    toolchain = CppHelper.getToolchainUsingDefaultCcToolchainAttribute(getRuleContext(lib));
-
-    copts =
-        CppHelper.getCompilerOptions(
-            getConfiguration(lib).getFragment(CppConfiguration.class),
-            toolchain,
-            ImmutableList.of(defaultSettingFalse));
-    assertThat(copts).contains("-DDEFAULT_FALSE");
-    assertThat(copts).contains("-DCOPT");
-    assertThat(copts.indexOf("-DDEFAULT_FALSE")).isLessThan(copts.indexOf("-DCOPT"));
   }
 
   @Test
@@ -575,9 +529,7 @@ public class CcToolchainTest extends BuildViewTestCase {
     List<String> expected = new ArrayList<>();
     expected.addAll(
         CppHelper.getCompilerOptions(
-            getConfiguration(lib).getFragment(CppConfiguration.class),
-            toolchain,
-            Collections.emptyList()));
+            getConfiguration(lib).getFragment(CppConfiguration.class), toolchain));
     expected.add("-Dfoo");
 
     useConfiguration("--copt", "-Dfoo");
@@ -586,9 +538,7 @@ public class CcToolchainTest extends BuildViewTestCase {
     assertThat(
             ImmutableList.copyOf(
                 CppHelper.getCompilerOptions(
-                    getConfiguration(lib).getFragment(CppConfiguration.class),
-                    toolchain,
-                    Collections.emptyList())))
+                    getConfiguration(lib).getFragment(CppConfiguration.class), toolchain)))
         .isEqualTo(ImmutableList.copyOf(expected));
   }
 
@@ -915,6 +865,8 @@ public class CcToolchainTest extends BuildViewTestCase {
     assertThat(toolchainProvider.supportsDynamicLinker()).isTrue();
   }
 
+  // Tests CcCommon::enableStaticLinkCppRuntimesFeature when supports_embedded_runtimes is not
+  // present at all in the toolchain.
   @Test
   public void testStaticLinkCppRuntimesSetViaSupportsEmbeddedRuntimesUnset() throws Exception {
     writeDummyCcToolchain();
@@ -924,11 +876,13 @@ public class CcToolchainTest extends BuildViewTestCase {
     CcToolchainProvider toolchainProvider =
         (CcToolchainProvider) target.get(ToolchainInfo.PROVIDER);
     FeatureConfiguration featureConfiguration =
-        CcCommon.configureFeatures(getRuleContext(target), toolchainProvider);
+        CcCommon.configureFeaturesOrReportRuleError(getRuleContext(target), toolchainProvider);
     assertThat(toolchainProvider.supportsEmbeddedRuntimes())
         .isEqualTo(featureConfiguration.isEnabled(CppRuleClasses.STATIC_LINK_CPP_RUNTIMES));
   }
 
+  // Tests CcCommon::enableStaticLinkCppRuntimesFeature when supports_embedded_runtimes is false
+  // in the toolchain.
   @Test
   public void testStaticLinkCppRuntimesSetViaSupportsEmbeddedRuntimesFalse() throws Exception {
     writeDummyCcToolchain();
@@ -938,8 +892,59 @@ public class CcToolchainTest extends BuildViewTestCase {
     CcToolchainProvider toolchainProvider =
         (CcToolchainProvider) target.get(ToolchainInfo.PROVIDER);
     FeatureConfiguration featureConfiguration =
-        CcCommon.configureFeatures(getRuleContext(target), toolchainProvider);
+        CcCommon.configureFeaturesOrReportRuleError(getRuleContext(target), toolchainProvider);
     assertThat(toolchainProvider.supportsEmbeddedRuntimes())
         .isEqualTo(featureConfiguration.isEnabled(CppRuleClasses.STATIC_LINK_CPP_RUNTIMES));
+  }
+
+  private FeatureConfiguration configureFeaturesForStaticLinkCppRuntimesTest(
+      String partialToolchain, String configurationToUse) throws Exception {
+    writeDummyCcToolchain();
+    CToolchain.Builder toolchainBuilder = CToolchain.newBuilder();
+    TextFormat.merge(partialToolchain, toolchainBuilder);
+    getAnalysisMock()
+        .ccSupport()
+        .setupCrosstool(
+            mockToolsConfig,
+            /* addEmbeddedRuntimes= */ true,
+            /* addModuleMap= */ false,
+            /* staticRuntimesLabel= */ null,
+            /* dynamicRuntimesLabel= */ null,
+            toolchainBuilder.buildPartial());
+    useConfiguration(configurationToUse);
+    ConfiguredTarget target = getConfiguredTarget("//a:b");
+    CcToolchainProvider toolchainProvider =
+        (CcToolchainProvider) target.get(ToolchainInfo.PROVIDER);
+    return CcCommon.configureFeaturesOrReportRuleError(getRuleContext(target), toolchainProvider);
+  }
+
+  // Tests CcCommon::enableStaticLinkCppRuntimesFeature when supports_embedded_runtimes is true in
+  // the toolchain and the feature is not present at all.
+  @Test
+  public void testSupportsEmbeddedRuntimesNoFeatureAtAll() throws Exception {
+    FeatureConfiguration featureConfiguration =
+        configureFeaturesForStaticLinkCppRuntimesTest("supports_embedded_runtimes: true", "");
+    assertThat(featureConfiguration.isEnabled(CppRuleClasses.STATIC_LINK_CPP_RUNTIMES)).isTrue();
+  }
+
+  // Tests CcCommon::enableStaticLinkCppRuntimesFeature when supports_embedded_runtimes is true in
+  // the toolchain and the feature is enabled.
+  @Test
+  public void testSupportsEmbeddedRuntimesFeatureEnabled() throws Exception {
+    FeatureConfiguration featureConfiguration =
+        configureFeaturesForStaticLinkCppRuntimesTest(
+            "supports_embedded_runtimes: true", "--features=static_link_cpp_runtimes");
+    assertThat(featureConfiguration.isEnabled(CppRuleClasses.STATIC_LINK_CPP_RUNTIMES)).isTrue();
+  }
+
+  // Tests CcCommon::enableStaticLinkCppRuntimesFeature when supports_embedded_runtimes is true in
+  // the toolchain and the feature is disabled.
+  @Test
+  public void testStaticLinkCppRuntimesOverridesSupportsEmbeddedRuntimes() throws Exception {
+    FeatureConfiguration featureConfiguration =
+        configureFeaturesForStaticLinkCppRuntimesTest(
+            "supports_embedded_runtimes: true feature { name: 'static_link_cpp_runtimes' }",
+            "--features=-static_link_cpp_runtimes");
+    assertThat(featureConfiguration.isEnabled(CppRuleClasses.STATIC_LINK_CPP_RUNTIMES)).isFalse();
   }
 }

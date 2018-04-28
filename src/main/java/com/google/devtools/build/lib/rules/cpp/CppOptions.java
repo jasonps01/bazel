@@ -462,7 +462,8 @@ public class CppOptions extends FragmentOptions {
             + "an auto profile. This flag also accepts files specified as labels, for "
             + "example //foo/bar:file.afdo. Such labels must refer to input files; you may "
             + "need to add an exports_files directive to the corresponding package to make "
-            + "the file visible to Bazel. It also accepts a raw or an indexed LLVM profile file."
+            + "the file visible to Bazel. It also accepts a raw or an indexed LLVM profile file. "
+            + "This flag will be superseded by fdo_profile rule."
   )
   /**
    * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
@@ -618,6 +619,33 @@ public class CppOptions extends FragmentOptions {
   private boolean enableLipoSettings() {
     return lipoConfigurationState != LipoConfigurationState.IGNORE_LIPO;
   }
+
+  @Option(
+    name = "fdo_profile",
+    defaultValue = "null",
+    category = "flags",
+    converter = LabelConverter.class,
+    documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+    effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
+    help = "The fdo_profile representing the profile to be used for optimization."
+  )
+  public Label fdoProfileLabel;
+
+  /**
+   * Returns the --fdo_optimize value if FDO is specified and active for this configuration, the
+   * default value otherwise.
+   */
+  public Label getFdoProfileLabel() {
+    return enableLipoSettings() ? fdoProfileLabel : null;
+  }
+
+  @Option(
+      name = "enable_fdo_profile_absolute_path",
+      defaultValue = "true",
+      documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+      effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
+      help = "If set, use of fdo_absolute_profile_path will raise an error.")
+  public boolean enableFdoProfileAbsolutePath;
 
   @Option(
     name = "experimental_stl",
@@ -920,6 +948,7 @@ public class CppOptions extends FragmentOptions {
     host.useStartEndLib = useStartEndLib;
     host.stripBinaries = StripMode.ALWAYS;
     host.fdoOptimizeForBuild = null;
+    host.fdoProfileLabel = null;
     host.lipoModeForBuild = LipoMode.OFF;
     host.inmemoryDotdFiles = inmemoryDotdFiles;
 
@@ -948,7 +977,7 @@ public class CppOptions extends FragmentOptions {
    * Returns true if targets under this configuration should apply FDO.
    */
   public boolean isFdo() {
-    return getFdoOptimize() != null || getFdoInstrument() != null;
+    return getFdoOptimize() != null || getFdoInstrument() != null || getFdoProfileLabel() != null;
   }
 
   /**

@@ -291,7 +291,7 @@ public final class ConfiguredTargetFactory {
       Artifact artifact =
           artifactFactory.getSourceArtifact(
               inputFile.getExecPath(),
-              ArtifactRoot.asSourceRoot(inputFile.getPackage().getSourceRoot()),
+              inputFile.getPackage().getSourceRoot(),
               ConfiguredTargetKey.of(target.getLabel(), config));
 
       return new InputFileConfiguredTarget(targetContext, inputFile, artifact);
@@ -366,7 +366,9 @@ public final class ConfiguredTargetFactory {
         // TODO(bazel-team): maybe merge with RuleConfiguredTargetBuilder?
         return SkylarkRuleConfiguredTargetUtil.buildRule(
             ruleContext,
+            rule.getRuleClassObject().getAdvertisedProviders(),
             rule.getRuleClassObject().getConfiguredTargetFunction(),
+            rule.getLocation(),
             env.getSkylarkSemantics());
       } else {
         RuleClass.ConfiguredTargetFactory<ConfiguredTarget, RuleContext, ActionConflictException>

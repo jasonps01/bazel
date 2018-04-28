@@ -35,6 +35,7 @@ import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.packages.DependencyFilter;
 import com.google.devtools.build.lib.packages.NoSuchTargetException;
 import com.google.devtools.build.lib.packages.Rule;
+import com.google.devtools.build.lib.packages.RuleTransitionFactory;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.pkgcache.FilteringPolicies;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
@@ -52,6 +53,7 @@ import com.google.devtools.build.lib.query2.engine.QueryUtil.ThreadSafeMutableKe
 import com.google.devtools.build.lib.query2.engine.QueryUtil.UniquifierImpl;
 import com.google.devtools.build.lib.query2.engine.ThreadSafeOutputFormatterCallback;
 import com.google.devtools.build.lib.query2.engine.Uniquifier;
+import com.google.devtools.build.lib.query2.output.AspectResolver;
 import com.google.devtools.build.lib.query2.output.CqueryOptions;
 import com.google.devtools.build.lib.query2.output.QueryOptions;
 import com.google.devtools.build.lib.rules.AliasConfiguredTarget;
@@ -88,12 +90,15 @@ import javax.annotation.Nullable;
 /**
  * {@link QueryEnvironment} that runs queries over the configured target (analysis) graph.
  *
- * <p>This object can theoretically be used for multiple queries, but currently is only ever used
- * for one over the course of its lifetime.
+ * <p>This environment can theoretically be used for multiple queries, but currently is only ever
+ * used for one over the course of its lifetime. If this ever changed to be used for multiple, the
+ * {@link accessor} field should be initialized on a per-query basis not a per-environment basis.
  *
- * <p>There is currently no way to specify a configuration in the query syntax. Instead, the default
- * configuration that will be used for any raw labels is provided in the constructor of this
- * environment. That will probably have to change.
+ * <p>There is currently a limited way to specify a configuration in the query syntax via
+ * {@link ConfigFunction}. This currently still limits the user to choosing the 'target', 'host', or
+ * null configurations. It shouldn't be terribly difficult to expand this with
+ * {@link OptionsDiffForReconstruction} to handle fully customizable configurations if the need
+ * arises in the future.
  *
  * <p>On the other end, recursive target patterns are not supported.
  *
@@ -166,19 +171,6 @@ public class ConfiguredTargetQueryEnvironment
         };
   }
 
-  private void beforeEvaluateQuery() throws InterruptedException, QueryException {
-    graph = walkableGraphSupplier.get();
-    GraphBackedRecursivePackageProvider graphBackedRecursivePackageProvider =
-        new GraphBackedRecursivePackageProvider(graph, ALL_PATTERNS, pkgPath);
-    resolver =
-        new RecursivePackageProviderBackedTargetPatternResolver(
-            graphBackedRecursivePackageProvider,
-            eventHandler,
-            FilteringPolicies.NO_FILTER,
-            MultisetSemaphore.unbounded());
-    checkSettings(settings);
-  }
-
   private static ImmutableList<QueryFunction> populateFunctions() {
     return new ImmutableList.Builder<QueryFunction>()
         .addAll(QueryEnvironment.DEFAULT_QUERY_FUNCTIONS)
@@ -190,36 +182,53 @@ public class ConfiguredTargetQueryEnvironment
     return ImmutableList.of(new ConfigFunction());
   }
 
-  public BuildConfiguration getHostConfiguration() {
-    return hostConfiguration;
-  }
-
-  /**
-   * This method has to exist because {@link AliasConfiguredTarget#getLabel()} returns
-   * the label of the "actual" target instead of the alias target. Grr.
-   */
-  public static Label getCorrectLabel(ConfiguredTarget target) {
-    if (target instanceof AliasConfiguredTarget) {
-      return ((AliasConfiguredTarget) target).getOriginalLabel();
-    }
-    return target.getLabel();
-  }
-
   public ImmutableList<CqueryThreadsafeCallback> getDefaultOutputFormatters(
       TargetAccessor<ConfiguredTarget> accessor,
       CqueryOptions options,
       Reporter reporter,
       SkyframeExecutor skyframeExecutor,
-      BuildConfiguration hostConfiguration) {
+      BuildConfiguration hostConfiguration,
+      @Nullable RuleTransitionFactory trimmingTransitionFactory,
+      AspectResolver resolver) {
     OutputStream out = reporter.getOutErr().getOutputStream();
     return new ImmutableList.Builder<CqueryThreadsafeCallback>()
         .add(
             new LabelAndConfigurationOutputFormatterCallback(
-                reporter, options, out, skyframeExecutor))
+                reporter, options, out, skyframeExecutor, accessor))
         .add(
             new TransitionsOutputFormatterCallback(
-                reporter, options, out, skyframeExecutor, accessor, hostConfiguration))
+                reporter,
+                options,
+                out,
+                skyframeExecutor,
+                accessor,
+                hostConfiguration,
+                trimmingTransitionFactory))
+        .add(
+            new ProtoOutputFormatterCallback(
+                reporter, options, out, skyframeExecutor, accessor, resolver))
         .build();
+  }
+
+  @Override
+  public QueryEvalResult evaluateQuery(
+      QueryExpression expr, ThreadSafeOutputFormatterCallback<ConfiguredTarget> callback)
+      throws QueryException, InterruptedException, IOException {
+    beforeEvaluateQuery();
+    return super.evaluateQuery(expr, callback);
+  }
+
+  private void beforeEvaluateQuery() throws InterruptedException, QueryException {
+    graph = walkableGraphSupplier.get();
+    GraphBackedRecursivePackageProvider graphBackedRecursivePackageProvider =
+        new GraphBackedRecursivePackageProvider(graph, ALL_PATTERNS, pkgPath);
+    resolver =
+        new RecursivePackageProviderBackedTargetPatternResolver(
+            graphBackedRecursivePackageProvider,
+            eventHandler,
+            FilteringPolicies.NO_FILTER,
+            MultisetSemaphore.unbounded());
+    checkSettings(settings);
   }
 
   // Check to make sure the settings requested are currently supported by this class
@@ -236,69 +245,43 @@ public class ConfiguredTargetQueryEnvironment
     }
   }
 
-  @Nullable
-  private ConfiguredTarget getConfiguredTarget(SkyKey key) throws InterruptedException {
-    ConfiguredTargetValue value =
-        ((ConfiguredTargetValue) walkableGraphSupplier.get().getValue(key));
-    return value == null ? null : value.getConfiguredTarget();
+  public BuildConfiguration getHostConfiguration() {
+    return hostConfiguration;
   }
 
-  private ConfiguredTarget getConfiguredTarget(Label label) throws InterruptedException {
-    // Try with target configuration.
-    ConfiguredTarget configuredTarget = getTargetConfiguredTarget(label);
-    if (configuredTarget != null) {
-      return configuredTarget;
+  @Override
+  public TargetAccessor<ConfiguredTarget> getAccessor() {
+    return accessor;
+  }
+
+  // TODO(bazel-team): It's weird that this untemplated function exists. Fix? Or don't implement?
+  @Override
+  public Target getTarget(Label label)
+      throws TargetNotFoundException, QueryException, InterruptedException {
+    try {
+      return ((PackageValue)
+              walkableGraphSupplier.get().getValue(PackageValue.key(label.getPackageIdentifier())))
+          .getPackage()
+          .getTarget(label.getName());
+    } catch (NoSuchTargetException e) {
+      throw new TargetNotFoundException(e);
     }
-    // Try with host configuration (even when --nohost_deps is set in the case that top-level
-    // targets are configured in the host configuration so we are doing a host-configuration-only
-    // query).
-    configuredTarget = getHostConfiguredTarget(label);
-    if (configuredTarget != null) {
-      return configuredTarget;
+  }
+
+  @Override
+  public ConfiguredTarget getOrCreate(ConfiguredTarget target) {
+    return target;
+  }
+
+  /**
+   * This method has to exist because {@link AliasConfiguredTarget#getLabel()} returns
+   * the label of the "actual" target instead of the alias target. Grr.
+   */
+  public static Label getCorrectLabel(ConfiguredTarget target) {
+    if (target instanceof AliasConfiguredTarget) {
+      return ((AliasConfiguredTarget) target).getOriginalLabel();
     }
-    // Last chance: source file.
-    return getNullConfiguredTarget(label);
-  }
-
-  @Nullable
-  private ConfiguredTarget getHostConfiguredTarget(Label label) throws InterruptedException {
-    return getConfiguredTarget(ConfiguredTargetValue.key(label, hostConfiguration));
-  }
-
-  @Nullable
-  private ConfiguredTarget getTargetConfiguredTarget(Label label) throws InterruptedException {
-    return getConfiguredTarget(ConfiguredTargetValue.key(label, defaultTargetConfiguration));
-  }
-
-  @Nullable
-  private ConfiguredTarget getNullConfiguredTarget(Label label) throws InterruptedException {
-    return getConfiguredTarget(ConfiguredTargetValue.key(label, null));
-  }
-
-  @Override
-  public void close() {}
-
-  @Override
-  public QueryEvalResult evaluateQuery(
-      QueryExpression expr, ThreadSafeOutputFormatterCallback<ConfiguredTarget> callback)
-      throws QueryException, InterruptedException, IOException {
-    beforeEvaluateQuery();
-    return super.evaluateQuery(expr, callback);
-  }
-
-  private TargetPattern getPattern(String pattern)
-      throws TargetParsingException, InterruptedException {
-    TargetPatternKey targetPatternKey =
-        ((TargetPatternKey)
-            TargetPatternValue.key(
-                    pattern, TargetPatternEvaluator.DEFAULT_FILTERING_POLICY, parserPrefix)
-                .argument());
-    return targetPatternKey.getParsedPattern();
-  }
-
-  @Override
-  public Collection<ConfiguredTarget> getSiblingTargetsInPackage(ConfiguredTarget target) {
-    throw new UnsupportedOperationException("siblings() not supported");
+    return target.getLabel();
   }
 
   @Override
@@ -343,6 +326,40 @@ public class ConfiguredTargetQueryEnvironment
             TargetParsingException.class,
             reportBuildFileErrorAsyncFunction,
             MoreExecutors.directExecutor()));
+  }
+
+  private ConfiguredTarget getConfiguredTarget(Label label) throws InterruptedException {
+    // Try with target configuration.
+    ConfiguredTarget configuredTarget = getTargetConfiguredTarget(label);
+    if (configuredTarget != null) {
+      return configuredTarget;
+    }
+    // Try with host configuration (even when --nohost_deps is set in the case that top-level
+    // targets are configured in the host configuration so we are doing a host-configuration-only
+    // query).
+    configuredTarget = getHostConfiguredTarget(label);
+    if (configuredTarget != null) {
+      return configuredTarget;
+    }
+    // Last chance: source file.
+    return getNullConfiguredTarget(label);
+  }
+
+  @Nullable
+  private ConfiguredTarget getConfiguredTarget(SkyKey key) throws InterruptedException {
+    ConfiguredTargetValue value =
+        ((ConfiguredTargetValue) walkableGraphSupplier.get().getValue(key));
+    return value == null ? null : value.getConfiguredTarget();
+  }
+
+  private TargetPattern getPattern(String pattern)
+      throws TargetParsingException, InterruptedException {
+    TargetPatternKey targetPatternKey =
+        ((TargetPatternKey)
+            TargetPatternValue.key(
+                    pattern, TargetPatternEvaluator.DEFAULT_FILTERING_POLICY, parserPrefix)
+                .argument());
+    return targetPatternKey.getParsedPattern();
   }
 
   /**
@@ -400,22 +417,41 @@ public class ConfiguredTargetQueryEnvironment
     };
   }
 
-  @Override
-  public ConfiguredTarget getOrCreate(ConfiguredTarget target) {
-    return target;
+  @Nullable
+  private ConfiguredTarget getHostConfiguredTarget(Label label) throws InterruptedException {
+    return getConfiguredTarget(ConfiguredTargetValue.key(label, hostConfiguration));
   }
 
-  private Map<SkyKey, Collection<ConfiguredTarget>> targetifyValues(
-      Map<SkyKey, ? extends Iterable<SkyKey>> input) throws InterruptedException {
-    Map<SkyKey, Collection<ConfiguredTarget>> result = new HashMap<>();
-    for (Map.Entry<SkyKey, ? extends Iterable<SkyKey>> entry : input.entrySet()) {
-      Collection<ConfiguredTarget> value = new ArrayList<>();
-      for (SkyKey key : entry.getValue()) {
-        if (key.functionName().equals(SkyFunctions.CONFIGURED_TARGET)) {
-          value.add(getConfiguredTarget(key));
-        }
-      }
-      result.put(entry.getKey(), value);
+  @Nullable
+  private ConfiguredTarget getTargetConfiguredTarget(Label label) throws InterruptedException {
+    return getConfiguredTarget(ConfiguredTargetValue.key(label, defaultTargetConfiguration));
+  }
+
+  @Nullable
+  private ConfiguredTarget getNullConfiguredTarget(Label label) throws InterruptedException {
+    return getConfiguredTarget(ConfiguredTargetValue.key(label, null));
+  }
+
+  @Override
+  public ThreadSafeMutableSet<ConfiguredTarget> getFwdDeps(Iterable<ConfiguredTarget> targets)
+      throws InterruptedException {
+    Map<SkyKey, ConfiguredTarget> targetsByKey = new HashMap<>(Iterables.size(targets));
+    for (ConfiguredTarget target : targets) {
+      targetsByKey.put(getSkyKey(target), target);
+    }
+    Map<SkyKey, Collection<ConfiguredTarget>> directDeps =
+        targetifyValues(graph.getDirectDeps(targetsByKey.keySet()));
+    if (targetsByKey.keySet().size() != directDeps.keySet().size()) {
+      Iterable<ConfiguredTargetKey> missingTargets =
+          Sets.difference(targetsByKey.keySet(), directDeps.keySet())
+              .stream()
+              .map(SKYKEY_TO_CTKEY)
+              .collect(Collectors.toList());
+      eventHandler.handle(Event.warn("Targets were missing from graph: " + missingTargets));
+    }
+    ThreadSafeMutableSet<ConfiguredTarget> result = createThreadSafeMutableSet();
+    for (Entry<SkyKey, Collection<ConfiguredTarget>> entry : directDeps.entrySet()) {
+      result.addAll(filterFwdDeps(targetsByKey.get(entry.getKey()), entry.getValue()));
     }
     return result;
   }
@@ -427,6 +463,49 @@ public class ConfiguredTargetQueryEnvironment
       return rawFwdDeps;
     }
     return getAllowedDeps(configTarget, rawFwdDeps);
+  }
+
+  @Override
+  public Collection<ConfiguredTarget> getReverseDeps(Iterable<ConfiguredTarget> targets)
+      throws InterruptedException {
+    Map<SkyKey, ConfiguredTarget> targetsByKey = new HashMap<>(Iterables.size(targets));
+    for (ConfiguredTarget target : targets) {
+      targetsByKey.put(getSkyKey(target), target);
+    }
+    Map<SkyKey, Collection<ConfiguredTarget>> reverseDepsByKey =
+        targetifyValues(graph.getReverseDeps(targetsByKey.keySet()));
+    if (targetsByKey.size() != reverseDepsByKey.size()) {
+      Iterable<ConfiguredTargetKey> missingTargets =
+          Sets.difference(targetsByKey.keySet(), reverseDepsByKey.keySet())
+              .stream()
+              .map(SKYKEY_TO_CTKEY)
+              .collect(Collectors.toList());
+      eventHandler.handle(Event.warn("Targets were missing from graph: " + missingTargets));
+    }
+    Map<ConfiguredTarget, Collection<ConfiguredTarget>> reverseDepsByCT = new HashMap<>();
+    for (Map.Entry<SkyKey, Collection<ConfiguredTarget>> entry : reverseDepsByKey.entrySet()) {
+      reverseDepsByCT.put(targetsByKey.get(entry.getKey()), entry.getValue());
+    }
+    return reverseDepsByCT.isEmpty() ? Collections.emptyList() : filterReverseDeps(reverseDepsByCT);
+  }
+
+  private Collection<ConfiguredTarget> filterReverseDeps(
+      Map<ConfiguredTarget, Collection<ConfiguredTarget>> rawReverseDeps) {
+    Set<ConfiguredTarget> result = CompactHashSet.create();
+    for (Map.Entry<ConfiguredTarget, Collection<ConfiguredTarget>> targetAndRdeps :
+        rawReverseDeps.entrySet()) {
+      ImmutableSet.Builder<ConfiguredTarget> ruleDeps = ImmutableSet.builder();
+      for (ConfiguredTarget parent : targetAndRdeps.getValue()) {
+        if (parent instanceof RuleConfiguredTarget
+            && dependencyFilter != DependencyFilter.ALL_DEPS) {
+          ruleDeps.add(parent);
+        } else {
+          result.add(parent);
+        }
+      }
+      result.addAll(getAllowedDeps((targetAndRdeps.getKey()), ruleDeps.build()));
+    }
+    return result;
   }
 
   /**
@@ -472,6 +551,21 @@ public class ConfiguredTargetQueryEnvironment
     return deps;
   }
 
+  private Map<SkyKey, Collection<ConfiguredTarget>> targetifyValues(
+      Map<SkyKey, ? extends Iterable<SkyKey>> input) throws InterruptedException {
+    Map<SkyKey, Collection<ConfiguredTarget>> result = new HashMap<>();
+    for (Map.Entry<SkyKey, ? extends Iterable<SkyKey>> entry : input.entrySet()) {
+      Collection<ConfiguredTarget> value = new ArrayList<>();
+      for (SkyKey key : entry.getValue()) {
+        if (key.functionName().equals(SkyFunctions.CONFIGURED_TARGET)) {
+          value.add(getConfiguredTarget(key));
+        }
+      }
+      result.put(entry.getKey(), value);
+    }
+    return result;
+  }
+
   @Nullable
   private BuildConfiguration getConfiguration(ConfiguredTarget target) {
     try {
@@ -488,72 +582,6 @@ public class ConfiguredTargetQueryEnvironment
     return ConfiguredTargetKey.of(target, getConfiguration(target));
   }
 
-  @Override
-  public ThreadSafeMutableSet<ConfiguredTarget> getFwdDeps(Iterable<ConfiguredTarget> targets)
-      throws InterruptedException {
-    Map<SkyKey, ConfiguredTarget> targetsByKey = new HashMap<>(Iterables.size(targets));
-    for (ConfiguredTarget target : targets) {
-      targetsByKey.put(getSkyKey(target), target);
-    }
-    Map<SkyKey, Collection<ConfiguredTarget>> directDeps =
-        targetifyValues(graph.getDirectDeps(targetsByKey.keySet()));
-    if (targetsByKey.keySet().size() != directDeps.keySet().size()) {
-      Iterable<ConfiguredTargetKey> missingTargets =
-          Sets.difference(targetsByKey.keySet(), directDeps.keySet())
-              .stream()
-              .map(SKYKEY_TO_CTKEY)
-              .collect(Collectors.toList());
-      eventHandler.handle(Event.warn("Targets were missing from graph: " + missingTargets));
-    }
-    ThreadSafeMutableSet<ConfiguredTarget> result = createThreadSafeMutableSet();
-    for (Entry<SkyKey, Collection<ConfiguredTarget>> entry : directDeps.entrySet()) {
-      result.addAll(filterFwdDeps(targetsByKey.get(entry.getKey()), entry.getValue()));
-    }
-    return result;
-  }
-
-  private Collection<ConfiguredTarget> filterReverseDeps(
-      Map<ConfiguredTarget, Collection<ConfiguredTarget>> rawReverseDeps) {
-    Set<ConfiguredTarget> result = CompactHashSet.create();
-    for (Map.Entry<ConfiguredTarget, Collection<ConfiguredTarget>> targetAndRdeps :
-        rawReverseDeps.entrySet()) {
-      ImmutableSet.Builder<ConfiguredTarget> ruleDeps = ImmutableSet.builder();
-      for (ConfiguredTarget parent : targetAndRdeps.getValue()) {
-        if (parent instanceof RuleConfiguredTarget
-            && dependencyFilter != DependencyFilter.ALL_DEPS) {
-          ruleDeps.add(parent);
-        } else {
-          result.add(parent);
-        }
-      }
-      result.addAll(getAllowedDeps((targetAndRdeps.getKey()), ruleDeps.build()));
-    }
-    return result;
-  }
-
-  @Override
-  public Collection<ConfiguredTarget> getReverseDeps(Iterable<ConfiguredTarget> targets)
-      throws InterruptedException {
-    Map<SkyKey, ConfiguredTarget> targetsByKey = new HashMap<>(Iterables.size(targets));
-    for (ConfiguredTarget target : targets) {
-      targetsByKey.put(getSkyKey(target), target);
-    }
-    Map<SkyKey, Collection<ConfiguredTarget>> reverseDepsByKey =
-        targetifyValues(graph.getReverseDeps(targetsByKey.keySet()));
-    if (targetsByKey.size() != reverseDepsByKey.size()) {
-      Iterable<ConfiguredTargetKey> missingTargets =
-          Sets.difference(targetsByKey.keySet(), reverseDepsByKey.keySet())
-              .stream()
-              .map(SKYKEY_TO_CTKEY)
-              .collect(Collectors.toList());
-      eventHandler.handle(Event.warn("Targets were missing from graph: " + missingTargets));
-    }
-    Map<ConfiguredTarget, Collection<ConfiguredTarget>> reverseDepsByCT = new HashMap<>();
-    for (Map.Entry<SkyKey, Collection<ConfiguredTarget>> entry : reverseDepsByKey.entrySet()) {
-      reverseDepsByCT.put(targetsByKey.get(entry.getKey()), entry.getValue());
-    }
-    return reverseDepsByCT.isEmpty() ? Collections.emptyList() : filterReverseDeps(reverseDepsByCT);
-  }
 
   @Override
   public ThreadSafeMutableSet<ConfiguredTarget> getTransitiveClosure(
@@ -574,25 +602,6 @@ public class ConfiguredTargetQueryEnvironment
       throws InterruptedException {
     return SkyQueryUtils.getNodesOnPath(
         from, to, this::getFwdDeps, configuredTargetKeyExtractor::extractKey);
-  }
-
-  @Override
-  public TargetAccessor<ConfiguredTarget> getAccessor() {
-    return accessor;
-  }
-
-  // TODO(bazel-team): It's weird that this untemplated function exists. Fix? Or don't implement?
-  @Override
-  public Target getTarget(Label label)
-      throws TargetNotFoundException, QueryException, InterruptedException {
-    try {
-      return ((PackageValue)
-              walkableGraphSupplier.get().getValue(PackageValue.key(label.getPackageIdentifier())))
-          .getPackage()
-          .getTarget(label.getName());
-    } catch (NoSuchTargetException e) {
-      throw new TargetNotFoundException(e);
-    }
   }
 
   @Override
@@ -618,16 +627,6 @@ public class ConfiguredTargetQueryEnvironment
   public MinDepthUniquifier<ConfiguredTarget> createMinDepthUniquifier() {
     return new MinDepthUniquifierImpl<>(
         configuredTargetKeyExtractor, SkyQueryEnvironment.DEFAULT_THREAD_COUNT);
-  }
-
-  @Override
-  public ThreadSafeMutableSet<ConfiguredTarget> getBuildFiles(
-      QueryExpression caller,
-      ThreadSafeMutableSet<ConfiguredTarget> nodes,
-      boolean buildFiles,
-      boolean loads)
-      throws QueryException, InterruptedException {
-    throw new QueryException("buildfiles() doesn't make sense for the configured target graph");
   }
 
   @Override
@@ -659,4 +658,24 @@ public class ConfiguredTargetQueryEnvironment
     }
     return parser.getOptions(QueryOptions.class);
   }
+
+  @Override
+  public ThreadSafeMutableSet<ConfiguredTarget> getBuildFiles(
+      QueryExpression caller,
+      ThreadSafeMutableSet<ConfiguredTarget> nodes,
+      boolean buildFiles,
+      boolean loads)
+      throws QueryException, InterruptedException {
+    throw new QueryException("buildfiles() doesn't make sense for the configured target graph");
+  }
+
+  @Override
+  public Collection<ConfiguredTarget> getSiblingTargetsInPackage(ConfiguredTarget target) {
+    throw new UnsupportedOperationException("siblings() not supported");
+  }
+
+
+  @Override
+  public void close() {}
 }
+

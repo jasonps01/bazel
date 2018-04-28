@@ -16,7 +16,6 @@ package com.google.devtools.build.lib.exec;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.analysis.config.PerLabelOptions;
-import com.google.devtools.build.lib.packages.TestTimeout;
 import com.google.devtools.build.lib.util.OptionsUtils;
 import com.google.devtools.build.lib.util.RegexFilter;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -26,10 +25,8 @@ import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.Options;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParsingException;
-import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Options affecting the execution phase of a build.
@@ -185,21 +182,6 @@ public class ExecutionOptions extends OptionsBase {
   public TestStrategy.TestSummaryFormat testSummary;
 
   @Option(
-    name = "test_timeout",
-    defaultValue = "-1",
-    converter = TestTimeout.TestTimeoutConverter.class,
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    help =
-        "Override the default test timeout values for test timeouts (in secs). If a single "
-            + "positive integer value is specified it will override all categories.  If 4 "
-            + "comma-separated integers are specified, they will override the timeouts for short, "
-            + "moderate, long and eternal (in that order). In either form, a value of -1 tells "
-            + "blaze to use its default timeouts for that category."
-  )
-  public Map<TestTimeout, Duration> testTimeout;
-
-  @Option(
     name = "resource_autosense",
     defaultValue = "false",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
@@ -292,6 +274,16 @@ public class ExecutionOptions extends OptionsBase {
             + " aggressive RAM optimizations in some cases."
   )
   public boolean enableCriticalPathProfiling;
+
+  @Option(
+    name = "experimental_execution_log_file",
+    defaultValue = "",
+    category = "verbosity",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    help = "Log the executed spawns into this file as delimited Spawn protos."
+  )
+  public String executionLogFile;
 
   /** Converter for the --flaky_test_attempts option. */
   public static class TestAttemptsConverter extends PerLabelOptions.PerLabelOptionsConverter {

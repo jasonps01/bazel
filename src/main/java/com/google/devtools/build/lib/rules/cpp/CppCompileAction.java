@@ -13,6 +13,8 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.cpp;
 
+import static java.util.Collections.unmodifiableSet;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableCollection;
@@ -29,9 +31,7 @@ import com.google.devtools.build.lib.actions.ActionLookupValue;
 import com.google.devtools.build.lib.actions.ActionLookupValue.ActionLookupKey;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.ActionResult;
-import com.google.devtools.build.lib.actions.ActionStatusMessage;
 import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
 import com.google.devtools.build.lib.actions.ArtifactResolver;
 import com.google.devtools.build.lib.actions.CommandAction;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
@@ -50,7 +50,6 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadCompatible;
 import com.google.devtools.build.lib.events.Event;
-import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
 import com.google.devtools.build.lib.rules.cpp.CcCommon.CoptsFilter;
@@ -230,7 +229,6 @@ public class CppCompileAction extends AbstractAction
    * @param owner the owner of the action, usually the configured target that emitted it
    * @param allInputs the list of all action inputs.
    * @param featureConfiguration TODO(bazel-team): Add parameter description.
-   * @param crosstoolTopPathFragment the path to the CROSSTOOL given in --crosstool_top
    * @param variables TODO(bazel-team): Add parameter description.
    * @param sourceFile the source file that should be compiled. {@code mandatoryInputs} must contain
    *     this file
@@ -263,7 +261,6 @@ public class CppCompileAction extends AbstractAction
       ActionOwner owner,
       NestedSet<Artifact> allInputs,
       FeatureConfiguration featureConfiguration,
-      PathFragment crosstoolTopPathFragment,
       CcToolchainFeatures.Variables variables,
       Artifact sourceFile,
       boolean shouldScanIncludes,
@@ -323,8 +320,7 @@ public class CppCompileAction extends AbstractAction
         lipoScannables,
         builtinIncludeFiles,
         ImmutableList.copyOf(additionalIncludeScanningRoots),
-        CompileCommandLine.builder(
-                sourceFile, coptsFilter, actionName, crosstoolTopPathFragment, dotdFile)
+        CompileCommandLine.builder(sourceFile, coptsFilter, actionName, dotdFile)
             .setFeatureConfiguration(featureConfiguration)
             .setVariables(variables)
             .build(),
@@ -334,10 +330,10 @@ public class CppCompileAction extends AbstractAction
         actionClassId,
         shouldScanIncludes || cppSemantics.needsDotdInputPruning(),
         ImmutableList.copyOf(cppProvider.getBuiltInIncludeDirectories()),
-        /*additionalInputs=*/ null,
-        /*usedModules=*/ null,
-        /*topLevelModules=*/ null,
-        /*overwrittenVariables=*/ null,
+        /* additionalInputs= */ null,
+        /* usedModules= */ null,
+        /* topLevelModules= */ null,
+        /* overwrittenVariables= */ null,
         cppSemantics.needsDotdInputPruning(),
         cppSemantics.needsIncludeValidation(),
         cppSemantics.getIncludeProcessing(),
@@ -492,8 +488,7 @@ public class CppCompileAction extends AbstractAction
       initialResult =
           actionExecutionContext
               .getContext(CppIncludeScanningContext.class)
-              .findAdditionalInputs(
-                  this, actionExecutionContext, includeProcessing);
+              .findAdditionalInputs(this, actionExecutionContext, includeProcessing);
     } catch (ExecException e) {
       throw e.toActionExecutionException(
           "Include scanning of rule '" + getOwner().getLabel() + "'",
@@ -522,10 +517,6 @@ public class CppCompileAction extends AbstractAction
   @Override
   public Iterable<Artifact> discoverInputs(ActionExecutionContext actionExecutionContext)
       throws ActionExecutionException, InterruptedException {
-    actionExecutionContext
-        .getEventBus()
-        .post(ActionStatusMessage.analysisStrategy(this));
-
     Iterable<Artifact> initialResult = findAdditionalInputs(actionExecutionContext);
 
     if (shouldPruneModules) {
@@ -826,36 +817,33 @@ public class CppCompileAction extends AbstractAction
   }
 
   /**
-   * Enforce that the includes actually visited during the compile were properly
-   * declared in the rules.
+   * Enforce that the includes actually visited during the compile were properly declared in the
+   * rules.
    *
-   * <p>The technique is to walk through all of the reported includes that gcc
-   * emits into the .d file, and verify that they came from acceptable
-   * relative include directories. This is done in two steps:
+   * <p>The technique is to walk through all of the reported includes that gcc emits into the .d
+   * file, and verify that they came from acceptable relative include directories. This is done in
+   * two steps:
    *
-   * <p>First, each included file is stripped of any include path prefix from
-   * {@code quoteIncludeDirs} to produce an effective relative include dir+name.
+   * <p>First, each included file is stripped of any include path prefix from {@code
+   * quoteIncludeDirs} to produce an effective relative include dir+name.
    *
-   * <p>Second, the remaining directory is looked up in {@code declaredIncludeDirs},
-   * a list of acceptable dirs. This list contains a set of dir fragments that
-   * have been calculated by the configured target to be allowable for inclusion
-   * by this source. If no match is found, an error is reported and an exception
-   * is thrown.
+   * <p>Second, the remaining directory is looked up in {@code declaredIncludeDirs}, a list of
+   * acceptable dirs. This list contains a set of dir fragments that have been calculated by the
+   * configured target to be allowable for inclusion by this source. If no match is found, an error
+   * is reported and an exception is thrown.
    *
    * @throws ActionExecutionException iff there was an undeclared dependency
    */
   @VisibleForTesting
   public void validateInclusions(
-      Iterable<Artifact> inputsForValidation,
-      ArtifactExpander artifactExpander,
-      EventHandler eventHandler)
+      ActionExecutionContext actionExecutionContext, Iterable<Artifact> inputsForValidation)
       throws ActionExecutionException {
     IncludeProblems errors = new IncludeProblems();
     IncludeProblems warnings = new IncludeProblems();
     Set<Artifact> allowedIncludes = new HashSet<>();
     for (Artifact input : Iterables.concat(mandatoryInputs, prunableInputs)) {
       if (input.isMiddlemanArtifact() || input.isTreeArtifact()) {
-        artifactExpander.expand(input, allowedIncludes);
+        actionExecutionContext.getArtifactExpander().expand(input, allowedIncludes);
       }
       allowedIncludes.add(input);
     }
@@ -887,13 +875,14 @@ public class CppCompileAction extends AbstractAction
       if (FileSystemUtils.startsWithAny(input.getExecPath(), ignoreDirs)) {
         continue;
       }
-      if (!isDeclaredIn(input, declaredIncludeDirs, declaredIncludeSrcs)) {
+      if (!isDeclaredIn(actionExecutionContext, input, declaredIncludeDirs, declaredIncludeSrcs)) {
         // This call can never match the declared include sources (they would be matched above).
         // There are no declared include sources we need to warn about, so use an empty set here.
-        if (isDeclaredIn(input, warnIncludeDirs, ImmutableSet.<Artifact>of())) {
-          warnings.add(input.getPath().toString());
+        if (isDeclaredIn(
+            actionExecutionContext, input, warnIncludeDirs, ImmutableSet.<Artifact>of())) {
+          warnings.add(input.getExecPath().toString());
         } else {
-          errors.add(input.getPath().toString());
+          errors.add(input.getExecPath().toString());
         }
       }
     }
@@ -930,11 +919,11 @@ public class CppCompileAction extends AbstractAction
     }
 
     if (warnings.hasProblems()) {
-      eventHandler.handle(
-          Event.warn(
-              getOwner().getLocation(),
-              warnings.getMessage(this, getSourceFile()))
-              .withTag(Label.print(getOwner().getLabel())));
+      actionExecutionContext
+          .getEventHandler()
+          .handle(
+              Event.warn(getOwner().getLocation(), warnings.getMessage(this, getSourceFile()))
+                  .withTag(Label.print(getOwner().getLabel())));
     }
     errors.assertProblemFree(this, getSourceFile());
   }
@@ -945,18 +934,20 @@ public class CppCompileAction extends AbstractAction
   }
 
   /**
-   * Returns true if an included artifact is declared in a set of allowed
-   * include directories. The simple case is that the artifact's parent
-   * directory is contained in the set, or is empty.
+   * Returns true if an included artifact is declared in a set of allowed include directories. The
+   * simple case is that the artifact's parent directory is contained in the set, or is empty.
    *
-   * <p>This check also supports a wildcard suffix of '**' for the cases where the
-   * calculations are inexact.
+   * <p>This check also supports a wildcard suffix of '**' for the cases where the calculations are
+   * inexact.
    *
-   * <p>It also handles unseen non-nested-package subdirs by walking up the path looking
-   * for matches.
+   * <p>It also handles unseen non-nested-package subdirs by walking up the path looking for
+   * matches.
    */
   private static boolean isDeclaredIn(
-      Artifact input, Set<PathFragment> declaredIncludeDirs, Set<Artifact> declaredIncludeSrcs) {
+      ActionExecutionContext actionExecutionContext,
+      Artifact input,
+      Set<PathFragment> declaredIncludeDirs,
+      Set<Artifact> declaredIncludeSrcs) {
     // First check if it's listed in "srcs". If so, then its declared & OK.
     if (declaredIncludeSrcs.contains(input)) {
       return true;
@@ -982,7 +973,7 @@ public class CppCompileAction extends AbstractAction
     }
     // Still not found: see if it is in a subdir of a declared package.
     Root root = input.getRoot().getRoot();
-    for (Path dir = input.getPath().getParentDirectory();;) {
+    for (Path dir = actionExecutionContext.getInputPath(input).getParentDirectory(); ; ) {
       if (dir.getRelative(BUILD_PATH_FRAGMENT).exists()) {
         return false;  // Bad: this is a sub-package, not a subdir of a declared package.
       }
@@ -1049,28 +1040,23 @@ public class CppCompileAction extends AbstractAction
 
   @Override
   public Iterable<Artifact> getAllowedDerivedInputs() {
-    return getAllowedDerivedInputsMap().values();
-  }
-
-  protected Map<PathFragment, Artifact> getAllowedDerivedInputsMap() {
-    Map<PathFragment, Artifact> allowedDerivedInputMap = new HashMap<>();
-    addToMap(allowedDerivedInputMap, mandatoryInputs);
-    addToMap(allowedDerivedInputMap, prunableInputs);
-    addToMap(allowedDerivedInputMap, getDeclaredIncludeSrcs());
-    addToMap(
-        allowedDerivedInputMap, ccCompilationContextInfo.getTransitiveCompilationPrerequisites());
-    addToMap(allowedDerivedInputMap, ccCompilationContextInfo.getTransitiveModules(usePic));
+    HashSet<Artifact> result = new HashSet<>();
+    addNonSources(result, mandatoryInputs);
+    addNonSources(result, prunableInputs);
+    addNonSources(result, getDeclaredIncludeSrcs());
+    addNonSources(result, ccCompilationContextInfo.getTransitiveCompilationPrerequisites());
+    addNonSources(result, ccCompilationContextInfo.getTransitiveModules(usePic));
     Artifact artifact = getSourceFile();
     if (!artifact.isSourceArtifact()) {
-      allowedDerivedInputMap.put(artifact.getExecPath(), artifact);
+      result.add(artifact);
     }
-    return allowedDerivedInputMap;
+    return unmodifiableSet(result);
   }
 
-  private void addToMap(Map<PathFragment, Artifact> map, Iterable<Artifact> artifacts) {
-    for (Artifact artifact : artifacts) {
-      if (!artifact.isSourceArtifact()) {
-        map.put(artifact.getExecPath(), artifact);
+  private static void addNonSources(HashSet<Artifact> result, Iterable<Artifact> artifacts) {
+    for (Artifact a : artifacts) {
+      if (!a.isSourceArtifact()) {
+        result.add(a);
       }
     }
   }
@@ -1183,7 +1169,7 @@ public class CppCompileAction extends AbstractAction
           actionExecutionContext.getVerboseFailures(),
           this);
     }
-    ensureCoverageNotesFilesExist();
+    ensureCoverageNotesFilesExist(actionExecutionContext);
 
     // This is the .d file scanning part.
     CppIncludeExtractionContext scanningContext =
@@ -1200,7 +1186,8 @@ public class CppCompileAction extends AbstractAction
               showIncludesFilterForStderr);
     } else {
       discoveredInputs =
-          discoverInputsFromDotdFiles(execRoot, scanningContext.getArtifactResolver(), reply);
+          discoverInputsFromDotdFiles(
+              actionExecutionContext, execRoot, scanningContext.getArtifactResolver(), reply);
     }
     reply = null; // Clear in-memory .d files early.
 
@@ -1212,10 +1199,7 @@ public class CppCompileAction extends AbstractAction
     // because doing so would allow for incorrect builds.
     // HeadersCheckingMode.NONE should only be used for ObjC build actions.
     if (needsIncludeValidation) {
-      validateInclusions(
-          discoveredInputs,
-          actionExecutionContext.getArtifactExpander(),
-          actionExecutionContext.getEventHandler());
+      validateInclusions(actionExecutionContext, discoveredInputs);
     }
     return ActionResult.create(spawnResults);
   }
@@ -1239,7 +1223,7 @@ public class CppCompileAction extends AbstractAction
             .setSourceFile(getSourceFile())
             .setDependencies(dependencies.build())
             .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
-            .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());
+            .setAllowedDerivedinputs(getAllowedDerivedInputs());
 
     if (needsIncludeValidation) {
       discoveryBuilder.shouldValidateInclusions();
@@ -1250,7 +1234,10 @@ public class CppCompileAction extends AbstractAction
 
   @VisibleForTesting
   public NestedSet<Artifact> discoverInputsFromDotdFiles(
-      Path execRoot, ArtifactResolver artifactResolver, Reply reply)
+      ActionExecutionContext actionExecutionContext,
+      Path execRoot,
+      ArtifactResolver artifactResolver,
+      Reply reply)
       throws ActionExecutionException {
     if (!needsDotdInputPruning || getDotdFile() == null) {
       return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
@@ -1259,9 +1246,10 @@ public class CppCompileAction extends AbstractAction
         new HeaderDiscovery.Builder()
             .setAction(this)
             .setSourceFile(getSourceFile())
-            .setDependencies(processDepset(execRoot, reply).getDependencies())
+            .setDependencies(
+                processDepset(actionExecutionContext, execRoot, reply).getDependencies())
             .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
-            .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());
+            .setAllowedDerivedinputs(getAllowedDerivedInputs());
 
     if (needsIncludeValidation) {
       discoveryBuilder.shouldValidateInclusions();
@@ -1270,7 +1258,9 @@ public class CppCompileAction extends AbstractAction
     return discoveryBuilder.build().discoverInputsFromDependencies(execRoot, artifactResolver);
   }
 
-  public DependencySet processDepset(Path execRoot, Reply reply) throws ActionExecutionException {
+  public DependencySet processDepset(
+      ActionExecutionContext actionExecutionContext, Path execRoot, Reply reply)
+      throws ActionExecutionException {
     try {
       DotdFile dotdFile = getDotdFile();
       Preconditions.checkNotNull(dotdFile);
@@ -1281,7 +1271,7 @@ public class CppCompileAction extends AbstractAction
       if (dotdFile.artifact() != null || reply == null) {
         Path dotdPath;
         if (dotdFile.artifact() != null) {
-          dotdPath = dotdFile.getPath();
+          dotdPath = dotdFile.getPath(actionExecutionContext);
         } else {
           dotdPath = execRoot.getRelative(dotdFile.getSafeExecPath());
         }
@@ -1307,20 +1297,23 @@ public class CppCompileAction extends AbstractAction
   }
 
   /**
-   * Gcc only creates ".gcno" files if the compilation unit is non-empty.
-   * To ensure that the set of outputs for a CppCompileAction remains consistent
-   * and doesn't vary dynamically depending on the _contents_ of the input files,
-   * we create empty ".gcno" files if gcc didn't create them.
+   * Gcc only creates ".gcno" files if the compilation unit is non-empty. To ensure that the set of
+   * outputs for a CppCompileAction remains consistent and doesn't vary dynamically depending on the
+   * _contents_ of the input files, we create empty ".gcno" files if gcc didn't create them.
    */
-  private void ensureCoverageNotesFilesExist() throws ActionExecutionException {
+  private void ensureCoverageNotesFilesExist(ActionExecutionContext actionExecutionContext)
+      throws ActionExecutionException {
     for (Artifact output : getOutputs()) {
-      if (output.isFileType(CppFileTypes.COVERAGE_NOTES) // ".gcno"
-          && !output.getPath().exists()) {
+      if (output.isFileType(CppFileTypes.COVERAGE_NOTES)) { // ".gcno"
+        Path outputPath = actionExecutionContext.getInputPath(output);
+        if (outputPath.exists()) {
+          continue;
+        }
         try {
-          FileSystemUtils.createEmptyFile(output.getPath());
+          FileSystemUtils.createEmptyFile(outputPath);
         } catch (IOException e) {
           throw new ActionExecutionException(
-              "Error creating file '" + output.getPath() + "': " + e.getMessage(), e, this, false);
+              "Error creating file '" + outputPath + "': " + e.getMessage(), e, this, false);
         }
       }
     }
@@ -1441,11 +1434,9 @@ public class CppCompileAction extends AbstractAction
       return execPath == null ? artifact.getExecPath() : execPath;
     }
 
-    /**
-     * @return the on-disk location of the .d file or null
-     */
-    public Path getPath() {
-      return artifact.getPath();
+    /** @return the on-disk location of the .d file or null */
+    public Path getPath(ActionExecutionContext actionExecutionContext) {
+      return actionExecutionContext.getInputPath(artifact);
     }
   }
 }

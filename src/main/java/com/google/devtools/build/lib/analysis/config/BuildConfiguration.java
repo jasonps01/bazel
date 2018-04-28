@@ -16,7 +16,6 @@ package com.google.devtools.build.lib.analysis.config;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
-import com.google.common.base.Predicate;
 import com.google.common.base.Splitter;
 import com.google.common.base.Suppliers;
 import com.google.common.base.Verify;
@@ -29,17 +28,16 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.Interner;
 import com.google.common.collect.Interners;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MutableClassToInstanceMap;
 import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
 import com.google.devtools.build.lib.actions.BuildConfigurationEvent;
+import com.google.devtools.build.lib.actions.CommandLines.CommandLineLimits;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
-import com.google.devtools.build.lib.analysis.config.transitions.ComposingPatchTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
@@ -51,6 +49,7 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.packages.Target;
+import com.google.devtools.build.lib.packages.TestTimeout;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
@@ -68,6 +67,7 @@ import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionMetadataTag;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.TriState;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -123,6 +123,11 @@ public class BuildConfiguration {
   private static final Interner<ImmutableSortedMap<Class<? extends Fragment>, Fragment>>
       fragmentsInterner = BlazeInterners.newWeakInterner();
 
+  /** Compute the default shell environment for actions from the command line options. */
+  public interface ActionEnvironmentProvider {
+    ActionEnvironment getActionEnvironment(BuildOptions options);
+  }
+
   /**
    * An interface for language-specific configurations.
    *
@@ -157,14 +162,6 @@ public class BuildConfiguration {
     }
 
     /**
-     * Add items to the action environment.
-     *
-     * @param builder the map to add environment variables to
-     */
-    public void setupActionEnvironment(Map<String, String> builder) {
-    }
-
-    /**
      * Returns { 'option name': 'alternative default' } entries for options where the
      * "real default" should be something besides the default specified in the {@link Option}
      * declaration.
@@ -174,21 +171,16 @@ public class BuildConfiguration {
     }
 
     /**
-     * @return false if a Fragment understands that it won't be able to work with a given strategy,
-     *     or true otherwise.
-     */
-    public boolean compatibleWithStrategy(String strategyName) {
-      return true;
-    }
-
-    /**
      * Returns the transition that produces the "artifact owner" for this configuration, or null
      * if this configuration is its own owner.
      *
      * <p>If multiple fragments return the same transition, that transition is only applied
      * once. Multiple fragments may not return different non-null transitions.
+     *
+     * <p>Deprecated. The only known use of this is LIPO, which is on its deathbed.
      */
     @Nullable
+    @Deprecated
     public PatchTransition getArtifactOwnerTransition() {
       return null;
     }
@@ -208,11 +200,6 @@ public class BuildConfiguration {
     @Deprecated
     public PatchTransition topLevelConfigurationHook(Target toTarget) {
       return null;
-    }
-
-    /** Returns a reserved set of action mnemonics. These cannot be used from a Skylark action. */
-    public ImmutableSet<String> getReservedActionMnemonics() {
-      return ImmutableSet.of();
     }
   }
 
@@ -437,6 +424,21 @@ public class BuildConfiguration {
     public int minParamFileSize;
 
     @Option(
+        name = "defer_param_files",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {
+          OptionEffectTag.LOADING_AND_ANALYSIS,
+          OptionEffectTag.EXECUTION,
+          OptionEffectTag.ACTION_COMMAND_LINES
+        },
+        help =
+            "Whether to use deferred param files. WHen set, param files will not be "
+                + "added to the action graph. Instead, they will be added as virtual action inputs "
+                + "and written at the same time as the action executes.")
+    public boolean deferParamFiles;
+
+    @Option(
       name = "experimental_extended_sanity_checks",
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
@@ -579,6 +581,20 @@ public class BuildConfiguration {
     )
     public List<Map.Entry<String, String>> testEnvironment;
 
+    @Option(
+        name = "test_timeout",
+        defaultValue = "-1",
+        converter = TestTimeout.TestTimeoutConverter.class,
+        documentationCategory = OptionDocumentationCategory.TESTING,
+        effectTags = {OptionEffectTag.UNKNOWN},
+        help =
+            "Override the default test timeout values for test timeouts (in secs). If a single "
+                + "positive integer value is specified it will override all categories.  If 4 "
+                + "comma-separated integers are specified, they will override the timeouts for "
+                + "short, moderate, long and eternal (in that order). In either form, a value of "
+                + "-1 tells blaze to use its default timeouts for that category.")
+    public Map<TestTimeout, Duration> testTimeout;
+
     // TODO(bazel-team): The set of available variables from the client environment for actions
     // is computed independently in CommandEnvironment to inject a more restricted client
     // environment to skyframe.
@@ -701,8 +717,7 @@ public class BuildConfiguration {
       defaultValue = "true",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION},
-      deprecationWarning = "Skyframe-native filesets are now the default, and legacy "
-              + "implementation will be removed soon."
+      deprecationWarning = "This flag is a no-op and skyframe-native-filesets is always true."
     )
     public boolean skyframeNativeFileset;
 
@@ -894,6 +909,16 @@ public class BuildConfiguration {
       NOTRIM,
     }
 
+    @Option(
+        name = "experimental_use_late_bound_option_defaults",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.AFFECTS_OUTPUTS},
+        help =
+            "Allow using late bound option defaults. The purpose of this option is to help with "
+                + "removal of late bound option defaults.")
+    public boolean useLateBoundOptionDefaults;
+
     /**
      * Converter for --experimental_dynamic_configs.
      */
@@ -970,9 +995,6 @@ public class BuildConfiguration {
       // === Licenses ===
       host.checkLicenses = checkLicenses;
 
-      // === Fileset ===
-      host.skyframeNativeFileset = skyframeNativeFileset;
-
       // === Pass on C++ compiler features.
       host.defaultFeatures = ImmutableList.copyOf(defaultFeatures);
 
@@ -996,6 +1018,7 @@ public class BuildConfiguration {
   private final String repositoryName;
   private final RepositoryName mainRepositoryName;
   private final ImmutableSet<String> reservedActionMnemonics;
+  private CommandLineLimits commandLineLimits;
 
   /**
    * Directories in the output tree.
@@ -1113,6 +1136,7 @@ public class BuildConfiguration {
 
   private final ActionEnvironment actionEnv;
   private final ActionEnvironment testEnv;
+  private final ImmutableMap<TestTimeout, Duration> testTimeout;
 
   private final BuildOptions buildOptions;
   private final BuildOptions.OptionsDiffForReconstruction buildOptionsDiff;
@@ -1214,41 +1238,6 @@ public class BuildConfiguration {
   }
 
   /**
-   * @return false if any of the fragments don't work well with the supplied strategy.
-   */
-  public boolean compatibleWithStrategy(final String strategyName) {
-    return Iterables.all(
-        fragments.values(),
-        new Predicate<Fragment>() {
-          @Override
-          public boolean apply(@Nullable Fragment fragment) {
-            return fragment.compatibleWithStrategy(strategyName);
-          }
-        });
-  }
-
-  /**
-   * Compute the shell environment, which, at configuration level, is a pair consisting of the
-   * statically set environment variables with their values and the set of environment variables to
-   * be inherited from the client environment.
-   */
-  private ActionEnvironment setupActionEnvironment() {
-    // We make a copy first to remove duplicate entries; last one wins.
-    Map<String, String> actionEnv = new HashMap<>();
-    // TODO(ulfjack): Remove all env variables from configuration fragments.
-    for (Fragment fragment : fragments.values()) {
-      fragment.setupActionEnvironment(actionEnv);
-    }
-    // Shell environment variables specified via options take precedence over the
-    // ones inherited from the fragments. In the long run, these fragments will
-    // be replaced by appropriate default rc files anyway.
-    for (Map.Entry<String, String> entry : options.actionEnvironment) {
-      actionEnv.put(entry.getKey(), entry.getValue());
-    }
-    return ActionEnvironment.split(actionEnv);
-  }
-
-  /**
    * Compute the test environment, which, at configuration level, is a pair consisting of the
    * statically set environment variables with their values and the set of environment variables to
    * be inherited from the client environment.
@@ -1273,6 +1262,8 @@ public class BuildConfiguration {
       Map<Class<? extends Fragment>, Fragment> fragmentsMap,
       BuildOptions buildOptions,
       BuildOptions.OptionsDiffForReconstruction buildOptionsDiff,
+      ImmutableSet<String> reservedActionMnemonics,
+      ActionEnvironment actionEnvironment,
       String repositoryName) {
     this.directories = directories;
     this.fragments = makeFragmentsMap(fragmentsMap);
@@ -1322,11 +1313,14 @@ public class BuildConfiguration {
         OutputDirectory.MIDDLEMAN.getRoot(
             RepositoryName.MAIN, outputDirName, directories, mainRepositoryName);
 
-    this.actionEnv = setupActionEnvironment();
+    this.actionEnv = actionEnvironment;
 
     this.testEnv = setupTestEnvironment();
 
-    this.transitiveOptionDetails = computeOptionsMap(buildOptions, fragments.values());
+    this.testTimeout = ImmutableMap.copyOf(options.testTimeout);
+
+    this.transitiveOptionDetails =
+        computeOptionsMap(buildOptions, fragments.values(), options.useLateBoundOptionDefaults);
 
     ImmutableMap.Builder<String, String> globalMakeEnvBuilder = ImmutableMap.builder();
     for (Fragment fragment : fragments.values()) {
@@ -1347,12 +1341,9 @@ public class BuildConfiguration {
     checksum = buildOptions.computeChecksum();
     hashCode = computeHashCode();
 
-    ImmutableSet.Builder<String> reservedActionMnemonics = ImmutableSet.builder();
-    for (Fragment fragment : fragments.values()) {
-      reservedActionMnemonics.addAll(fragment.getReservedActionMnemonics());
-    }
-    this.reservedActionMnemonics = reservedActionMnemonics.build();
+    this.reservedActionMnemonics = reservedActionMnemonics;
     this.buildEventSupplier = Suppliers.memoize(this::createBuildEvent);
+    this.commandLineLimits = new CommandLineLimits(options.minParamFileSize);
   }
 
   /**
@@ -1378,6 +1369,8 @@ public class BuildConfiguration {
             fragmentsMap,
             options,
             BuildOptions.diffForReconstruction(defaultBuildOptions, options),
+            reservedActionMnemonics,
+            actionEnv,
             mainRepositoryName.strippedName());
     return newConfig;
   }
@@ -1427,12 +1420,14 @@ public class BuildConfiguration {
 
   /** Computes and returns the {@link TransitiveOptionDetails} for this configuration. */
   private static TransitiveOptionDetails computeOptionsMap(
-      BuildOptions buildOptions, Iterable<Fragment> fragments) {
+      BuildOptions buildOptions, Iterable<Fragment> fragments, boolean useLateBoundOptionDefaults) {
     // Collect from our fragments "alternative defaults" for options where the default
     // should be something other than what's specified in Option.defaultValue.
     Map<String, Object> lateBoundDefaults = Maps.newHashMap();
-    for (Fragment fragment : fragments) {
-      lateBoundDefaults.putAll(fragment.lateBoundOptionDefaults());
+    if (useLateBoundOptionDefaults) {
+      for (Fragment fragment : fragments) {
+        lateBoundDefaults.putAll(fragment.lateBoundOptionDefaults());
+      }
     }
 
     return TransitiveOptionDetails.forOptionsWithDefaults(
@@ -1752,7 +1747,7 @@ public class BuildConfiguration {
   }
 
   public boolean getSkyframeNativeFileset() {
-    return options.skyframeNativeFileset;
+    return true;
   }
 
   /**
@@ -1771,6 +1766,11 @@ public class BuildConfiguration {
     return testEnv.getFixedEnv();
   }
 
+  /** Returns test timeout mapping as set by --test_timeout options. */
+  public ImmutableMap<TestTimeout, Duration> getTestTimeout() {
+    return testTimeout;
+  }
+
   /**
    * Returns user-specified test environment variables and their values, as set by the
    * {@code --test_env} options. It is incomplete in that it is not a superset of the
@@ -1782,8 +1782,12 @@ public class BuildConfiguration {
     return testEnv;
   }
 
-  public int getMinParamFileSize() {
-    return options.minParamFileSize;
+  public CommandLineLimits getCommandLineLimits() {
+    return commandLineLimits;
+  }
+
+  public boolean deferParamFiles() {
+    return options.deferParamFiles;
   }
 
   @SkylarkCallable(name = "coverage_enabled", structField = true,
@@ -1960,10 +1964,6 @@ public class BuildConfiguration {
     return skylarkVisibleFragments.keySet();
   }
 
-  public ImmutableSet<String> getReservedActionMnemonics() {
-    return reservedActionMnemonics;
-  }
-
   /**
    * Returns an extra transition that should apply to top-level targets in this
    * configuration. Returns null if no transition is needed.
@@ -1978,7 +1978,8 @@ public class BuildConfiguration {
       } else if (currentTransition == null) {
         currentTransition = fragmentTransition;
       } else {
-        currentTransition = new ComposingPatchTransition(currentTransition, fragmentTransition);
+        currentTransition =
+            TransitionResolver.composePatchTransitions(currentTransition, fragmentTransition);
       }
     }
     return currentTransition;
@@ -2006,5 +2007,9 @@ public class BuildConfiguration {
                 .setCpu(getCpu())
                 .build());
     return new BuildConfigurationEvent(eventId, builder.build());
+  }
+
+  public ImmutableSet<String> getReservedActionMnemonics() {
+    return reservedActionMnemonics;
   }
 }

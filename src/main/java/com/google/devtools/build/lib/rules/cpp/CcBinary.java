@@ -217,19 +217,22 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
         getLinkStaticness(ruleContext, linkopts, cppConfiguration, ccToolchain);
     FdoSupportProvider fdoSupport = common.getFdoSupport();
     FeatureConfiguration featureConfiguration =
-        CcCommon.configureFeatures(
+        CcCommon.configureFeaturesOrReportRuleError(
             ruleContext,
-            /* requestedFeatures= */ ImmutableSet.of(
-                linkStaticness == LinkStaticness.DYNAMIC
-                    ? DYNAMIC_LINKING_MODE
-                    : STATIC_LINKING_MODE),
-            /* unsupportedFeatures= */ ImmutableSet.of(),
+            /* requestedFeatures= */ ImmutableSet.<String>builder()
+                .addAll(ruleContext.getFeatures())
+                .add(
+                    linkStaticness == LinkStaticness.DYNAMIC
+                        ? DYNAMIC_LINKING_MODE
+                        : STATIC_LINKING_MODE)
+                .build(),
+            /* unsupportedFeatures= */ ruleContext.getDisabledFeatures(),
             ccToolchain);
 
     CcCompilationHelper compilationHelper =
         new CcCompilationHelper(
                 ruleContext, semantics, featureConfiguration, ccToolchain, fdoSupport)
-            .fromCommon(common)
+            .fromCommon(common, /* additionalCopts= */ImmutableList.of())
             .addSources(common.getSources())
             .addDeps(ImmutableList.of(CppHelper.mallocForTarget(ruleContext)))
             .setFake(fake)
@@ -539,8 +542,8 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     return ruleBuilder
         .addProvider(RunfilesProvider.class, RunfilesProvider.simple(runfiles))
         .addProvider(
-            CppDebugPackageProvider.class,
-            new CppDebugPackageProvider(
+            DebugPackageProvider.class,
+            new DebugPackageProvider(
                 ruleContext.getLabel(), strippedFile, executable, explicitDwpFile))
         .setRunfilesSupport(runfilesSupport, executable)
         .addProvider(
@@ -894,14 +897,21 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
             cppConfiguration.isLipoContextCollector(),
             cppConfiguration.processHeadersInDependencies(),
             CppHelper.usePicForDynamicLibraries(ruleContext, toolchain));
+
+    CcCompilationInfo.Builder ccCompilationInfoBuilder = CcCompilationInfo.Builder.create();
+    ccCompilationInfoBuilder.setCcCompilationContextInfo(ccCompilationContextInfo);
+
+    CcLinkingInfo.Builder ccLinkingInfoBuilder = CcLinkingInfo.Builder.create();
+    ccLinkingInfoBuilder.setCcExecutionDynamicLibrariesInfo(
+        new CcExecutionDynamicLibrariesInfo(
+            collectExecutionDynamicLibraryArtifacts(
+                ruleContext, linkingOutputs.getExecutionDynamicLibraries())));
+
     builder
         .setFilesToBuild(filesToBuild)
-        .addNativeDeclaredProvider(ccCompilationContextInfo)
+        .addNativeDeclaredProvider(ccCompilationInfoBuilder.build())
         .addProvider(TransitiveLipoInfoProvider.class, transitiveLipoInfo)
-        .addNativeDeclaredProvider(
-            new CcExecutionDynamicLibrariesInfo(
-                collectExecutionDynamicLibraryArtifacts(
-                    ruleContext, linkingOutputs.getExecutionDynamicLibraries())))
+        .addNativeDeclaredProvider(ccLinkingInfoBuilder.build())
         .addProvider(
             CcNativeLibraryProvider.class,
             new CcNativeLibraryProvider(
@@ -934,13 +944,17 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
       return NestedSetBuilder.wrap(Order.STABLE_ORDER, artifacts);
     }
 
-    Iterable<CcExecutionDynamicLibrariesInfo> deps =
-        ruleContext.getPrerequisites("deps", Mode.TARGET, CcExecutionDynamicLibrariesInfo.PROVIDER);
-
     NestedSetBuilder<Artifact> builder = NestedSetBuilder.stableOrder();
-    for (CcExecutionDynamicLibrariesInfo dep : deps) {
-      builder.addTransitive(dep.getExecutionDynamicLibraryArtifacts());
+    for (CcLinkingInfo ccLinkingInfo :
+        ruleContext.getPrerequisites("deps", Mode.TARGET, CcLinkingInfo.PROVIDER)) {
+      CcExecutionDynamicLibrariesInfo ccExecutionDynamicLibrariesInfo =
+          ccLinkingInfo.getCcExecutionDynamicLibrariesInfo();
+      if (ccExecutionDynamicLibrariesInfo != null) {
+        builder.addTransitive(
+            ccExecutionDynamicLibrariesInfo.getExecutionDynamicLibraryArtifacts());
+      }
     }
+
     return builder.build();
   }
 

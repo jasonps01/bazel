@@ -41,9 +41,7 @@ import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkSignature;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
-import com.google.devtools.build.lib.syntax.BuiltinFunction;
 import com.google.devtools.build.lib.syntax.Environment;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.EvalUtils;
@@ -52,7 +50,6 @@ import com.google.devtools.build.lib.syntax.Runtime;
 import com.google.devtools.build.lib.syntax.SkylarkCallbackFunction;
 import com.google.devtools.build.lib.syntax.SkylarkDict;
 import com.google.devtools.build.lib.syntax.SkylarkList;
-import com.google.devtools.build.lib.syntax.SkylarkSignatureProcessor;
 import com.google.devtools.build.lib.syntax.SkylarkType;
 import com.google.devtools.build.lib.syntax.SkylarkUtils;
 import com.google.devtools.build.lib.syntax.Type;
@@ -537,49 +534,6 @@ public final class SkylarkAttr implements SkylarkValue {
         env);
   }
 
-  @SkylarkSignature(
-    name = "configuration_field",
-    returnType = SkylarkLateBoundDefault.class,
-    // TODO(cparsons): Provide a link to documentation for available SkylarkConfigurationFields.
-    doc = "References a late-bound default value for an attribute of type "
-      + "<a href=\"attr.html#label\">label</a>. A value is 'late-bound' if it requires "
-      + "the configuration to be built before determining the value. Any attribute using this "
-      + "as a value must <a href=\"../rules.html#private-attributes\">be private</a>.",
-    parameters = {
-        @Param(
-            name = "fragment",
-            type = String.class,
-            doc = "The name of a configuration fragment which contains the late-bound value."
-        ),
-        @Param(
-            name = "name",
-            type = String.class,
-            doc = "The name of the value to obtain from the configuration fragment."),
-    },
-    useLocation = true,
-    useEnvironment = true
-  )
-  private static final BuiltinFunction configurationField =
-      new BuiltinFunction("configuration_field") {
-        public SkylarkLateBoundDefault<?> invoke(
-            String fragment, String name, Location loc, Environment env)
-            throws EvalException {
-          Class<?> fragmentClass = SkylarkUtils.getFragmentMap(env).get(fragment);
-
-          if (fragmentClass == null) {
-            throw new EvalException(
-                loc,
-                String.format("invalid configuration fragment name '%s'", fragment));
-          }
-          try {
-            return SkylarkLateBoundDefault.forConfigurationField(
-                fragmentClass, name, SkylarkUtils.getToolsRepository(env));
-          } catch (SkylarkLateBoundDefault.InvalidConfigurationFieldException exception) {
-            throw new EvalException(loc, exception);
-          }
-        }
-      };
-
   @SkylarkCallable(
     name = "string",
     doc = "Creates an attribute of type <a href=\"string.html\">string</a>.",
@@ -821,25 +775,6 @@ public final class SkylarkAttr implements SkylarkValue {
             + "<a href=\"string.html\">strings</a>.",
     parameters = {
       @Param(
-        name = DEFAULT_ARG,
-        allowedTypes = {
-          @ParamType(type = SkylarkList.class, generic1 = String.class),
-          @ParamType(type = UserDefinedFunction.class)
-        },
-        defaultValue = "[]",
-        doc = DEFAULT_DOC,
-        named = true,
-        positional = false
-      ),
-      @Param(
-        name = DOC_ARG,
-        type = String.class,
-        defaultValue = "''",
-        doc = DOC_DOC,
-        named = true,
-        positional = false
-      ),
-      @Param(
         name = MANDATORY_ARG,
         type = Boolean.class,
         defaultValue = "False",
@@ -859,17 +794,36 @@ public final class SkylarkAttr implements SkylarkValue {
         defaultValue = "True",
         doc = ALLOW_EMPTY_DOC,
         named = true
+      ),
+      @Param(
+          name = DEFAULT_ARG,
+          allowedTypes = {
+              @ParamType(type = SkylarkList.class, generic1 = String.class),
+              @ParamType(type = UserDefinedFunction.class)
+          },
+          defaultValue = "[]",
+          doc = DEFAULT_DOC,
+          named = true,
+          positional = false
+      ),
+      @Param(
+          name = DOC_ARG,
+          type = String.class,
+          defaultValue = "''",
+          doc = DOC_DOC,
+          named = true,
+          positional = false
       )
     },
     useAst = true,
     useEnvironment = true
   )
   public Descriptor stringListAttribute(
-      SkylarkList<?> defaultList,
-      String doc,
       Boolean mandatory,
       Boolean nonEmpty,
       Boolean allowEmpty,
+      SkylarkList<?> defaultList,
+      String doc,
       FuncallExpression ast,
       Environment env)
       throws EvalException {
@@ -896,25 +850,6 @@ public final class SkylarkAttr implements SkylarkValue {
     doc = "Creates an attribute which is a <a href=\"list.html\">list</a> of ints.",
     parameters = {
       @Param(
-        name = DEFAULT_ARG,
-        allowedTypes = {
-          @ParamType(type = SkylarkList.class, generic1 = Integer.class),
-          @ParamType(type = UserDefinedFunction.class)
-        },
-        defaultValue = "[]",
-        doc = DEFAULT_DOC,
-        named = true,
-        positional = false
-      ),
-      @Param(
-        name = DOC_ARG,
-        type = String.class,
-        defaultValue = "''",
-        doc = DOC_DOC,
-        named = true,
-        positional = false
-      ),
-      @Param(
         name = MANDATORY_ARG,
         type = Boolean.class,
         defaultValue = "False",
@@ -934,17 +869,36 @@ public final class SkylarkAttr implements SkylarkValue {
         defaultValue = "True",
         doc = ALLOW_EMPTY_DOC,
         named = true
+      ),
+      @Param(
+          name = DEFAULT_ARG,
+          allowedTypes = {
+              @ParamType(type = SkylarkList.class, generic1 = Integer.class),
+              @ParamType(type = UserDefinedFunction.class)
+          },
+          defaultValue = "[]",
+          doc = DEFAULT_DOC,
+          named = true,
+          positional = false
+      ),
+      @Param(
+          name = DOC_ARG,
+          type = String.class,
+          defaultValue = "''",
+          doc = DOC_DOC,
+          named = true,
+          positional = false
       )
     },
     useAst = true,
     useEnvironment = true
   )
   public Descriptor intListAttribute(
-      SkylarkList<?> defaultList,
-      String doc,
       Boolean mandatory,
       Boolean nonEmpty,
       Boolean allowEmpty,
+      SkylarkList<?> defaultList,
+      String doc,
       FuncallExpression ast,
       Environment env)
       throws EvalException {
@@ -973,6 +927,13 @@ public final class SkylarkAttr implements SkylarkValue {
             + "<a href=\"Target.html\">Target</a> which are specified by the labels in the list. "
             + "See <a href=\"attr.html#label\">label</a> for more information.",
     parameters = {
+      @Param(
+          name = ALLOW_EMPTY_ARG,
+          type = Boolean.class,
+          defaultValue = "True",
+          doc = ALLOW_EMPTY_DOC,
+          named = true
+      ),
       @Param(
         name = DEFAULT_ARG,
         allowedTypes = {
@@ -1049,13 +1010,6 @@ public final class SkylarkAttr implements SkylarkValue {
         doc = NON_EMPTY_DOC
       ),
       @Param(
-        name = ALLOW_EMPTY_ARG,
-        type = Boolean.class,
-        defaultValue = "True",
-        doc = ALLOW_EMPTY_DOC,
-        named = true
-      ),
-      @Param(
         name = CONFIGURATION_ARG,
         type = Object.class,
         noneable = true,
@@ -1078,6 +1032,7 @@ public final class SkylarkAttr implements SkylarkValue {
     useEnvironment = true
   )
   public Descriptor labelListAttribute(
+      Boolean allowEmpty,
       Object defaultList,
       String doc,
       Object allowFiles,
@@ -1086,7 +1041,6 @@ public final class SkylarkAttr implements SkylarkValue {
       SkylarkList<?> flags,
       Boolean mandatory,
       Boolean nonEmpty,
-      Boolean allowEmpty,
       Object cfg,
       SkylarkList<?> aspects,
       FuncallExpression ast,
@@ -1133,6 +1087,13 @@ public final class SkylarkAttr implements SkylarkValue {
             + "input dict. Its values are <a href=\"string.html\">strings</a>. See "
             + "<a href=\"attr.html#label\">label</a> for more information.",
     parameters = {
+      @Param(
+          name = ALLOW_EMPTY_ARG,
+          type = Boolean.class,
+          defaultValue = "True",
+          doc = ALLOW_EMPTY_DOC,
+          named = true
+      ),
       @Param(
         name = DEFAULT_ARG,
         allowedTypes = {
@@ -1210,13 +1171,6 @@ public final class SkylarkAttr implements SkylarkValue {
         doc = NON_EMPTY_DOC
       ),
       @Param(
-        name = ALLOW_EMPTY_ARG,
-        type = Boolean.class,
-        defaultValue = "True",
-        doc = ALLOW_EMPTY_DOC,
-        named = true
-      ),
-      @Param(
         name = CONFIGURATION_ARG,
         type = Object.class,
         noneable = true,
@@ -1239,6 +1193,7 @@ public final class SkylarkAttr implements SkylarkValue {
     useEnvironment = true
   )
   public Descriptor labelKeyedStringDictAttribute(
+      Boolean allowEmpty,
       Object defaultList,
       String doc,
       Object allowFiles,
@@ -1247,7 +1202,6 @@ public final class SkylarkAttr implements SkylarkValue {
       SkylarkList<?> flags,
       Boolean mandatory,
       Boolean nonEmpty,
-      Boolean allowEmpty,
       Object cfg,
       SkylarkList<?> aspects,
       FuncallExpression ast,
@@ -1392,6 +1346,13 @@ public final class SkylarkAttr implements SkylarkValue {
             + "See <a href=\"attr.html#output\">output</a> for more information.",
     parameters = {
       @Param(
+          name = ALLOW_EMPTY_ARG,
+          type = Boolean.class,
+          defaultValue = "True",
+          doc = ALLOW_EMPTY_DOC,
+          named = true
+      ),
+      @Param(
         name = DEFAULT_ARG,
         allowedTypes = {
           @ParamType(type = SkylarkList.class, generic1 = Label.class),
@@ -1426,24 +1387,17 @@ public final class SkylarkAttr implements SkylarkValue {
         named = true,
         positional = false,
         doc = NON_EMPTY_DOC
-      ),
-      @Param(
-        name = ALLOW_EMPTY_ARG,
-        type = Boolean.class,
-        defaultValue = "True",
-        doc = ALLOW_EMPTY_DOC,
-        named = true
       )
     },
     useAst = true,
     useEnvironment = true
   )
   public Descriptor outputListAttribute(
+      Boolean allowEmpty,
       SkylarkList defaultList,
       String doc,
       Boolean mandatory,
       Boolean nonEmpty,
-      Boolean allowEmpty,
       FuncallExpression ast,
       Environment env)
       throws EvalException {
@@ -1471,6 +1425,13 @@ public final class SkylarkAttr implements SkylarkValue {
         "Creates an attribute of type <a href=\"dict.html\">dict</a>, mapping from "
             + "<a href=\"string.html\">string</a> to <a href=\"string.html\">string</a>.",
     parameters = {
+      @Param(
+          name = ALLOW_EMPTY_ARG,
+          type = Boolean.class,
+          defaultValue = "True",
+          doc = ALLOW_EMPTY_DOC,
+          named = true
+      ),
       @Param(
         name = DEFAULT_ARG,
         allowedTypes = {
@@ -1505,24 +1466,17 @@ public final class SkylarkAttr implements SkylarkValue {
         named = true,
         positional = false,
         doc = NON_EMPTY_DOC
-      ),
-      @Param(
-        name = ALLOW_EMPTY_ARG,
-        type = Boolean.class,
-        defaultValue = "True",
-        doc = ALLOW_EMPTY_DOC,
-        named = true
       )
     },
     useAst = true,
     useEnvironment = true
   )
   public Descriptor stringDictAttribute(
+      Boolean allowEmpty,
       SkylarkDict<?, ?> defaultO,
       String doc,
       Boolean mandatory,
       Boolean nonEmpty,
-      Boolean allowEmpty,
       FuncallExpression ast,
       Environment env)
       throws EvalException {
@@ -1552,6 +1506,13 @@ public final class SkylarkAttr implements SkylarkValue {
             + "<a href=\"string.html\">string</a>.",
     parameters = {
       @Param(
+          name = ALLOW_EMPTY_ARG,
+          type = Boolean.class,
+          defaultValue = "True",
+          doc = ALLOW_EMPTY_DOC,
+          named = true
+      ),
+      @Param(
         name = DEFAULT_ARG,
         allowedTypes = {
           @ParamType(type = SkylarkDict.class),
@@ -1585,24 +1546,17 @@ public final class SkylarkAttr implements SkylarkValue {
         named = true,
         positional = false,
         doc = NON_EMPTY_DOC
-      ),
-      @Param(
-        name = ALLOW_EMPTY_ARG,
-        type = Boolean.class,
-        defaultValue = "True",
-        doc = ALLOW_EMPTY_DOC,
-        named = true
       )
     },
     useAst = true,
     useEnvironment = true
   )
   public Descriptor stringListDictAttribute(
+      Boolean allowEmpty,
       SkylarkDict<?, ?> defaultO,
       String doc,
       Boolean mandatory,
       Boolean nonEmpty,
-      Boolean allowEmpty,
       FuncallExpression ast,
       Environment env)
       throws EvalException {
@@ -1707,9 +1661,5 @@ public final class SkylarkAttr implements SkylarkValue {
     public void repr(SkylarkPrinter printer) {
       printer.append("<attr." + name + ">");
     }
-  }
-
-  static {
-    SkylarkSignatureProcessor.configureSkylarkFunctions(SkylarkAttr.class);
   }
 }

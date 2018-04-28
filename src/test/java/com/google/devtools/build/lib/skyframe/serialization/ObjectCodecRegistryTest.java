@@ -118,20 +118,55 @@ public class ObjectCodecRegistryTest {
     ObjectCodecRegistry underTest1 =
         ObjectCodecRegistry.newBuilder()
             .setAllowDefaultCodec(false)
-            .addConstant(constant1)
-            .addConstant(constant2)
-            .addConstant(constant1)
+            .addReferenceConstant(constant1)
+            .addReferenceConstant(constant2)
+            .addReferenceConstant(constant1)
             .build();
     ObjectCodecRegistry underTest2 =
         ObjectCodecRegistry.newBuilder()
             .setAllowDefaultCodec(false)
-            .addConstant(constant1)
-            .addConstant(constant2)
+            .addReferenceConstant(constant1)
+            .addReferenceConstant(constant2)
             .build();
     assertThat(underTest1.maybeGetTagForConstant(constant1)).isEqualTo(3);
     assertThat(underTest1.maybeGetTagForConstant(constant2)).isEqualTo(2);
     assertThat(underTest2.maybeGetTagForConstant(constant1)).isEqualTo(1);
     assertThat(underTest2.maybeGetTagForConstant(constant2)).isEqualTo(2);
+  }
+
+  @Test
+  public void valueConstant() {
+    String valueConstant = "ab";
+    ObjectCodecRegistry underTest =
+        ObjectCodecRegistry.newBuilder()
+            .setAllowDefaultCodec(false)
+            .addValueConstant(valueConstant)
+            .build();
+    assertThat(underTest.maybeGetTagForConstant("a")).isNull();
+    assertThat(underTest.maybeGetTagForConstant("ab")).isNotNull();
+    assertThat(underTest.maybeGetTagForConstant("cab".substring(1))).isNotNull();
+  }
+
+  private static ObjectCodecRegistry.Builder builderWithThisClass() {
+    return ObjectCodecRegistry.newBuilder().addClassName(ObjectCodecRegistryTest.class.getName());
+  }
+
+  @Test
+  public void blacklistingPrefix() throws NoCodecException {
+    ObjectCodecRegistry underTest = builderWithThisClass().build();
+    CodecDescriptor descriptor = underTest.getCodecDescriptorForObject(this);
+    assertThat(descriptor).isNotNull();
+    assertThat(descriptor.getCodec()).isInstanceOf(DynamicCodec.class);
+    ObjectCodecRegistry underTestWithBlacklist =
+        builderWithThisClass()
+            .blacklistClassNamePrefix(this.getClass().getPackage().getName())
+            .build();
+    assertThrows(
+        NoCodecException.class, () -> underTestWithBlacklist.getCodecDescriptorForObject(this));
+    ObjectCodecRegistry underTestWithWideBlacklist =
+        builderWithThisClass().blacklistClassNamePrefix("com").build();
+    assertThrows(
+        NoCodecException.class, () -> underTestWithWideBlacklist.getCodecDescriptorForObject(this));
   }
 
   @Test
@@ -145,7 +180,7 @@ public class ObjectCodecRegistryTest {
             .setAllowDefaultCodec(false)
             .add(codec1)
             .add(codec2)
-            .addConstant(constant)
+            .addReferenceConstant(constant)
             .build();
 
     ObjectCodecRegistry copy = underTest.getBuilder().build();

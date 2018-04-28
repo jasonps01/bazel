@@ -44,7 +44,6 @@ import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.actions.BinaryFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.Builder;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
-import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
@@ -313,22 +312,14 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
    * Verifies a {@code -filelist} file's contents.
    *
    * @param originalAction the action which uses the filelist artifact
-   * @param objlistName the path suffix of the filelist artifact
    * @param inputArchives path suffixes of the expected contents of the filelist
    */
-  protected void verifyObjlist(Action originalAction, String objlistName, String... inputArchives)
-      throws Exception {
-    Artifact filelistArtifact =
-        getFirstArtifactEndingWith(originalAction.getInputs(), objlistName);
-
-    ParameterFileWriteAction fileWriteAction =
-        (ParameterFileWriteAction) getGeneratingAction(filelistArtifact);
+  protected void verifyObjlist(Action originalAction, String... inputArchives) throws Exception {
     ImmutableList.Builder<String> execPaths = ImmutableList.builder();
     for (String inputArchive : inputArchives) {
       execPaths.add(execPathEndingWith(originalAction.getInputs(), inputArchive));
     }
-
-    assertThat(fileWriteAction.getContents()).containsExactlyElementsIn(execPaths.build());
+    assertThat(paramFileArgsForAction(originalAction)).containsExactlyElementsIn(execPaths.build());
   }
 
   /**
@@ -614,7 +605,6 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     assertObjcProtoProviderArtifactsArePropagated(topTarget);
     assertBundledGenerationActionsAreDifferent(topTarget);
     assertOnlyRequiredInputsArePresentForBundledGeneration(topTarget);
-    assertOnlyRequiredInputsArePresentForBundledCompilation(topTarget);
     assertCoptsAndDefinesNotPropagatedToProtos(topTarget);
     assertBundledGroupsGetCreatedAndLinked(topTarget);
   }
@@ -731,43 +721,6 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     return containedArtifacts;
   }
 
-  private void assertOnlyRequiredInputsArePresentForBundledCompilation(ConfiguredTarget topTarget) {
-    Artifact protoHeaderA = getBinArtifact("_generated_protos/x/protos/DataA.pbobjc.h", topTarget);
-    Artifact protoHeaderB = getBinArtifact("_generated_protos/x/protos/DataB.pbobjc.h", topTarget);
-    Artifact protoHeaderC = getBinArtifact("_generated_protos/x/protos/DataC.pbobjc.h", topTarget);
-    Artifact protoHeaderD = getBinArtifact("_generated_protos/x/protos/DataD.pbobjc.h", topTarget);
-
-    Artifact protoObjectA =
-        getBinArtifact("_objs/x/x/_generated_protos/x/protos/DataA.pbobjc.o", topTarget);
-    Artifact protoObjectB =
-        getBinArtifact("_objs/x/x/_generated_protos/x/protos/DataB.pbobjc.o", topTarget);
-    Artifact protoObjectC =
-        getBinArtifact("_objs/x/x/_generated_protos/x/protos/DataC.pbobjc.o", topTarget);
-    Artifact protoObjectD =
-        getBinArtifact("_objs/x/x/_generated_protos/x/protos/DataD.pbobjc.o", topTarget);
-
-    CommandAction protoObjectActionA = (CommandAction) getGeneratingAction(protoObjectA);
-    CommandAction protoObjectActionB = (CommandAction) getGeneratingAction(protoObjectB);
-    CommandAction protoObjectActionC = (CommandAction) getGeneratingAction(protoObjectC);
-    CommandAction protoObjectActionD = (CommandAction) getGeneratingAction(protoObjectD);
-
-    assertThat(protoObjectActionA).isNotNull();
-    assertThat(protoObjectActionB).isNotNull();
-    assertThat(protoObjectActionC).isNotNull();
-    assertThat(protoObjectActionD).isNotNull();
-
-    assertThat(getExpandedActionInputs(protoObjectActionA))
-        .containsNoneOf(protoHeaderB, protoHeaderC, protoHeaderD);
-    assertThat(getExpandedActionInputs(protoObjectActionB))
-        .containsNoneOf(protoHeaderA, protoHeaderC, protoHeaderD);
-    assertThat(getExpandedActionInputs(protoObjectActionC))
-        .containsNoneOf(protoHeaderA, protoHeaderB, protoHeaderD);
-    assertThat(getExpandedActionInputs(protoObjectActionD))
-        .containsAllOf(protoHeaderA, protoHeaderC, protoHeaderD);
-    assertThat(getExpandedActionInputs(protoObjectActionD))
-        .doesNotContain(protoHeaderB);
-  }
-
   private void assertCoptsAndDefinesNotPropagatedToProtos(ConfiguredTarget topTarget)
       throws Exception {
     Artifact protoObject =
@@ -779,24 +732,14 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
   }
 
   private void assertBundledGroupsGetCreatedAndLinked(ConfiguredTarget topTarget) {
-    Artifact protosGroup0Lib = getBinArtifact("libx_BundledProtos_0.a", topTarget);
-    Artifact protosGroup1Lib = getBinArtifact("libx_BundledProtos_1.a", topTarget);
-    Artifact protosGroup2Lib = getBinArtifact("libx_BundledProtos_2.a", topTarget);
-    Artifact protosGroup3Lib = getBinArtifact("libx_BundledProtos_3.a", topTarget);
+    Artifact protosGroupLib = getBinArtifact("libx_BundledProtos.a", topTarget);
 
-    CommandAction protosLib0Action = (CommandAction) getGeneratingAction(protosGroup0Lib);
-    CommandAction protosLib1Action = (CommandAction) getGeneratingAction(protosGroup1Lib);
-    CommandAction protosLib2Action = (CommandAction) getGeneratingAction(protosGroup2Lib);
-    CommandAction protosLib3Action = (CommandAction) getGeneratingAction(protosGroup3Lib);
-    assertThat(protosLib0Action).isNotNull();
-    assertThat(protosLib1Action).isNotNull();
-    assertThat(protosLib2Action).isNotNull();
-    assertThat(protosLib3Action).isNotNull();
+    CommandAction protosLibAction = (CommandAction) getGeneratingAction(protosGroupLib);
+    assertThat(protosLibAction).isNotNull();
 
     Artifact bin = getBinArtifact("x_bin", topTarget);
     CommandAction binAction = (CommandAction) getGeneratingAction(bin);
-    assertThat(binAction.getInputs())
-        .containsAllOf(protosGroup0Lib, protosGroup1Lib, protosGroup2Lib, protosGroup3Lib);
+    assertThat(binAction.getInputs()).contains(protosGroupLib);
   }
 
   protected void checkProtoBundlingDoesNotHappen(RuleType ruleType) throws Exception {
@@ -1660,10 +1603,8 @@ public abstract class ObjcRuleTestCase extends BuildViewTestCase {
     CommandAction x8664BinAction = (CommandAction) getGeneratingAction(
         getFirstArtifactEndingWith(appLipoAction.getInputs(), x8664Prefix + "x/x_bin"));
 
-    verifyObjlist(
-        i386BinAction, "x/x-linker.objlist", "package/libcclib.a");
-    verifyObjlist(
-        x8664BinAction, "x/x-linker.objlist", "package/libcclib.a");
+    verifyObjlist(i386BinAction, "package/libcclib.a");
+    verifyObjlist(x8664BinAction, "package/libcclib.a");
 
     assertThat(Artifact.toExecPaths(i386BinAction.getInputs()))
         .containsAllOf(

@@ -27,6 +27,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Range;
 import com.google.common.collect.Sets;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
+import com.google.devtools.build.lib.actions.ArtifactRoot;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.analysis.AnalysisProtos.ActionGraphContainer;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
@@ -149,7 +150,8 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       CrossRepositoryLabelViolationStrategy crossRepositoryLabelViolationStrategy,
       List<BuildFileName> buildFilesByPriority,
       ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile,
-      BuildOptions defaultBuildOptions) {
+      BuildOptions defaultBuildOptions,
+      MutableArtifactFactorySupplier mutableArtifactFactorySupplier) {
     super(
         evaluatorSupplier,
         pkgFactory,
@@ -167,7 +169,8 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
         actionOnIOExceptionReadingBuildFile,
         /*shouldUnblockCpuWorkWhenFetchingDeps=*/ false,
         defaultBuildOptions,
-        new PackageProgressReceiver());
+        new PackageProgressReceiver(),
+        mutableArtifactFactorySupplier);
     this.diffAwarenessManager = new DiffAwarenessManager(diffAwarenessFactories);
     this.customDirtinessCheckers = customDirtinessCheckers;
   }
@@ -188,6 +191,42 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       List<BuildFileName> buildFilesByPriority,
       ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile,
       BuildOptions defaultBuildOptions) {
+    return create(
+        pkgFactory,
+        fileSystem,
+        directories,
+        actionKeyContext,
+        workspaceStatusActionFactory,
+        buildInfoFactories,
+        diffAwarenessFactories,
+        extraSkyFunctions,
+        customDirtinessCheckers,
+        hardcodedBlacklistedPackagePrefixes,
+        additionalBlacklistedPackagePrefixesFile,
+        crossRepositoryLabelViolationStrategy,
+        buildFilesByPriority,
+        actionOnIOExceptionReadingBuildFile,
+        defaultBuildOptions,
+        new MutableArtifactFactorySupplier());
+  }
+
+  public static SequencedSkyframeExecutor create(
+      PackageFactory pkgFactory,
+      FileSystem fileSystem,
+      BlazeDirectories directories,
+      ActionKeyContext actionKeyContext,
+      Factory workspaceStatusActionFactory,
+      ImmutableList<BuildInfoFactory> buildInfoFactories,
+      Iterable<? extends DiffAwareness.Factory> diffAwarenessFactories,
+      ImmutableMap<SkyFunctionName, SkyFunction> extraSkyFunctions,
+      Iterable<SkyValueDirtinessChecker> customDirtinessCheckers,
+      ImmutableSet<PathFragment> hardcodedBlacklistedPackagePrefixes,
+      PathFragment additionalBlacklistedPackagePrefixesFile,
+      CrossRepositoryLabelViolationStrategy crossRepositoryLabelViolationStrategy,
+      List<BuildFileName> buildFilesByPriority,
+      ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile,
+      BuildOptions defaultBuildOptions,
+      MutableArtifactFactorySupplier mutableArtifactFactorySupplier) {
     SequencedSkyframeExecutor skyframeExecutor =
         new SequencedSkyframeExecutor(
             InMemoryMemoizingEvaluator.SUPPLIER,
@@ -205,7 +244,8 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
             crossRepositoryLabelViolationStrategy,
             buildFilesByPriority,
             actionOnIOExceptionReadingBuildFile,
-            defaultBuildOptions);
+            defaultBuildOptions,
+            mutableArtifactFactorySupplier);
     skyframeExecutor.init();
     return skyframeExecutor;
   }
@@ -279,8 +319,10 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
           SkyFunctions.TARGET_PATTERN_PHASE);
 
   @Override
-  protected void onNewPackageLocator(PathPackageLocator oldLocator, PathPackageLocator pkgLocator) {
+  protected ImmutableMap<Root, ArtifactRoot> createSourceArtifactRootMapOnNewPkgLocator(
+      PathPackageLocator oldLocator, PathPackageLocator pkgLocator) {
     invalidate(SkyFunctionName.functionIsIn(PACKAGE_LOCATOR_DEPENDENT_VALUES));
+    return super.createSourceArtifactRootMapOnNewPkgLocator(oldLocator, pkgLocator);
   }
 
   @Override
@@ -779,15 +821,19 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       SkyKey key = skyKeyAndNodeEntry.getKey();
       SkyFunctionName functionName = key.functionName();
       try {
-        if (functionName.equals(SkyFunctions.CONFIGURED_TARGET)) {
-          actionGraphDump.dumpConfiguredTarget((ConfiguredTargetValue) entry.getValue());
-        } else if (functionName.equals(SkyFunctions.ASPECT)) {
-          AspectValue aspectValue = (AspectValue) entry.getValue();
-          AspectKey aspectKey = aspectValue.getKey();
-          ConfiguredTargetValue configuredTargetValue =
-              (ConfiguredTargetValue)
-                  memoizingEvaluator.getExistingValue(aspectKey.getBaseConfiguredTargetKey());
-          actionGraphDump.dumpAspect(aspectValue, configuredTargetValue);
+        SkyValue skyValue = entry.getValue();
+        // The skyValue may be null in case analysis of the previous build failed.
+        if (skyValue != null) {
+          if (functionName.equals(SkyFunctions.CONFIGURED_TARGET)) {
+            actionGraphDump.dumpConfiguredTarget((ConfiguredTargetValue) skyValue);
+          } else if (functionName.equals(SkyFunctions.ASPECT)) {
+            AspectValue aspectValue = (AspectValue) skyValue;
+            AspectKey aspectKey = aspectValue.getKey();
+            ConfiguredTargetValue configuredTargetValue =
+                (ConfiguredTargetValue)
+                memoizingEvaluator.getExistingValue(aspectKey.getBaseConfiguredTargetKey());
+            actionGraphDump.dumpAspect(aspectValue, configuredTargetValue);
+          }
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();

@@ -18,7 +18,13 @@ import com.google.common.base.Predicates;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Ordering;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 
 /**
  * A lazy, automatically populated registry.
@@ -35,16 +41,32 @@ public class AutoRegistry {
    * where Tristate lives. */
   private static final String PACKAGE_PREFIX = "com.google.devtools";
 
+  /** Class name prefixes to blacklist for {@link DynamicCodec}. */
+  private static final ImmutableList<String> CLASS_NAME_PREFIX_BLACKLIST =
+      ImmutableList.of("com.google.devtools.build.lib.vfs");
+
   /** Classes outside {@link AutoRegistry#PACKAGE_PREFIX} that need to be serialized. */
   private static final ImmutableList<String> EXTERNAL_CLASS_NAMES_TO_REGISTER =
       ImmutableList.of("java.io.FileNotFoundException", "java.io.IOException");
 
-  private static final ImmutableList<Object> CONSTANTS_TO_REGISTER =
+  private static final ImmutableList<Object> REFERENCE_CONSTANTS_TO_REGISTER =
       ImmutableList.of(
           Predicates.alwaysTrue(),
           Predicates.alwaysFalse(),
           Predicates.isNull(),
-          Predicates.notNull());
+          Predicates.notNull(),
+          ImmutableList.of(),
+          ImmutableSet.of(),
+          Comparator.naturalOrder(),
+          Ordering.natural());
+
+  private static final ImmutableList<Object> VALUE_CONSTANTS_TO_REGISTER =
+      ImmutableList.of(
+          "",
+          Boolean.FALSE,
+          Boolean.TRUE,
+          Collections.unmodifiableMap(new HashMap<>()),
+          Collections.unmodifiableList(new ArrayList<>()));
 
   public static ObjectCodecRegistry get() {
     return SUPPLIER.get();
@@ -56,8 +78,14 @@ public class AutoRegistry {
       for (String className : EXTERNAL_CLASS_NAMES_TO_REGISTER) {
         registry.addClassName(className);
       }
-      for (Object constant : CONSTANTS_TO_REGISTER) {
-        registry.addConstant(constant);
+      for (Object constant : REFERENCE_CONSTANTS_TO_REGISTER) {
+        registry.addReferenceConstant(constant);
+      }
+      for (Object constant : VALUE_CONSTANTS_TO_REGISTER) {
+        registry.addValueConstant(constant);
+      }
+      for (String classNamePrefix : CLASS_NAME_PREFIX_BLACKLIST) {
+        registry.blacklistClassNamePrefix(classNamePrefix);
       }
       return registry.build();
     } catch (IOException | ReflectiveOperationException e) {

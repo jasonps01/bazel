@@ -18,6 +18,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType.ABSTRACT;
 import static com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType.TEST;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
@@ -25,7 +26,9 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.analysis.buildinfo.BuildInfoFactory;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Fragment;
@@ -50,6 +53,7 @@ import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.RuleClass;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.packages.RuleErrorConsumer;
+import com.google.devtools.build.lib.packages.RuleTransitionFactory;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.InvocationPolicy;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
@@ -69,6 +73,9 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import javax.annotation.Nullable;
 
 /**
  * Knows about every rule Blaze supports and the associated configuration options.
@@ -227,12 +234,16 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
     private PatchTransition lipoDataTransition;
     private List<Class<? extends BuildConfiguration.Fragment>> universalFragments =
         new ArrayList<>();
+    @Nullable private RuleTransitionFactory trimmingTransitionFactory;
     private PrerequisiteValidator prerequisiteValidator;
     private ImmutableMap.Builder<String, Object> skylarkAccessibleTopLevels =
         ImmutableMap.builder();
     private ImmutableList.Builder<Class<?>> skylarkModules =
         ImmutableList.<Class<?>>builder().addAll(SkylarkModules.MODULES);
     private ImmutableList.Builder<NativeProvider> nativeProviders = ImmutableList.builder();
+    private Set<String> reservedActionMnemonics = new TreeSet<>();
+    private BuildConfiguration.ActionEnvironmentProvider actionEnvironmentProvider =
+        (BuildOptions options) -> ActionEnvironment.EMPTY;
     private ImmutableBiMap.Builder<String, Class<? extends TransitiveInfoProvider>>
         registeredSkylarkProviders = ImmutableBiMap.builder();
 
@@ -362,6 +373,17 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
       return this;
     }
 
+    public Builder addReservedActionMnemonic(String mnemonic) {
+      this.reservedActionMnemonics.add(mnemonic);
+      return this;
+    }
+
+    public Builder setActionEnvironmentProvider(
+        BuildConfiguration.ActionEnvironmentProvider actionEnvironmentProvider) {
+      this.actionEnvironmentProvider = actionEnvironmentProvider;
+      return this;
+    }
+
     /**
      * Sets the C++ LIPO data transition, as defined in {@link
      * com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition}.
@@ -375,6 +397,32 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
       Preconditions.checkState(lipoDataTransition == null, "LIPO data transition already set");
       lipoDataTransition = Preconditions.checkNotNull(transition);
       return this;
+    }
+
+    /**
+     * Sets the transition factory that produces a trimming transition to be run over all targets
+     * after other transitions.
+     *
+     * <p>This is a temporary measure for supporting manual trimming of feature flags, and support
+     * for this transition factory will likely be removed at some point in the future (whenever
+     * automatic trimming is sufficiently workable).
+     */
+    public Builder setTrimmingTransitionFactory(RuleTransitionFactory factory) {
+      Preconditions.checkState(
+          trimmingTransitionFactory == null, "Trimming transition factory already set");
+      trimmingTransitionFactory = Preconditions.checkNotNull(factory);
+      return this;
+    }
+
+    /**
+     * Overrides the transition factory run over all targets.
+     *
+     * @see #setTrimmingTransitionFactory(RuleTransitionFactory)
+     */
+    @VisibleForTesting(/* for testing trimming transition factories without relying on prod use */)
+    public Builder overrideTrimmingTransitionFactoryForTesting(RuleTransitionFactory factory) {
+      trimmingTransitionFactory = null;
+      return this.setTrimmingTransitionFactory(factory);
     }
 
     @Override
@@ -458,9 +506,12 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
           ImmutableList.copyOf(configurationFragmentFactories),
           lipoDataTransition,
           ImmutableList.copyOf(universalFragments),
+          trimmingTransitionFactory,
           prerequisiteValidator,
           skylarkAccessibleTopLevels.build(),
           skylarkModules.build(),
+          ImmutableSet.copyOf(reservedActionMnemonics),
+          actionEnvironmentProvider,
           nativeProviders.build());
     }
 
@@ -555,6 +606,9 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
 
   private final PatchTransition lipoDataTransition;
 
+  /** The transition factory used to produce the transition that will trim targets. */
+  @Nullable private final RuleTransitionFactory trimmingTransitionFactory;
+
   /**
    * Configuration fragments that should be available to all rules even when they don't
    * explicitly require it.
@@ -566,6 +620,10 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
   private final PrerequisiteValidator prerequisiteValidator;
 
   private final Environment.GlobalFrame globals;
+
+  private final ImmutableSet<String> reservedActionMnemonics;
+
+  private final BuildConfiguration.ActionEnvironmentProvider actionEnvironmentProvider;
 
   private final ImmutableList<NativeProvider> nativeProviders;
 
@@ -585,9 +643,12 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
       ImmutableList<ConfigurationFragmentFactory> configurationFragments,
       PatchTransition lipoDataTransition,
       ImmutableList<Class<? extends BuildConfiguration.Fragment>> universalFragments,
+      @Nullable RuleTransitionFactory trimmingTransitionFactory,
       PrerequisiteValidator prerequisiteValidator,
       ImmutableMap<String, Object> skylarkAccessibleJavaClasses,
       ImmutableList<Class<?>> skylarkModules,
+      ImmutableSet<String> reservedActionMnemonics,
+      BuildConfiguration.ActionEnvironmentProvider actionEnvironmentProvider,
       ImmutableList<NativeProvider> nativeProviders) {
     this.preludeLabel = preludeLabel;
     this.runfilesPrefix = runfilesPrefix;
@@ -602,8 +663,11 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
     this.configurationFragmentFactories = configurationFragments;
     this.lipoDataTransition = lipoDataTransition;
     this.universalFragments = universalFragments;
+    this.trimmingTransitionFactory = trimmingTransitionFactory;
     this.prerequisiteValidator = prerequisiteValidator;
     this.globals = createGlobals(skylarkAccessibleJavaClasses, skylarkModules);
+    this.reservedActionMnemonics = reservedActionMnemonics;
+    this.actionEnvironmentProvider = actionEnvironmentProvider;
     this.nativeProviders = nativeProviders;
     this.configurationFragmentMap = createFragmentMap(configurationFragmentFactories);
   }
@@ -666,6 +730,18 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
    */
   public PatchTransition getLipoDataTransition() {
     return lipoDataTransition;
+  }
+
+  /**
+   * Returns the transition factory used to produce the transition to trim targets.
+   *
+   * <p>This is a temporary measure for supporting manual trimming of feature flags, and support
+   * for this transition factory will likely be removed at some point in the future (whenever
+   * automatic trimming is sufficiently workable
+   */
+  @Nullable
+  public RuleTransitionFactory getTrimmingTransitionFactory() {
+    return trimmingTransitionFactory;
   }
 
   /**
@@ -811,6 +887,15 @@ public class ConfiguredRuleClassProvider implements RuleClassProvider {
     }
     fragmentsBuilder.addAll(getUniversalFragments());
     return fragmentsBuilder.build();
+  }
+
+  /** Returns a reserved set of action mnemonics. These cannot be used from a Skylark action. */
+  public ImmutableSet<String> getReservedActionMnemonics() {
+    return reservedActionMnemonics;
+  }
+
+  public BuildConfiguration.ActionEnvironmentProvider getActionEnvironmentProvider() {
+    return actionEnvironmentProvider;
   }
 
   /**

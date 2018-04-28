@@ -25,6 +25,7 @@ if [[ "$1" = "--no_echo" ]]; then
   shift
 else
   echo 'exec ${PAGER:-/usr/bin/less} "$0" || exit 1'
+  echo "Executing tests from ${TEST_TARGET}"
 fi
 
 function is_absolute {
@@ -200,10 +201,10 @@ EOF
 PATH=".:$PATH"
 
 if [ -z "$COVERAGE_DIR" ]; then
-  EXE="$1"
+  EXE="${1#./}"
   shift
 else
-  EXE="$2"
+  EXE="${2#./}"
 fi
 
 if is_absolute "$EXE"; then

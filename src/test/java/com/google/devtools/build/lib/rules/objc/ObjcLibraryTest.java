@@ -44,7 +44,6 @@ import com.google.devtools.build.lib.actions.CommandAction;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
-import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
 import com.google.devtools.build.lib.analysis.util.ScratchAttributeWriter;
@@ -1067,7 +1066,10 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
         .setList("srcs", "a.m")
         .write();
     CppCompileAction compileAction = (CppCompileAction) compileAction("//lib:lib", "a.o");
-    assertThat(compileAction.discoverInputsFromDotdFiles(null, null, null)).isEmpty();
+    assertThat(
+            compileAction.discoverInputsFromDotdFiles(
+                new ActionExecutionContextBuilder().build(), null, null, null))
+        .isEmpty();
   }
 
   @Test
@@ -1223,9 +1225,9 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
     scratch.file("lib/b.m");
     scratch.file("lib/BUILD", "objc_library(name = 'lib1', srcs = ['a.m', 'b.m'])");
     ConfiguredTarget target = getConfiguredTarget("//lib:lib1");
-    Artifact objlist = getBinArtifact("lib1-archive.objlist", target);
-    ParameterFileWriteAction action = (ParameterFileWriteAction) getGeneratingAction(objlist);
-    assertThat(action.getContents())
+    Artifact lib = getBinArtifact("liblib1.a", target);
+    Action action = getGeneratingAction(lib);
+    assertThat(paramFileArgsForAction(action))
         .containsExactlyElementsIn(
             Artifact.toExecPaths(inputsEndingWith(archiveAction("//lib:lib1"), ".o")));
   }
@@ -1702,7 +1704,8 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
     createLibraryTargetWriter("//lib:lib").setList("srcs", "a.m").write();
     CppCompileAction compileAction = (CppCompileAction) compileAction("//lib:lib", "a.o");
     try {
-      compileAction.discoverInputsFromDotdFiles(null, null, null);
+      compileAction.discoverInputsFromDotdFiles(
+          new ActionExecutionContextBuilder().build(), null, null, null);
       fail("Expected ActionExecutionException");
     } catch (ActionExecutionException expected) {
       assertThat(expected).hasMessageThat().contains("error while parsing .d file");

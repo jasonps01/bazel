@@ -38,9 +38,9 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public class ResourceFilterFactoryTest extends ResourceTestBase {
 
-  private NestedSet<ResourceContainer> getResourceContainers(ImmutableList<Artifact>... resources)
-      throws Exception {
-    NestedSetBuilder<ResourceContainer> builder = NestedSetBuilder.naiveLinkOrder();
+  private NestedSet<ValidatedAndroidData> getResourceContainers(
+      ImmutableList<Artifact>... resources) throws Exception {
+    NestedSetBuilder<ValidatedAndroidData> builder = NestedSetBuilder.naiveLinkOrder();
     for (ImmutableList<Artifact> resourceList : resources) {
       builder.add(getResourceContainer(resourceList));
     }
@@ -60,7 +60,8 @@ public class ResourceFilterFactoryTest extends ResourceTestBase {
             manifest.getOwnerLabel().getPackageName(), "resourceContainer_" + resources.hashCode());
 
     return ResourceContainer.builder()
-        .setResources(AndroidResources.forResources(errorConsumer, resources, "resource_files"))
+        .setAndroidResources(
+            AndroidResources.forResources(errorConsumer, resources, "resource_files"))
         .setLabel(label)
         .setManifestExported(false)
         .setManifest(manifest)
@@ -383,10 +384,10 @@ public class ResourceFilterFactoryTest extends ResourceTestBase {
         resourceFilterFactory.getResourceFilter(
             errorConsumer, resourceDependencies, localResources);
 
-    assertThat(localResources.filterLocalResources(filter).getResources())
+    assertThat(localResources.filterLocalResources(errorConsumer, filter).getResources())
         .containsExactly(localResourceToKeep);
 
-    ResourceDependencies filteredResourceDeps = resourceDependencies.filter(filter);
+    ResourceDependencies filteredResourceDeps = resourceDependencies.filter(errorConsumer, filter);
 
     // TODO: Remove - assert was same order before
     assertThat(resourceDependencies.getTransitiveResources())
@@ -397,29 +398,29 @@ public class ResourceFilterFactoryTest extends ResourceTestBase {
         .containsExactly(directResourceToKeep, transitiveResourceToKeep)
         .inOrder();
 
-    List<ResourceContainer> directContainers =
+    List<ValidatedAndroidData> directContainers =
         filteredResourceDeps.getDirectResourceContainers().toList();
     assertThat(directContainers).hasSize(2);
 
-    AndroidResources directToDiscard = directContainers.get(0).getResources();
+    ValidatedAndroidData directToDiscard = directContainers.get(0);
     assertThat(directToDiscard.getResources()).isEmpty();
     assertThat(directToDiscard.getResourceRoots()).isEmpty();
 
-    AndroidResources directToKeep = directContainers.get(1).getResources();
+    ValidatedAndroidData directToKeep = directContainers.get(1);
     assertThat(directToKeep.getResources()).containsExactly(directResourceToKeep);
     assertThat(directToKeep.getResourceRoots())
         .containsExactly(
             directResourceToKeep.getExecPath().getParentDirectory().getParentDirectory());
 
-    List<ResourceContainer> transitiveContainers =
+    List<ValidatedAndroidData> transitiveContainers =
         filteredResourceDeps.getTransitiveResourceContainers().toList();
     assertThat(transitiveContainers).hasSize(2);
 
-    AndroidResources transitiveToDiscard = transitiveContainers.get(0).getResources();
+    ValidatedAndroidData transitiveToDiscard = transitiveContainers.get(0);
     assertThat(transitiveToDiscard.getResources()).isEmpty();
     assertThat(transitiveToDiscard.getResourceRoots()).isEmpty();
 
-    AndroidResources transitiveToKeep = transitiveContainers.get(1).getResources();
+    ValidatedAndroidData transitiveToKeep = transitiveContainers.get(1);
     assertThat(transitiveToKeep.getResources()).containsExactly(transitiveResourceToKeep);
     assertThat(transitiveToKeep.getResourceRoots())
         .containsExactly(
@@ -500,8 +501,8 @@ public class ResourceFilterFactoryTest extends ResourceTestBase {
     ResourceFilter filter =
         resourceFilterFactory.getResourceFilter(errorConsumer, resourceDeps, localResources);
 
-    assertThat(resourceDeps.filter(filter)).isSameAs(resourceDeps);
+    assertThat(resourceDeps.filter(errorConsumer, filter)).isSameAs(resourceDeps);
 
-    return localResources.filterLocalResources(filter).getResources();
+    return localResources.filterLocalResources(errorConsumer, filter).getResources();
   }
 }

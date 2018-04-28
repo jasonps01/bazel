@@ -38,7 +38,7 @@ public class ResourceShrinkerActionBuilder {
   private Artifact resourceFilesZip;
   private Artifact shrunkJar;
   private Artifact proguardMapping;
-  private ResourceContainer primaryResources;
+  private ValidatedAndroidData primaryResources;
   private ResourceDependencies dependencyResources;
   private Artifact resourceApkOut;
   private Artifact shrunkResourcesOut;
@@ -91,10 +91,10 @@ public class ResourceShrinkerActionBuilder {
   }
 
   /**
-   * @param primary The fully processed {@link ResourceContainer} of the resources to be shrunk.
+   * @param primary The fully processed {@link ValidatedAndroidData} of the resources to be shrunk.
    *     Must contain both an R.txt and merged manifest.
    */
-  public ResourceShrinkerActionBuilder withPrimary(ResourceContainer primary) {
+  public ResourceShrinkerActionBuilder withPrimary(ValidatedAndroidData primary) {
     checkNotNull(primary);
     checkNotNull(primary.getManifest());
     checkNotNull(primary.getRTxt());
@@ -236,7 +236,7 @@ public class ResourceShrinkerActionBuilder {
 
   private ImmutableList<Artifact> getManifests(ResourceDependencies resourceDependencies) {
     ImmutableList.Builder<Artifact> manifests = ImmutableList.builder();
-    for (ResourceContainer resources : resourceDependencies.getResourceContainers()) {
+    for (ValidatedAndroidData resources : resourceDependencies.getResourceContainers()) {
       if (resources.getManifest() != null) {
         manifests.add(resources.getManifest());
       }
@@ -245,10 +245,10 @@ public class ResourceShrinkerActionBuilder {
   }
 
   private ImmutableList<String> getResourcePackages(
-      ResourceContainer primaryResources, ResourceDependencies resourceDependencies) {
+      ValidatedAndroidData primaryResources, ResourceDependencies resourceDependencies) {
     ImmutableList.Builder<String> resourcePackages = ImmutableList.builder();
     resourcePackages.add(primaryResources.getJavaPackage());
-    for (ResourceContainer resources : resourceDependencies.getResourceContainers()) {
+    for (ValidatedAndroidData resources : resourceDependencies.getResourceContainers()) {
       resourcePackages.add(resources.getJavaPackage());
     }
     return resourcePackages.build();

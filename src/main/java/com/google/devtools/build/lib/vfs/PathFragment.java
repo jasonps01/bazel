@@ -53,7 +53,7 @@ public final class PathFragment
         CommandLineItem {
   private static final OsPathPolicy OS = OsPathPolicy.getFilePathOs();
 
-  public static final PathFragment EMPTY_FRAGMENT = create("");
+  @AutoCodec public static final PathFragment EMPTY_FRAGMENT = create("");
   public static final char SEPARATOR_CHAR = OS.getSeparator();
   public static final int INVALID_SEGMENT = -1;
 
@@ -620,7 +620,7 @@ public final class PathFragment
    * these are always normalized and will throw uplevel references away.
    */
   public static boolean isNormalized(String path) {
-    return isNormalizedImpl(path, true /* lookForSameLevelReferences */);
+    return isNormalizedImpl(path, /* lookForSameLevelReferences= */ true);
   }
 
   /**
@@ -630,7 +630,7 @@ public final class PathFragment
    * these are always normalized and will throw uplevel references away.
    */
   public static boolean containsUplevelReferences(String path) {
-    return !isNormalizedImpl(path, false /* lookForSameLevelReferences */);
+    return !isNormalizedImpl(path, /* lookForSameLevelReferences= */ false);
   }
 
   private enum NormalizedImplState {

@@ -16,8 +16,24 @@ filegroup(
     name = "embedded_tools",
     srcs = [
         "BUILD.tools",
+        "runfiles.bash",
     ],
     visibility = ["//tools/bash:__pkg__"],
+)
+
+sh_library(
+    name = "runfiles_lib",
+    testonly = 1,
+    srcs = ["runfiles.bash"],
+    # TODO(laszlocsomor): remove this visibility after the tests under
+    # //src/test/shell/... depend on @bazel_tools//tools/bash/runfiles
+    visibility = ["//src/test/shell:__subpackages__"],
+)
+
+sh_test(
+    name = "runfiles_test",
+    srcs = ["runfiles_test.bash"],
+    deps = [":runfiles_lib"],
 )
 
 test_suite(

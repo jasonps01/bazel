@@ -1,13 +1,14 @@
 py_binary(
     name = "runfiles-py",
-    srcs = ["runfiles.py"],
+    srcs = ["foo.py"],
     data = [
         "datadep/hello.txt",
-        "//bar:bar-py",
         "//bar:bar-java",
+        "//bar:bar-py",
+        "//bar:bar-sh",
     ],
-    main = "runfiles.py",
-    deps = ["@bazel_tools//tools/runfiles:py-runfiles"],
+    main = "foo.py",
+    deps = ["@bazel_tools//tools/python/runfiles"],
 )
 
 java_binary(
@@ -15,7 +16,22 @@ java_binary(
     srcs = ["Foo.java"],
     data = [
         "datadep/hello.txt",
+        "//bar:bar-py",
+        "//bar:bar-java",
+        "//bar:bar-sh",
     ],
     main_class = "Foo",
     deps = ["@bazel_tools//tools/runfiles:java-runfiles"],
+)
+
+sh_binary(
+    name = "runfiles-sh",
+    srcs = ["foo.sh"],
+    data = [
+        "datadep/hello.txt",
+        "//bar:bar-java",
+        "//bar:bar-py",
+        "//bar:bar-sh",
+    ],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
 )

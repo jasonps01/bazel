@@ -20,7 +20,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableMap.Builder;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Ordering;
@@ -278,7 +277,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
         }
       }
 
-      Builder<Artifact, Label> artifactLabelMapBuilder = ImmutableMap.builder();
+      ImmutableMap.Builder<Artifact, Label> artifactLabelMapBuilder = ImmutableMap.builder();
       for (Attribute a : attributes) {
         String attrName = a.getName();
         Type<?> type = a.getType();
@@ -1087,6 +1086,20 @@ public final class SkylarkRuleContext implements SkylarkValue {
         doc = "The executable file to be called by the action."
       ),
       @Param(
+        name = "tools",
+        allowedTypes = {
+          @ParamType(type = SkylarkList.class),
+          @ParamType(type = SkylarkNestedSet.class),
+        },
+        generic1 = Artifact.class,
+        defaultValue = "unbound",
+        named = true,
+        positional = false,
+        doc =
+            "List of the any tools needed by the action. Tools are inputs with additional "
+                + "runfiles that are automatically made available to the action."
+      ),
+      @Param(
         name = "arguments",
         allowedTypes = {
           @ParamType(type = SkylarkList.class),
@@ -1186,6 +1199,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
       SkylarkList outputs,
       Object inputs,
       Object executableUnchecked,
+      Object toolsUnchecked,
       Object arguments,
       Object mnemonicUnchecked,
       Object commandUnchecked,
@@ -1210,19 +1224,22 @@ public final class SkylarkRuleContext implements SkylarkValue {
               outputs,
               inputs,
               executableUnchecked,
+              toolsUnchecked,
               arguments,
               mnemonicUnchecked,
               progressMessage,
               useDefaultShellEnv,
               envUnchecked,
               executionRequirementsUnchecked,
-              inputManifestsUnchecked);
+              inputManifestsUnchecked,
+              loc);
 
     } else {
       actions()
           .runShell(
               outputs,
               inputs,
+              toolsUnchecked,
               arguments,
               mnemonicUnchecked,
               commandUnchecked,
@@ -1230,7 +1247,8 @@ public final class SkylarkRuleContext implements SkylarkValue {
               useDefaultShellEnv,
               envUnchecked,
               executionRequirementsUnchecked,
-              inputManifestsUnchecked);
+              inputManifestsUnchecked,
+              loc);
     }
     return Runtime.NONE;
   }

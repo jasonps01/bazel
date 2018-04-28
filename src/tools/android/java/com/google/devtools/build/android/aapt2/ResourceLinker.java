@@ -47,6 +47,9 @@ import java.util.stream.Stream;
 
 /** Performs linking of {@link CompiledResources} using aapt2. */
 public class ResourceLinker {
+
+  private boolean debug;
+
   /** Represents errors thrown during linking. */
   public static class LinkError extends Aapt2Exception {
 
@@ -119,6 +122,11 @@ public class ResourceLinker {
 
   public ResourceLinker buildVersion(Revision buildToolsVersion) {
     this.buildToolsVersion = buildToolsVersion;
+    return this;
+  }
+
+  public ResourceLinker debug(boolean debug) {
+    this.debug = debug;
     return this;
   }
 
@@ -216,7 +224,7 @@ public class ResourceLinker {
       }
 
       profiler.startTask("sourcejar");
-      AndroidResourceOutputs.createSrcJar(javaSourceDirectory, sourceJar, true /* staticIds */);
+      AndroidResourceOutputs.createSrcJar(javaSourceDirectory, sourceJar, /* staticIds= */ true);
       profiler.recordEndOf("sourcejar");
       return StaticLibrary.from(outPath, rTxt, ImmutableList.of(), sourceJar);
     } catch (IOException e) {
@@ -310,6 +318,8 @@ public class ResourceLinker {
               .add("--manifest", compiled.getManifest())
               // Enables resource redefinition and merging
               .add("--auto-add-overlay")
+              .when(debug)
+              .thenAdd("--debug-mode")
               .add("--custom-package", customPackage)
               .when(densities.size() == 1)
               .thenAddRepeated("--preferred-density", densities)
@@ -350,6 +360,8 @@ public class ResourceLinker {
               .forBuildToolsVersion(buildToolsVersion)
               .forVariantType(VariantType.DEFAULT)
               .add("optimize")
+              .when(Objects.equals(logger.getLevel(), Level.FINE))
+              .thenAdd("-v")
               .add("--target-densities", densities.stream().collect(Collectors.joining(",")))
               .add("-o", optimized)
               .add(outPath.toString())

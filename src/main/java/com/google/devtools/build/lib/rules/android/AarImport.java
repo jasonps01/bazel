@@ -33,6 +33,8 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.rules.java.ImportDepsCheckActionBuilder;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
+import com.google.devtools.build.lib.rules.java.JavaCompilationArgs;
+import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration;
@@ -40,7 +42,6 @@ import com.google.devtools.build.lib.rules.java.JavaConfiguration.ImportDepsChec
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaRuntimeInfo;
-import com.google.devtools.build.lib.rules.java.JavaRuntimeJarProvider;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
 import com.google.devtools.build.lib.rules.java.JavaSkylarkApiProvider;
 import com.google.devtools.build.lib.rules.java.JavaToolchainProvider;
@@ -89,29 +90,46 @@ public class AarImport implements RuleConfiguredTargetFactory {
     ruleContext.registerAction(
         createAarResourcesExtractorActions(ruleContext, aar, resources, assets));
 
-    ApplicationManifest androidManifest =
-        ApplicationManifest.fromExplicitManifest(ruleContext, androidManifestArtifact);
+    final ResourceApk resourceApk;
+    if (AndroidResources.decoupleDataProcessing(ruleContext)) {
+      StampedAndroidManifest manifest =
+          AndroidManifest.forAarImport(ruleContext, androidManifestArtifact);
 
-    Artifact resourcesZip =
-        ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_ZIP);
+      boolean neverlink = JavaCommon.isNeverLink(ruleContext);
+      ValidatedAndroidResources validatedResources =
+          AndroidResources.forAarImport(resources).process(ruleContext, manifest, neverlink);
+      MergedAndroidAssets mergedAssets =
+          AndroidAssets.forAarImport(assets).process(ruleContext, neverlink);
 
-    ResourceApk resourceApk =
-        androidManifest.packAarWithDataAndResources(
-            ruleContext,
-            AndroidAssets.forAarImport(assets),
-            AndroidResources.forAarImport(resources),
-            ResourceDependencies.fromRuleDeps(ruleContext, JavaCommon.isNeverLink(ruleContext)),
-            ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_R_TXT),
-            ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_LOCAL_SYMBOLS),
-            ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_PROCESSED_MANIFEST),
-            resourcesZip);
+      resourceApk = ResourceApk.of(validatedResources, mergedAssets);
+    } else {
+      ApplicationManifest androidManifest =
+          ApplicationManifest.fromExplicitManifest(ruleContext, androidManifestArtifact);
+
+      Artifact resourcesZip =
+          ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_ZIP);
+
+      resourceApk =
+          androidManifest.packAarWithDataAndResources(
+              ruleContext,
+              AndroidAssets.forAarImport(assets),
+              AndroidResources.forAarImport(resources),
+              ResourceDependencies.fromRuleDeps(ruleContext, JavaCommon.isNeverLink(ruleContext)),
+              ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_R_TXT),
+              ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_LOCAL_SYMBOLS),
+              ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_PROCESSED_MANIFEST),
+              resourcesZip);
+    }
 
     // There isn't really any use case for building an aar_import target on its own, so the files to
     // build could be empty. The resources zip and merged jars are added here as a sanity check for
     // Bazel developers so that `bazel build java/com/my_aar_import` will fail if the resource
     // processing or jar merging steps fail.
     NestedSet<Artifact> filesToBuild =
-        NestedSetBuilder.<Artifact>stableOrder().add(resourcesZip).add(mergedJar).build();
+        NestedSetBuilder.<Artifact>stableOrder()
+            .add(resourceApk.getValidatedResources().getMergedResources())
+            .add(mergedJar)
+            .build();
 
     Artifact nativeLibs = createAarArtifact(ruleContext, "native_libs.zip");
     ruleContext.registerAction(createAarNativeLibsFilterActions(ruleContext, aar, nativeLibs));
@@ -132,14 +150,8 @@ public class AarImport implements RuleConfiguredTargetFactory {
             /* compileDeps = */ targets,
             /* runtimeDeps = */ targets,
             /* bothDeps = */ targets);
-    // Need to compute the "deps" here, as mergedJar is put on the classpath later too.
-    NestedSet<Artifact> deps =
-        common
-            .collectJavaCompilationArgs(
-                /* recursive = */ true,
-                JavaCommon.isNeverLink(ruleContext),
-                /* srcLessDepsExport = */ false)
-            .getCompileTimeJars();
+    javaSemantics.checkRule(ruleContext, common);
+
     common.setJavaCompilationArtifacts(
         new JavaCompilationArtifacts.Builder()
             .addRuntimeJar(mergedJar)
@@ -157,10 +169,13 @@ public class AarImport implements RuleConfiguredTargetFactory {
                 JavaCommon.isNeverLink(ruleContext),
                 /* srcLessDepsExport = */ false));
 
-    JavaConfiguration javaConfig = ruleContext.getFragment(JavaConfiguration.class);
-
     Artifact depsCheckerResult = null;
+    JavaConfiguration javaConfig = ruleContext.getFragment(JavaConfiguration.class);
     if (javaConfig.getImportDepsCheckingLevel() != ImportDepsCheckingLevel.OFF) {
+      NestedSet<Artifact> deps =
+          getCompileTimeJarsFromCollection(
+              targets,
+              javaConfig.getImportDepsCheckingLevel() == ImportDepsCheckingLevel.STRICT_ERROR);
       NestedSet<Artifact> bootclasspath = getBootclasspath(ruleContext);
       depsCheckerResult = createAarArtifact(ruleContext, "aar_import_deps_checker_result.txt");
       ImportDepsCheckActionBuilder.newBuilder()
@@ -181,29 +196,43 @@ public class AarImport implements RuleConfiguredTargetFactory {
 
     JavaInfo.Builder javaInfoBuilder =
         JavaInfo.Builder.create()
+            .setRuntimeJars(ImmutableList.of(mergedJar))
+            .setJavaConstraints(ImmutableList.of("android"))
+            .setNeverlink(JavaCommon.isNeverLink(ruleContext))
             .addProvider(JavaCompilationArgsProvider.class, javaCompilationArgsProvider)
             .addProvider(JavaRuleOutputJarsProvider.class, jarProviderBuilder.build());
 
     common.addTransitiveInfoProviders(
         ruleBuilder, javaInfoBuilder, filesToBuild, /*classJar=*/ null);
 
+    resourceApk.addToConfiguredTargetBuilder(
+        ruleBuilder, ruleContext.getLabel(), /* includeSkylarkApiProvider = */ false);
+
     ruleBuilder
         .setFilesToBuild(filesToBuild)
         .addSkylarkTransitiveInfo(
             JavaSkylarkApiProvider.NAME, JavaSkylarkApiProvider.fromRuleContext())
         .addProvider(RunfilesProvider.class, RunfilesProvider.EMPTY)
-        .addNativeDeclaredProvider(resourceApk.toResourceInfo(ruleContext.getLabel()))
         .addNativeDeclaredProvider(
             new AndroidNativeLibsInfo(
                 AndroidCommon.collectTransitiveNativeLibs(ruleContext).add(nativeLibs).build()))
-        .addProvider(
-            JavaRuntimeJarProvider.class, new JavaRuntimeJarProvider(ImmutableList.of(mergedJar)))
         .addNativeDeclaredProvider(javaInfoBuilder.build());
     if (depsCheckerResult != null) {
       // Add the deps check result so that we can unit test it.
       ruleBuilder.addOutputGroup(OutputGroupInfo.HIDDEN_TOP_LEVEL, depsCheckerResult);
     }
     return ruleBuilder.build();
+  }
+
+  private NestedSet<Artifact> getCompileTimeJarsFromCollection(
+      ImmutableList<TransitiveInfoCollection> deps, boolean isStrict) {
+    return JavaCompilationArgs.builder()
+        .addTransitiveCompilationArgs(
+            JavaCompilationArgsProvider.legacyFromTargets(deps),
+            /*recursive=*/ !isStrict,
+            ClasspathType.BOTH)
+        .build()
+        .getCompileTimeJars();
   }
 
   private NestedSet<Artifact> getBootclasspath(RuleContext ruleContext) {

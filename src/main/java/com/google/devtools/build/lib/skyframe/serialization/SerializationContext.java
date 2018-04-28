@@ -86,15 +86,20 @@ public class SerializationContext {
    *
    * <p>This method is idempotent: calling it on an already memoizing context will return the same
    * context.
-   *
-   * <p><em>This is public for testing and {@link
-   * com.google.devtools.build.lib.packages.PackageSerializer} only.</em>
    */
   @CheckReturnValue
-  public SerializationContext getMemoizingContext() {
+  SerializationContext getMemoizingContext() {
     if (serializer != null) {
       return this;
     }
+    return getNewMemoizingContext();
+  }
+
+  /**
+   * Returns a memoizing {@link SerializationContext}, as getMemoizingContext above. Unlike
+   * getMemoizingContext, this method is not idempotent - the returned context will always be fresh.
+   */
+  public SerializationContext getNewMemoizingContext() {
     return new SerializationContext(this.registry, this.dependencies, new Memoizer.Serializer());
   }
 

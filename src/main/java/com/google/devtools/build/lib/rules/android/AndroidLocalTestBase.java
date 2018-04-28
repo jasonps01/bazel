@@ -13,8 +13,8 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.android;
 
+import static com.google.devtools.build.lib.rules.java.DeployArchiveBuilder.Compression.COMPRESSED;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
@@ -36,11 +36,11 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.BuildType;
-import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidAaptVersion;
 import com.google.devtools.build.lib.rules.java.ClasspathConfiguredFragment;
+import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
-import com.google.devtools.build.lib.rules.java.JavaCompilationArgs;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
+import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
 import com.google.devtools.build.lib.rules.java.JavaCompilationHelper;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration;
@@ -88,41 +88,48 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     // since they run on a JVM, not an android device.
     JavaTargetAttributes.Builder attributesBuilder = javaCommon.initCommon();
 
-    // Create the final merged manifest
-    ResourceDependencies resourceDependencies =
-        ResourceDependencies.fromRuleDeps(ruleContext, false /* neverlink */);
-    ApplicationManifest applicationManifest =
-        getApplicationManifest(ruleContext, androidSemantics, resourceDependencies);
-    Artifact manifest = applicationManifest.getManifest();
-    String manifestLocation = manifest.getRunfilesPathString();
+    final ResourceApk resourceApk;
+    final Artifact unprocessedManifest;
 
-    // Create merged resources and assets zip file
-    Artifact resourcesZip =
-        ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_ZIP);
-    String resourcesLocation = resourcesZip.getRunfilesPathString();
+    if (AndroidResources.decoupleDataProcessing(ruleContext)) {
+      StampedAndroidManifest manifest =
+          StampedAndroidManifest.from(ruleContext, androidSemantics).mergeWithDeps(ruleContext);
+      unprocessedManifest = manifest.getManifest();
 
-    // Create the final merged R class
-    Artifact resourcesClassJar =
-        ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_CLASS_JAR);
-    ResourceApk resourceApk =
-        applicationManifest.packBinaryWithDataAndResources(
-            ruleContext,
-            ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_APK),
-            resourceDependencies,
-            ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_R_TXT),
-            ResourceFilterFactory.fromRuleContext(ruleContext),
-            ImmutableList.of(), /* list of uncompressed extensions */
-            false, /* crunch png */
-            ProguardHelper.getProguardConfigArtifact(ruleContext, ""),
-            null, /* mainDexProguardCfg */
-            false, /* conditionalKeepRules */
-            ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_PROCESSED_MANIFEST),
-            resourcesZip,
-            DataBinding.isEnabled(ruleContext) ? DataBinding.getLayoutInfoFile(ruleContext) : null,
-            null, /* featureOfArtifact */
-            null /* featureAfterArtifact */);
-    compileResourceJar(ruleContext, resourceApk, resourcesClassJar);
-    attributesBuilder.addRuntimeClassPathEntry(resourcesClassJar);
+      resourceApk =
+          ProcessedAndroidData.processLocalTestDataFrom(ruleContext, manifest)
+              .generateRClass(ruleContext);
+    } else {
+      // Create the final merged manifest
+      ResourceDependencies resourceDependencies =
+          ResourceDependencies.fromRuleDeps(ruleContext, /* neverlink= */ false);
+
+      ApplicationManifest applicationManifest =
+          getApplicationManifest(ruleContext, androidSemantics, resourceDependencies);
+      unprocessedManifest = applicationManifest.getManifest();
+
+      // Create the final merged R class
+      resourceApk =
+          applicationManifest.packBinaryWithDataAndResources(
+              ruleContext,
+              ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_APK),
+              resourceDependencies,
+              ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_R_TXT),
+              ResourceFilterFactory.fromRuleContext(ruleContext),
+              ImmutableList.of(), /* list of uncompressed extensions */
+              false, /* crunch png */
+              ProguardHelper.getProguardConfigArtifact(ruleContext, ""),
+              /* mainDexProguardCfg= */ null,
+              /* conditionalKeepRules= */ false,
+              ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_PROCESSED_MANIFEST),
+              ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_ZIP),
+              DataBinding.isEnabled(ruleContext)
+                  ? DataBinding.getLayoutInfoFile(ruleContext)
+                  : null,
+              null, /* featureOfArtifact */
+              null /* featureAfterArtifact */);
+      attributesBuilder.addRuntimeClassPathEntry(resourceApk.getResourceJavaClassJar());
+    }
 
     // Exclude the Rs from the library from the runtime classpath.
     NestedSet<Artifact> excludedRuntimeArtifacts = getLibraryResourceJars(ruleContext);
@@ -132,17 +139,20 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     String name = "_robolectric/" + ruleContext.getRule().getName() + "_test_config.properties";
     Artifact propertiesFile = ruleContext.getGenfilesArtifact(name);
 
+    String resourcesLocation =
+        resourceApk.getValidatedResources().getMergedResources().getRunfilesPathString();
     Template template =
         Template.forResource(AndroidLocalTestBase.class, "robolectric_properties_template.txt");
     List<Substitution> substitutions = new ArrayList<>();
-    substitutions.add(Substitution.of("%android_merged_manifest%", manifestLocation));
+    substitutions.add(
+        Substitution.of("%android_merged_manifest%", unprocessedManifest.getRunfilesPathString()));
     substitutions.add(
         Substitution.of("%android_merged_resources%", "jar:file:" + resourcesLocation + "!/res"));
     substitutions.add(
         Substitution.of("%android_merged_assets%", "jar:file:" + resourcesLocation + "!/assets"));
     substitutions.add(
         Substitution.of(
-            "%android_custom_package%", resourceApk.getPrimaryResource().getJavaPackage()));
+            "%android_custom_package%", resourceApk.getValidatedResources().getJavaPackage()));
 
     boolean generateBinaryResources =
         androidLocalTestConfiguration.useAndroidLocalTestBinaryResources();
@@ -158,7 +168,7 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
             propertiesFile,
             template,
             substitutions,
-            false /* makeExecutable */));
+            /* makeExecutable= */ false));
     // Add the properties file to the test jar as a java resource
     attributesBuilder.addResource(
         PathFragment.create("com/android/tools/test_config.properties"), propertiesFile);
@@ -298,13 +308,34 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
             ruleContext,
             javaCommon,
             filesToBuild,
-            manifest,
-            resourcesClassJar,
-            resourcesZip,
+            unprocessedManifest,
+            resourceApk.getResourceJavaClassJar(),
+            resourceApk.getValidatedResources().getMergedResources(),
             generateBinaryResources ? resourceApk : null);
 
     RunfilesSupport runfilesSupport =
         RunfilesSupport.withExecutable(ruleContext, defaultRunfiles, executable);
+
+    Artifact deployJar =
+        ruleContext.getImplicitOutputArtifact(JavaSemantics.JAVA_BINARY_DEPLOY_JAR);
+
+    // Create the deploy jar and make it dependent on the runfiles middleman if an executable is
+    // created. Do not add the deploy jar to files to build, so we will only build it when it gets
+    // requested.
+    new DeployArchiveBuilder(javaSemantics, ruleContext)
+        .setOutputJar(deployJar)
+        .setJavaStartClass(mainClass)
+        .setDeployManifestLines(ImmutableList.<String>of())
+        .setAttributes(helper.getAttributes())
+        .addRuntimeJars(javaCommon.getJavaCompilationArtifacts().getRuntimeJars())
+        .setIncludeBuildData(true)
+        .setRunfilesMiddleman(runfilesSupport.getRunfilesMiddleman())
+        .setCompression(COMPRESSED)
+        .setLauncher(launcher)
+        .setOneVersionEnforcementLevel(
+            doOneVersionEnforcement ? oneVersionEnforcementLevel : OneVersionEnforcementLevel.OFF,
+            javaToolchain.getOneVersionWhitelist())
+        .build();
 
     JavaSourceJarsProvider sourceJarsProvider = javaSourceJarsProviderBuilder.build();
     NestedSet<Artifact> transitiveSourceJars = sourceJarsProvider.getTransitiveSourceJars();
@@ -362,22 +393,6 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
             JavaSourceInfoProvider.fromJavaTargetAttributes(helper.getAttributes(), javaSemantics))
         .addOutputGroup(JavaSemantics.SOURCE_JARS_OUTPUT_GROUP, transitiveSourceJars)
         .build();
-  }
-
-  /** Creates the final merged R class with all of the transitive resources. */
-  private void compileResourceJar(
-      RuleContext ruleContext, ResourceApk resourceApk, Artifact resourceClassJar)
-      throws InterruptedException, RuleErrorException {
-    if (resourceApk.getResourceJavaClassJar() == null) {
-      new RClassGeneratorActionBuilder(ruleContext)
-          .targetAaptVersion(AndroidAaptVersion.chooseTargetAaptVersion(ruleContext))
-          .withPrimary(resourceApk.getPrimaryResource())
-          .withDependencies(resourceApk.getResourceDependencies())
-          .setClassJarOut(resourceClassJar)
-          .build();
-    } else {
-      Preconditions.checkArgument(resourceApk.getResourceJavaClassJar().equals(resourceClassJar));
-    }
   }
 
   /**
@@ -496,12 +511,8 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     // The dep may be a simple JAR and not a java rule, hence we can't simply do
     // dep.getProvider(JavaCompilationArgsProvider.class).getRecursiveJavaCompilationArgs(),
     // so we reuse the logic within JavaCompilationArgs to handle both scenarios.
-    JavaCompilationArgs args =
-        JavaCompilationArgs.builder()
-            .addTransitiveTargets(
-                ImmutableList.of(deps), /*recursive=*/ true, ClasspathType.RUNTIME_ONLY)
-            .build();
-    return args.getRuntimeJars();
+    return JavaCompilationArgsProvider.legacyFromTargets(ImmutableList.of(deps))
+        .getRuntimeJars();
   }
 
   private static String getAndCheckTestClass(

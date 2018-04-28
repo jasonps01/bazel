@@ -20,7 +20,6 @@ import static com.google.devtools.build.lib.packages.ImplicitOutputsFunction.fro
 
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.LanguageDependentFragment.LibraryLanguage;
@@ -365,9 +364,13 @@ public interface JavaSemantics {
   void addRunfilesForLibrary(RuleContext ruleContext, Runfiles.Builder runfilesBuilder);
 
   /**
-   * Returns the additional options to be passed to javac.
+   * Returns the command line options to be used when compiling Java code for {@code java_*} rules.
+   *
+   * <p>These will come after the default options specified by the toolchain, and before the ones in
+   * the {@code javacopts} attribute.
    */
-  Iterable<String> getExtraJavacOpts(RuleContext ruleContext);
+  ImmutableList<String> getCompatibleJavacOptions(
+      RuleContext ruleContext, JavaToolchainProvider toolchain);
 
   /**
    * Add additional targets to be treated as direct dependencies.
@@ -419,15 +422,10 @@ public interface JavaSemantics {
    * Adds extra providers to a Java target.
    * @throws InterruptedException
    */
-  void addProviders(RuleContext ruleContext,
+  void addProviders(
+      RuleContext ruleContext,
       JavaCommon javaCommon,
-      List<String> jvmFlags,
-      Artifact classJar,
-      Artifact srcJar,
-      Artifact genJar,
       Artifact gensrcJar,
-      ImmutableMap<Artifact, Artifact> compilationToRuntimeJarMap,
-      NestedSetBuilder<Artifact> filesBuilder,
       RuleConfiguredTargetBuilder ruleBuilder) throws InterruptedException;
 
   /**
@@ -466,13 +464,6 @@ public interface JavaSemantics {
    * then detect its custom artifact types and add it to the builder.
    */
   void addArtifactToJavaTargetAttribute(JavaTargetAttributes.Builder builder, Artifact srcArtifact);
-
-  /**
-   * Works on the list of dependencies of a java target to builder the {@link JavaTargetAttributes}.
-   * This work is performed in {@link JavaCommon} for all java targets.
-   */
-  void commonDependencyProcessing(RuleContext ruleContext, JavaTargetAttributes.Builder attributes,
-      Collection<? extends TransitiveInfoCollection> deps);
 
   /**
    * Takes the path of a Java resource and tries to determine the Java

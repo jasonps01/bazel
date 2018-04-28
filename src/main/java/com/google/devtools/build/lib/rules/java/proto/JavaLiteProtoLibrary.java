@@ -62,8 +62,7 @@ public class JavaLiteProtoLibrary implements RuleConfiguredTargetFactory {
     // with the same root relative path
     Runfiles runfiles =
         new Runfiles.Builder(ruleContext.getWorkspaceName())
-            .addTransitiveArtifactsWrappedInStableOrder(
-                dependencyArgsProviders.getRecursiveJavaCompilationArgs().getRuntimeJars())
+            .addTransitiveArtifactsWrappedInStableOrder(dependencyArgsProviders.getRuntimeJars())
             .build();
 
     JavaSourceJarsProvider sourceJarsProvider =
@@ -93,6 +92,7 @@ public class JavaLiteProtoLibrary implements RuleConfiguredTargetFactory {
                         ruleContext.getPrerequisites("deps", TARGET))))
             .addProvider(JavaRuleOutputJarsProvider.class, JavaRuleOutputJarsProvider.EMPTY)
             .addProvider(JavaRunfilesProvider.class, javaRunfilesProvider)
+            .setJavaConstraints(ImmutableList.of("android"))
             .build();
 
     return new RuleConfiguredTargetBuilder(ruleContext)

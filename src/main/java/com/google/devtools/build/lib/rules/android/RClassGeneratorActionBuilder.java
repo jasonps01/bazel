@@ -38,7 +38,6 @@ import javax.annotation.Nullable;
 public class RClassGeneratorActionBuilder {
 
   private final RuleContext ruleContext;
-  private ResourceContainer primary;
   private ResourceDependencies dependencies;
 
   private Artifact classJarOut;
@@ -48,11 +47,6 @@ public class RClassGeneratorActionBuilder {
   /** @param ruleContext The RuleContext that is used to create a SpawnAction.Builder. */
   public RClassGeneratorActionBuilder(RuleContext ruleContext) {
     this.ruleContext = ruleContext;
-  }
-
-  public RClassGeneratorActionBuilder withPrimary(ResourceContainer primary) {
-    this.primary = primary;
-    return this;
   }
 
   public RClassGeneratorActionBuilder withDependencies(ResourceDependencies resourceDeps) {
@@ -70,7 +64,19 @@ public class RClassGeneratorActionBuilder {
     return this;
   }
 
-  public void build() {
+  public ResourceContainer build(ResourceContainer primary) {
+    build(primary.getRTxt(), ProcessedAndroidManifest.from(primary));
+
+    return primary.toBuilder().setJavaClassJar(classJarOut).build();
+  }
+
+  public ResourceApk build(ProcessedAndroidData data) {
+    build(data.getRTxt(), data.getManifest());
+
+    return data.withValidatedResources(classJarOut);
+  }
+
+  private void build(Artifact rTxt, ProcessedAndroidManifest manifest) {
     CustomCommandLine.Builder builder = new CustomCommandLine.Builder();
 
     // Set the busybox tool.
@@ -84,20 +90,16 @@ public class RClassGeneratorActionBuilder {
             .getRunfilesArtifacts());
 
     List<Artifact> outs = new ArrayList<>();
-    if (primary.getRTxt() != null) {
-      builder.addExecPath("--primaryRTxt", primary.getRTxt());
-      inputs.add(primary.getRTxt());
-    }
-    if (primary.getManifest() != null) {
-      builder.addExecPath("--primaryManifest", primary.getManifest());
-      inputs.add(primary.getManifest());
-    }
-    if (!Strings.isNullOrEmpty(primary.getJavaPackage())) {
-      builder.add("--packageForR", primary.getJavaPackage());
+    builder.addExecPath("--primaryRTxt", rTxt);
+    inputs.add(rTxt);
+    builder.addExecPath("--primaryManifest", manifest.getManifest());
+    inputs.add(manifest.getManifest());
+    if (!Strings.isNullOrEmpty(manifest.getPackage())) {
+      builder.add("--packageForR", manifest.getPackage());
     }
     if (dependencies != null) {
       // TODO(corysmith): Remove NestedSet as we are already flattening it.
-      Iterable<ResourceContainer> depResources = dependencies.getResourceContainers();
+      Iterable<ValidatedAndroidData> depResources = dependencies.getResourceContainers();
       if (!Iterables.isEmpty(depResources)) {
         builder.addAll(
             VectorArg.addBefore("--library")
@@ -132,15 +134,15 @@ public class RClassGeneratorActionBuilder {
             .build(ruleContext));
   }
 
-  private static Artifact chooseRTxt(ResourceContainer container, AndroidAaptVersion version) {
+  private static Artifact chooseRTxt(ValidatedAndroidData container, AndroidAaptVersion version) {
     return version == AndroidAaptVersion.AAPT2 ? container.getAapt2RTxt() : container.getRTxt();
   }
 
-  private static Function<ResourceContainer, NestedSet<Artifact>> chooseDepsToArtifacts(
+  private static Function<ValidatedAndroidData, NestedSet<Artifact>> chooseDepsToArtifacts(
       final AndroidAaptVersion version) {
-    return new Function<ResourceContainer, NestedSet<Artifact>>() {
+    return new Function<ValidatedAndroidData, NestedSet<Artifact>>() {
       @Override
-      public NestedSet<Artifact> apply(ResourceContainer container) {
+      public NestedSet<Artifact> apply(ValidatedAndroidData container) {
         NestedSetBuilder<Artifact> artifacts = NestedSetBuilder.naiveLinkOrder();
         addIfNotNull(chooseRTxt(container, version), artifacts);
         addIfNotNull(container.getManifest(), artifacts);
@@ -155,11 +157,11 @@ public class RClassGeneratorActionBuilder {
     };
   }
 
-  private static Function<ResourceContainer, String> chooseDepsToArg(
+  private static Function<ValidatedAndroidData, String> chooseDepsToArg(
       final AndroidAaptVersion version) {
-    return new Function<ResourceContainer, String>() {
+    return new Function<ValidatedAndroidData, String>() {
       @Override
-      public String apply(ResourceContainer container) {
+      public String apply(ValidatedAndroidData container) {
         Artifact rTxt = chooseRTxt(container, version);
         return (rTxt != null ? rTxt.getExecPath() : "")
             + ","

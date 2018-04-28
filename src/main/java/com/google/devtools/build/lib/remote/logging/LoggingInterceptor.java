@@ -14,11 +14,17 @@
 
 package com.google.devtools.build.lib.remote.logging;
 
+import com.google.bytestream.ByteStreamGrpc;
+import com.google.devtools.build.lib.clock.Clock;
 import com.google.devtools.build.lib.remote.logging.RemoteExecutionLog.LogEntry;
 import com.google.devtools.build.lib.remote.util.TracingMetadataUtils;
 import com.google.devtools.build.lib.util.io.AsynchronousFileOutputStream;
+import com.google.devtools.remoteexecution.v1test.ActionCacheGrpc;
+import com.google.devtools.remoteexecution.v1test.ContentAddressableStorageGrpc;
 import com.google.devtools.remoteexecution.v1test.ExecutionGrpc;
 import com.google.devtools.remoteexecution.v1test.RequestMetadata;
+import com.google.protobuf.Timestamp;
+import com.google.watcher.v1.WatcherGrpc;
 import io.grpc.CallOptions;
 import io.grpc.Channel;
 import io.grpc.ClientCall;
@@ -28,15 +34,18 @@ import io.grpc.ForwardingClientCallListener;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.Status;
+import java.time.Instant;
 import javax.annotation.Nullable;
 
 /** Client interceptor for logging details of certain gRPC calls. */
 public class LoggingInterceptor implements ClientInterceptor {
-  AsynchronousFileOutputStream rpcLogFile;
+  private final AsynchronousFileOutputStream rpcLogFile;
+  private final Clock clock;
 
   /** Constructs a LoggingInterceptor which logs RPC calls to the given file. */
-  public LoggingInterceptor(AsynchronousFileOutputStream rpcLogFile) {
+  public LoggingInterceptor(AsynchronousFileOutputStream rpcLogFile, Clock clock) {
     this.rpcLogFile = rpcLogFile;
+    this.clock = clock;
   }
 
   /**
@@ -50,6 +59,16 @@ public class LoggingInterceptor implements ClientInterceptor {
       MethodDescriptor<ReqT, RespT> method) {
     if (method == ExecutionGrpc.getExecuteMethod()) {
       return new ExecuteHandler();
+    } else if (method == WatcherGrpc.getWatchMethod()) {
+      return new WatchHandler();
+    } else if (method == ActionCacheGrpc.getGetActionResultMethod()) {
+      return new GetActionResultHandler();
+    } else if (method == ContentAddressableStorageGrpc.getFindMissingBlobsMethod()) {
+      return new FindMissingBlobsHandler();
+    } else if (method == ByteStreamGrpc.getReadMethod()) {
+      return new ReadHandler();
+    } else if (method == ByteStreamGrpc.getWriteMethod()) {
+      return new WriteHandler();
     }
     return null;
   }
@@ -64,6 +83,15 @@ public class LoggingInterceptor implements ClientInterceptor {
     } else {
       return call;
     }
+  }
+
+  /** Get current time as a Timestamp. */
+  private Timestamp getCurrentTimestamp() {
+    Instant time = Instant.ofEpochMilli(clock.currentTimeMillis());
+    return Timestamp.newBuilder()
+        .setSeconds(time.getEpochSecond())
+        .setNanos(time.getNano())
+        .build();
   }
 
   /**
@@ -86,6 +114,7 @@ public class LoggingInterceptor implements ClientInterceptor {
 
     @Override
     public void start(Listener<RespT> responseListener, Metadata headers) {
+      entryBuilder.setStartTime(getCurrentTimestamp());
       RequestMetadata metadata = TracingMetadataUtils.requestMetadataFromHeaders(headers);
       if (metadata != null) {
         entryBuilder.setMetadata(metadata);
@@ -101,6 +130,7 @@ public class LoggingInterceptor implements ClientInterceptor {
 
             @Override
             public void onClose(Status status, Metadata trailers) {
+              entryBuilder.setEndTime(getCurrentTimestamp());
               entryBuilder.setStatus(makeStatusProto(status));
               entryBuilder.setDetails(handler.getDetails());
               rpcLogFile.write(entryBuilder.build());

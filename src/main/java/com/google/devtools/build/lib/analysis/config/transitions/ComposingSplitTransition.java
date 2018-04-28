@@ -19,6 +19,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * A configuration transition that composes two other transitions in an ordered sequence.
@@ -48,6 +49,12 @@ public class ComposingSplitTransition implements SplitTransition {
   /**
    * Creates a {@link ComposingSplitTransition} that applies the sequence: {@code fromOptions ->
    * transition1 -> transition2 -> toOptions }.
+   *
+   * <p>Note that it's possible to create silly transitions with this constructor (e.g., if one or
+   * both of the transitions is NoTransition). Use composeTransitions instead, which checks for
+   * these states and avoids instantiation appropriately.
+   *
+   * @see TransitionResolver#composeTransitions
    */
   @AutoCodec.Instantiator
   public ComposingSplitTransition(
@@ -73,6 +80,36 @@ public class ComposingSplitTransition implements SplitTransition {
     Preconditions.checkArgument(transition instanceof PatchTransition
         || transition instanceof SplitTransition);
     return transition;
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(transition1, transition2);
+  }
+
+  @Override
+  public boolean equals(Object other) {
+    return other instanceof ComposingSplitTransition
+        && ((ComposingSplitTransition) other).transition1.equals(this.transition1)
+        && ((ComposingSplitTransition) other).transition2.equals(this.transition2);
+  }
+
+  /**
+   * Returns whether this transition contains only patches (and is thus suitable as a delegate
+   * for {@link ComposingPatchTransition}).
+   */
+  public boolean isPatchOnly() {
+    return transition1 instanceof PatchTransition && transition2 instanceof PatchTransition;
+  }
+
+  /**
+   * Allows this transition to be used in patch-only contexts if it contains only
+   * {@link PatchTransition}s.
+   *
+   * <p>Can only be called if {@link #isPatchOnly()} returns true.
+   */
+  public ComposingPatchTransition asPatch() {
+    return new ComposingPatchTransition(this);
   }
 
   /**

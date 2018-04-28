@@ -99,9 +99,13 @@ public class AndroidResources {
     validateManifest(ruleContext);
   }
 
+  public static boolean decoupleDataProcessing(RuleContext ruleContext) {
+    return AndroidCommon.getAndroidConfig(ruleContext).decoupleDataProcessing();
+  }
+
   /**
-   * Validates that there are no targets with resources in the srcs, as they
-   * should not be used with the Android data logic.
+   * Validates that there are no targets with resources in the srcs, as they should not be used with
+   * the Android data logic.
    */
   private static void validateNoAndroidResourcesInSources(RuleContext ruleContext)
       throws RuleErrorException {
@@ -128,8 +132,7 @@ public class AndroidResources {
     }
 
     ImmutableList<Artifact> resources =
-        getResources(
-            ruleContext.getPrerequisites(resourcesAttr, Mode.TARGET, FileProvider.class));
+        getResources(ruleContext.getPrerequisites(resourcesAttr, Mode.TARGET, FileProvider.class));
 
     return forResources(ruleContext, resources, resourcesAttr);
   }
@@ -252,7 +255,7 @@ public class AndroidResources {
    * directory.
    */
   public static PathFragment findResourceDir(Artifact artifact) {
-    PathFragment fragment = artifact.getPath().asFragment();
+    PathFragment fragment = artifact.getExecPath();
     int segmentCount = fragment.segmentCount();
     if (segmentCount < 3) {
       return null;
@@ -351,24 +354,28 @@ public class AndroidResources {
    * Filters this object, assuming it contains the resources of the current target.
    *
    * <p>If this object contains the resources from a dependency of this target, use {@link
-   * #maybeFilter(ResourceFilter, boolean)} instead.
+   * #maybeFilter(RuleErrorConsumer, ResourceFilter, boolean)} instead.
    *
    * @return a filtered {@link AndroidResources} object. If no filtering was done, this object will
    *     be returned.
    */
-  public AndroidResources filterLocalResources(ResourceFilter resourceFilter) {
-    return maybeFilter(resourceFilter, /* isDependency = */ false).orElse(this);
+  public AndroidResources filterLocalResources(
+      RuleErrorConsumer errorConsumer, ResourceFilter resourceFilter) throws RuleErrorException {
+    Optional<? extends AndroidResources> filtered =
+        maybeFilter(errorConsumer, resourceFilter, /* isDependency = */ false);
+    return filtered.isPresent() ? filtered.get() : this;
   }
 
   /**
    * Filters this object.
    *
-   * @return an optional wrapping a = new {@link AndroidResources} with resources filtered by the
+   * @return an optional wrapping a new {@link AndroidResources} with resources filtered by the
    *     passed {@link ResourceFilter}, or {@link Optional#empty()} if no resources should be
    *     filtered.
    */
-  public Optional<AndroidResources> maybeFilter(
-      ResourceFilter resourceFilter, boolean isDependency) {
+  public Optional<? extends AndroidResources> maybeFilter(
+      RuleErrorConsumer errorConsumer, ResourceFilter resourceFilter, boolean isDependency)
+      throws RuleErrorException {
     Optional<ImmutableList<Artifact>> filtered =
         resourceFilter.maybeFilter(resources, /* isDependency= */ isDependency);
 
@@ -377,29 +384,31 @@ public class AndroidResources {
       return Optional.empty();
     }
 
-    // If the resources were filtered, also filter the resource roots
-    ImmutableList.Builder<PathFragment> filteredResourcesRootsBuilder = ImmutableList.builder();
-    for (PathFragment resourceRoot : resourceRoots) {
-      for (Artifact resource : filtered.get()) {
-        if (resource.getRootRelativePath().startsWith(resourceRoot)) {
-          filteredResourcesRootsBuilder.add(resourceRoot);
-          break;
-        }
-      }
-    }
-
-    return Optional.of(new AndroidResources(filtered.get(), filteredResourcesRootsBuilder.build()));
+    return Optional.of(
+        new AndroidResources(
+            filtered.get(),
+            getResourceRoots(errorConsumer, filtered.get(), DEFAULT_RESOURCES_ATTR)));
   }
 
-  public ParsedAndroidResources parse(
-      RuleContext ruleContext,
-      StampedAndroidManifest manifest) throws InterruptedException, RuleErrorException {
+  /** Parses these resources. */
+  public ParsedAndroidResources parse(RuleContext ruleContext, StampedAndroidManifest manifest)
+      throws InterruptedException, RuleErrorException {
     return ParsedAndroidResources.parseFrom(ruleContext, this, manifest);
+  }
+
+  /**
+   * Performs the complete resource processing pipeline - parsing, merging, and validation - on
+   * these resources.
+   */
+  public ValidatedAndroidResources process(
+      RuleContext ruleContext, StampedAndroidManifest manifest, boolean neverlink)
+      throws RuleErrorException, InterruptedException {
+    return parse(ruleContext, manifest).merge(ruleContext, neverlink).validate(ruleContext);
   }
 
   @Override
   public boolean equals(Object object) {
-    if (!(object instanceof AndroidResources)) {
+    if (object == null || getClass() != object.getClass()) {
       return false;
     }
 

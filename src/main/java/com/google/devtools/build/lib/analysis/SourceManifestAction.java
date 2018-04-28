@@ -204,18 +204,18 @@ public final class SourceManifestAction extends AbstractFileWriteAction {
     fp.addInt(symlinks.size());
     for (Map.Entry<PathFragment, Artifact> symlink : symlinks.entrySet()) {
       fp.addPath(symlink.getKey());
-      fp.addPath(symlink.getValue().getPath());
+      fp.addPath(symlink.getValue().getExecPath());
     }
     Map<PathFragment, Artifact> rootSymlinks = runfiles.getRootSymlinksAsMap(null);
     fp.addInt(rootSymlinks.size());
     for (Map.Entry<PathFragment, Artifact> rootSymlink : rootSymlinks.entrySet()) {
       fp.addPath(rootSymlink.getKey());
-      fp.addPath(rootSymlink.getValue().getPath());
+      fp.addPath(rootSymlink.getValue().getExecPath());
     }
 
     for (Artifact artifact : runfiles.getArtifacts()) {
       fp.addPath(artifact.getRootRelativePath());
-      fp.addPath(artifact.getPath());
+      fp.addPath(artifact.getExecPath());
     }
   }
 
@@ -304,10 +304,18 @@ public final class SourceManifestAction extends AbstractFileWriteAction {
 
     public Builder(String prefix, ManifestType manifestType, ActionOwner owner, Artifact output,
                    boolean legacyExternalRunfiles) {
-      this.runfilesBuilder = new Runfiles.Builder(prefix, legacyExternalRunfiles);
-      manifestWriter = manifestType;
+      this(manifestType, owner, output, new Runfiles.Builder(prefix, legacyExternalRunfiles));
+    }
+
+    public Builder(
+        ManifestType manifestType,
+        ActionOwner owner,
+        Artifact output,
+        Runfiles.Builder runfilesBuilder) {
+      this.manifestWriter = manifestType;
       this.owner = owner;
       this.output = output;
+      this.runfilesBuilder = runfilesBuilder;
     }
 
     @VisibleForTesting  // Only used for testing.

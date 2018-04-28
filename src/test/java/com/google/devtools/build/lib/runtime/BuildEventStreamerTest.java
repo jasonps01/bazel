@@ -25,6 +25,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutedEvent;
 import com.google.devtools.build.lib.actions.ActionExecutedEvent.ErrorTiming;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
@@ -646,10 +647,12 @@ public class BuildEventStreamerTest extends FoundationTestCase {
                 new ServerDirectories(outputBase, outputBase, outputBase),
                 rootDirectory,
                 "productName"),
-            ImmutableMap
+            /* fragmentsMap= */ ImmutableMap
                 .<Class<? extends BuildConfiguration.Fragment>, BuildConfiguration.Fragment>of(),
             defaultBuildOptions,
             BuildOptions.diffForReconstruction(defaultBuildOptions, defaultBuildOptions),
+            /* reservedActionMnemonics= */ ImmutableSet.of(),
+            ActionEnvironment.EMPTY,
             "workspace");
     BuildEvent firstWithConfiguration =
         new GenericConfigurationEvent(testId("first"), configuration.toBuildEvent());

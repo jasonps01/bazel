@@ -32,12 +32,18 @@ guarded behind flags in the current release:
 
 *   [Dictionary concatenation](#dictionary-concatenation)
 *   [Load must appear at top of file](#load-must-appear-at-top-of-file)
-*   [Top level `if` statements](#top-level-if-statements)
 *   [Depset is no longer iterable](#depset-is-no-longer-iterable)
 *   [Depset union](#depset-union)
 *   [String is no longer iterable](#string-is-no-longer-iterable)
+*   [Integer division operator is //](#integer-division-operator-is)
+*   [Package name is a function](#package-name-is-a-function)
+*   [FileType is deprecated](#filetype-is-deprecated)
 *   [New actions API](#new-actions-api)
+*   [New args API](#new-args-api)
 *   [Glob tracking](#glob-tracking)
+*   [Disable objc provider resources](#disable-objc-provider-resources)
+*   [Remove native git repository](#remove-native-git-repository)
+*   [Remove native http archive](#remove-native-http-archive)
 
 
 ### Dictionary concatenation
@@ -58,17 +64,6 @@ appear at the beginning of the file, i.e. before any other non-`load` statement.
 
 *   Flag: `--incompatible_bzl_disallow_load_after_statement`
 *   Default: `false`
-
-
-### Top level `if` statements
-
-This change forbids `if` statements at the top level of `.bzl` files (they are
-already forbidden in `BUILD` files). This change ensures that every global
-value has a single declaration. This restriction is consistent with the idea
-that global values cannot be redefined.
-
-*   Flag: `--incompatible_disallow_toplevel_if_statement`
-*   Default: `true`
 
 
 ### Depset is no longer iterable
@@ -98,9 +93,9 @@ To merge two sets, the following examples used to be supported, but are now
 deprecated:
 
 ``` python
-depset1 + depset2
-depset1 | depset2
-depset1.union(depset2)
+depset1 + depset2  # deprecated
+depset1 | depset2  # deprecated
+depset1.union(depset2)  # deprecated
 ```
 
 The recommended solution is to use the `depset` constructor:
@@ -148,6 +143,47 @@ for i in range(len(my_string)):
 *   Default: `false`
 
 
+### Integer division operator is `//`
+
+Integer division operator is now `//` instead of `/`. This aligns with
+Python 3 and it highlights the fact it is a floor division.
+
+```python
+x = 7 / 2  # deprecated
+
+x = 7 // 2  # x is 3
+```
+
+*   Flag: `--incompatible_disallow_slash_operator`
+*   Default: `false`
+
+
+### Package name is a function
+
+The current package name should be retrieved by calling `package_name()` in
+BUILD files or `native.package_name()` in .bzl files. The old way of referring
+to the magic `PACKAGE_NAME` variable bends the language since it is neither a
+parameter, local variable, nor global variable.
+
+Likewise, the magic `REPOSITORY_NAME` variable is replaced by
+`repository_name()` and `native.repository_name()`. Both deprecations use the
+same flag.
+
+*   Flag: `--incompatible_package_name_is_a_function`
+*   Default: `false`
+
+
+### FileType is deprecated
+
+The [FileType](lib/FileType.html) function is going away. The main use-case was
+as an argument to the [rule function](lib/globals.html#rule). It's no longer
+needed, you can simply pass a list of strings to restrict the file types the
+rule accepts.
+
+*   Flag: `--incompatible_disallow_filetype`
+*   Default: `false`
+
+
 ### New actions API
 
 This change removes the old methods for registering actions within rules, and
@@ -169,6 +205,21 @@ replacements are as follows.
 *   Default: `false`
 
 
+### New args API
+
+The [Args](lib/Args.html) object returned by `ctx.actions.args()` has dedicated
+methods for appending the contents of a list or depset to the command line.
+Previously these use cases were lumped into its [`add()`](lib/Args.html#add)
+method, resulting in a more cluttered API.
+
+With this flag, `add()` only works for scalar values, and its deprecated
+parameters are disabled. To add many arguments at once you must use `add_all()`
+or `add_joined()` instead.
+
+*   Flag: `--incompatible_disallow_old_style_args_add`
+*   Default: `false`
+
+
 ### Glob tracking
 
 When set, glob tracking is disabled. This is a legacy feature that we expect has
@@ -176,5 +227,43 @@ no user-visible impact.
 
 *   Flag: `--incompatible_disable_glob_tracking`
 *   Default: `true`
+
+
+### Disable objc provider resources
+
+This flag disables certain deprecated resource fields on
+[ObjcProvider](lib/ObjcProvider.html).
+
+*   Flag: `--incompatible_objc_provider_resources`
+*   Default: `false`
+
+
+### Remove native git repository
+
+When set, the native `git_repository` rule is disabled. The Skylark version
+
+```python
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+```
+
+should be used instead.
+
+*   Flag: `--incompatible_remove_native_git_repository`
+*   Default: `false`
+
+
+### Remove native http archive
+
+When set, the native `http_archive` rule is disabled. The skylark version
+
+```python
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+```
+
+should be used instead.
+
+*   Flag: `--incompatible_remove_native_http_archive`
+*   Default: `false`
+
 
 <!-- Add new options here -->

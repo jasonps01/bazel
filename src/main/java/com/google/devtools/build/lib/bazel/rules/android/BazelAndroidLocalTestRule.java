@@ -35,6 +35,7 @@ import com.google.devtools.build.lib.packages.TriState;
 import com.google.devtools.build.lib.rules.android.AndroidFeatureFlagSetProvider;
 import com.google.devtools.build.lib.rules.android.AndroidLocalTestBaseRule;
 import com.google.devtools.build.lib.rules.config.ConfigFeatureFlagTransitionFactory;
+import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
@@ -52,8 +53,10 @@ public class BazelAndroidLocalTestRule implements RuleDefinition {
           "java_library",
           "java_lite_proto_library");
 
-  static final ImplicitOutputsFunction ANDROID_ROBOLECTRIC_IMPLICIT_OUTPUTS =
-      fromFunctions(JavaSemantics.JAVA_BINARY_CLASS_JAR, JavaSemantics.JAVA_BINARY_SOURCE_JAR);
+  static final ImplicitOutputsFunction ANDROID_ROBOLECTRIC_IMPLICIT_OUTPUTS = fromFunctions(
+      JavaSemantics.JAVA_BINARY_CLASS_JAR,
+      JavaSemantics.JAVA_BINARY_SOURCE_JAR,
+      JavaSemantics.JAVA_BINARY_DEPLOY_JAR);
 
   @Override
   public RuleClass build(Builder builder, RuleDefinitionEnvironment environment) {
@@ -85,6 +88,7 @@ public class BazelAndroidLocalTestRule implements RuleDefinition {
         .removeAttribute(":java_launcher")
         .cfg(
             new ConfigFeatureFlagTransitionFactory(AndroidFeatureFlagSetProvider.FEATURE_FLAG_ATTR))
+        .addRequiredToolchains(CppRuleClasses.ccToolchainTypeAttribute(environment))
         .build();
   }
 
@@ -169,5 +173,7 @@ android_library(
   <li><code><var>name</var>.jar</code>: A Java archive of the test.</li>
   <li><code><var>name</var>-src.jar</code>: An archive containing the sources
     ("source jar").</li>
+  <li><code><var>name</var>_deploy.jar</code>: A Java deploy archive suitable
+    for deployment (only built if explicitly requested).</li>
 </ul>
 <!-- #END_BLAZE_RULE.IMPLICIT_OUTPUTS --> */

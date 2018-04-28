@@ -18,6 +18,8 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkGlobalLibrary;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkInterfaceUtils;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkSignature;
@@ -152,7 +154,7 @@ public final class Runtime {
    */
   public static Class<?> getSkylarkNamespace(Class<?> clazz) {
     return String.class.isAssignableFrom(clazz)
-        ? MethodLibrary.StringModule.class
+        ? StringModule.class
         : EvalUtils.getSkylarkType(clazz);
   }
 
@@ -322,15 +324,33 @@ public final class Runtime {
   }
 
   /**
-   * Registers global fields with SkylarkSignature into the specified Environment.
+   * Registers global (top-level) symbols provided by the given class object.
+   *
+   * <p>Global symbols may be provided by the given class in the following ways:
+   * <ul>
+   *   <li>If the class is annotated with {@link SkylarkModule}, an instance of that object is
+   *       a global object with the module's name.</li>
+   *   <li>If the class has fields annotated with {@link SkylarkSignature}, each of these
+   *       fields is a global object with the signature's name.</li>
+   *   <li>If the class is annotated with {@link SkylarkGlobalLibrary}, then all of its methods
+   *       which are annotated with
+   *       {@link com.google.devtools.build.lib.skylarkinterface.SkylarkCallable} are global
+   *       callables.</li>
+   * </ul>
+   *
+   * <p>On collisions, this method throws an {@link AssertionError}. Collisions may occur if
+   * multiple global libraries have functions of the same name, two modules of the same name
+   * are given, or if two subclasses of the same module are given.
+   *
    * @param env the Environment into which to register fields.
    * @param moduleClass the Class object containing globals.
    */
   public static void setupModuleGlobals(Environment env, Class<?> moduleClass) {
     try {
-      if (moduleClass.isAnnotationPresent(SkylarkModule.class)) {
+      SkylarkModule skylarkModule = SkylarkInterfaceUtils.getSkylarkModule(moduleClass);
+      if (skylarkModule != null) {
         env.setup(
-            moduleClass.getAnnotation(SkylarkModule.class).name(),
+            skylarkModule.name(),
             moduleClass.getConstructor().newInstance());
       }
       for (Field field : moduleClass.getDeclaredFields()) {
@@ -346,6 +366,12 @@ public final class Runtime {
                   && !annotation.objectType().equals(Object.class)))) {
             env.setup(annotation.name(), value);
           }
+        }
+      }
+      if (SkylarkInterfaceUtils.hasSkylarkGlobalLibrary(moduleClass)) {
+        Object moduleInstance = moduleClass.getConstructor().newInstance();
+        for (String methodName : FuncallExpression.getMethodNames(moduleClass)) {
+          env.setup(methodName, FuncallExpression.getBuiltinCallable(moduleInstance, methodName));
         }
       }
     } catch (ReflectiveOperationException e) {

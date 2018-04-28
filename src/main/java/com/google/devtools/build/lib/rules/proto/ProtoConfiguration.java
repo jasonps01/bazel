@@ -101,6 +101,17 @@ public class ProtoConfiguration extends Fragment {
     public Label protoToolchainForJava;
 
     @Option(
+      name = "proto_toolchain_for_j2objc",
+      defaultValue = "@bazel_tools//tools/j2objc:j2objc_proto_toolchain",
+      category = "flags",
+      converter = BuildConfiguration.EmptyToNullLabelConverter.class,
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.LOADING_AND_ANALYSIS},
+      help = "Label of proto_lang_toolchain() which describes how to compile j2objc protos"
+    )
+    public Label protoToolchainForJ2objc;
+
+    @Option(
       name = "proto_toolchain_for_cc",
       defaultValue = "@com_google_protobuf//:cc_toolchain",
       converter = BuildConfiguration.EmptyToNullLabelConverter.class,
@@ -143,29 +154,6 @@ public class ProtoConfiguration extends Fragment {
     )
     public List<String> ccProtoLibrarySourceSuffixes;
 
-    // TODO(b/64032754): Remove once there's no 'correctRollupTransitiveProtoRuntimes' in the global
-    //     blazerc.
-    @Option(
-      name = "correctRollupTransitiveProtoRuntimes",
-      defaultValue = "true",
-      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-      effectTags = {OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.LOADING_AND_ANALYSIS},
-      metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-      help = "ignored"
-    )
-    public boolean correctRollupTransitiveProtoRuntimes;
-
-    // TODO(b/62710272): Remove once there's no 'jplNonStrictDepsLikePl' in the global blazerc.
-    @Option(
-      name = "jplNonStrictDepsLikePl",
-      defaultValue = "true",
-      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-      effectTags = {OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.LOADING_AND_ANALYSIS},
-      metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-      help = "ignored"
-    )
-    public boolean jplNonStrictDepsLikePl;
-
     @Override
     public FragmentOptions getHost() {
       Options host = (Options) super.getHost();
@@ -174,6 +162,7 @@ public class ProtoConfiguration extends Fragment {
       host.experimentalProtoExtraActions = experimentalProtoExtraActions;
       host.protoCompiler = protoCompiler;
       host.protoToolchainForJava = protoToolchainForJava;
+      host.protoToolchainForJ2objc = protoToolchainForJ2objc;
       host.protoToolchainForJavaLite = protoToolchainForJavaLite;
       host.protoToolchainForCc = protoToolchainForCc;
       host.strictProtoDeps = strictProtoDeps;
@@ -236,6 +225,10 @@ public class ProtoConfiguration extends Fragment {
 
   public Label protoToolchainForJava() {
     return options.protoToolchainForJava;
+  }
+
+  public Label protoToolchainForJ2objc() {
+    return options.protoToolchainForJ2objc;
   }
 
   public Label protoToolchainForJavaLite() {

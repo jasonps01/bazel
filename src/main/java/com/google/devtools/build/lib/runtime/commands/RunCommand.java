@@ -26,7 +26,7 @@ import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.RunfilesSupport;
-import com.google.devtools.build.lib.analysis.ShellConfiguration;
+import com.google.devtools.build.lib.analysis.ShToolchain;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.RunUnder;
 import com.google.devtools.build.lib.analysis.test.TestProvider;
@@ -41,8 +41,8 @@ import com.google.devtools.build.lib.buildtool.TargetValidator;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
-import com.google.devtools.build.lib.exec.StandaloneTestStrategy;
 import com.google.devtools.build.lib.exec.SymlinkTreeHelper;
+import com.google.devtools.build.lib.exec.TestPolicy;
 import com.google.devtools.build.lib.exec.TestStrategy;
 import com.google.devtools.build.lib.packages.InputFile;
 import com.google.devtools.build.lib.packages.NoSuchPackageException;
@@ -55,6 +55,7 @@ import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.pkgcache.LoadingFailedException;
 import com.google.devtools.build.lib.runtime.BlazeCommand;
 import com.google.devtools.build.lib.runtime.BlazeCommandResult;
+import com.google.devtools.build.lib.runtime.BlazeServerStartupOptions;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.runtime.ProcessWrapperUtil;
@@ -108,10 +109,20 @@ import javax.annotation.Nullable;
          completion = "label-bin",
          binaryStdErr = true)
 public class RunCommand implements BlazeCommand  {
+  /** Options for the "run" command. */
   public static class RunOptions extends OptionsBase {
     @Option(
+        name = "as_test",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+        effectTags = {OptionEffectTag.EXECUTION},
+        help = "If set, the 'run' command will execute tests in an approximation of the official "
+            + "test environment. Otherwise, tests will be run as regular binaries.")
+    public boolean asTest;
+
+    @Option(
       name = "direct_run",
-      defaultValue = "false",
+      defaultValue = "true",
       documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
       effectTags = {OptionEffectTag.EXECUTION},
       help = "If set, the 'run' command will execute the binary to be executed in the terminal "
@@ -149,10 +160,17 @@ public class RunCommand implements BlazeCommand  {
       "'run' only works with tests with one shard ('--test_sharding_strategy=disabled' is okay) "
       + "and without --runs_per_test";
 
+  // The test policy to determine the environment variables from when running tests
+  private final TestPolicy testPolicy;
+
   // Value of --run_under as of the most recent command invocation.
   private RunUnder currentRunUnder;
 
   private static final FileType RUNFILES_MANIFEST = FileType.of(".runfiles_manifest");
+
+  public RunCommand(TestPolicy testPolicy) {
+    this.testPolicy = testPolicy;
+  }
 
   @VisibleForTesting  // productionVisibility = Visibility.PRIVATE
   protected BuildResult processRequest(final CommandEnvironment env, BuildRequest request) {
@@ -226,7 +244,7 @@ public class RunCommand implements BlazeCommand  {
       String unisolatedCommand = CommandFailureUtils.describeCommand(
           CommandDescriptionForm.COMPLETE_UNISOLATED,
           cmdLine, null, workingDir.getPathString());
-      if (writeScript(env, runOptions.scriptPath, unisolatedCommand)) {
+      if (writeScript(env, shellExecutable, runOptions.scriptPath, unisolatedCommand)) {
         return BlazeCommandResult.exitCode(ExitCode.SUCCESS);
       } else {
         return BlazeCommandResult.exitCode(ExitCode.RUN_FAILURE);
@@ -273,12 +291,15 @@ public class RunCommand implements BlazeCommand  {
       CommandEnvironment env, PathFragment shellExecutable, ConfiguredTarget targetToRun,
       ConfiguredTarget runUnderTarget, List<String> args) {
     String productName = env.getRuntime().getProductName();
-    Path executablePath =
-        targetToRun.getProvider(FilesToRunProvider.class).getExecutable().getPath();
-    PathFragment prettyExecutablePath = OutputDirectoryLinksUtils.getPrettyPath(executablePath,
-        env.getWorkspaceName(), env.getWorkspace(),
-        env.getOptions().getOptions(BuildRequestOptions.class).getSymlinkPrefix(productName),
-        productName);
+    Artifact executable = targetToRun.getProvider(FilesToRunProvider.class).getExecutable();
+
+    PathFragment executablePath = executable.getPath().asFragment();
+    PathFragment prettyExecutablePath = OutputDirectoryLinksUtils.getPrettyPath(
+          executable.getPath(),
+          env.getWorkspaceName(),
+          env.getWorkspace(),
+          env.getOptions().getOptions(BuildRequestOptions.class).getSymlinkPrefix(productName),
+          productName);
 
     RunUnder runUnder = env.getOptions().getOptions(BuildConfiguration.Options.class).runUnder;
     // Insert the command prefix specified by the "--run_under=<command-prefix>" option
@@ -413,30 +434,48 @@ public class RunCommand implements BlazeCommand  {
     }
 
     Path runfilesDir;
-    try {
-      runfilesDir = ensureRunfilesBuilt(env, targetToRun);
-    } catch (CommandException e) {
-      env.getReporter().handle(Event.error("Error creating runfiles: " + e.getMessage()));
-      return BlazeCommandResult.exitCode(ExitCode.LOCAL_ENVIRONMENTAL_ERROR);
+    FilesToRunProvider provider = targetToRun.getProvider(FilesToRunProvider.class);
+    RunfilesSupport runfilesSupport = provider == null ? null : provider.getRunfilesSupport();
+
+    if (runfilesSupport == null) {
+      runfilesDir = env.getWorkingDirectory();
+    } else {
+      try {
+        runfilesDir = ensureRunfilesBuilt(env, runfilesSupport,
+            env.getSkyframeExecutor().getConfiguration(env.getReporter(),
+                targetToRun.getConfigurationKey()));
+      } catch (CommandException e) {
+        env.getReporter().handle(Event.error("Error creating runfiles: " + e.getMessage()));
+        return BlazeCommandResult.exitCode(ExitCode.LOCAL_ENVIRONMENTAL_ERROR);
+      }
     }
 
-
-    PathFragment shellExecutable =
-        configuration.getFragment(ShellConfiguration.class).getShellExecutable();
+    // TODO(laszlocsomor): change RunCommand to not require a shell and not write a shell script,
+    // then remove references to ShToolchain. See https://github.com/bazelbuild/bazel/issues/4319
+    PathFragment shExecutable = ShToolchain.getPath(configuration);
+    if (shExecutable.isEmpty()) {
+      env.getReporter()
+          .handle(
+              Event.error(
+                  "the \"run\" command needs a shell; use the --shell_executable=<path> flag "
+                      + "to specify its path, e.g. --shell_executable=/usr/local/bin/bash"));
+      return BlazeCommandResult.exitCode(ExitCode.COMMAND_LINE_ERROR);
+    }
 
     if (!runOptions.direct) {
       return runTargetUnderServer(
-          env, targetToRun, shellExecutable, runUnderTarget, runfilesDir, commandLineArgs);
+          env, targetToRun, shExecutable, runUnderTarget, runfilesDir, commandLineArgs);
     }
 
     Map<String, String> runEnvironment = new TreeMap<>();
     List<String> cmdLine = new ArrayList<>();
+    List<String> prettyCmdLine = new ArrayList<>();
     Path workingDir;
 
     runEnvironment.put("BUILD_WORKSPACE_DIRECTORY", env.getWorkspace().getPathString());
     runEnvironment.put("BUILD_WORKING_DIRECTORY", env.getWorkingDirectory().getPathString());
 
-    if (targetToRun.getProvider(TestProvider.class) != null) {
+    if (targetToRun.getProvider(TestProvider.class) != null && runOptions.asTest) {
       // This is a test. Provide it with a reasonable approximation of the actual test environment
       ImmutableList<Artifact> statusArtifacts = TestProvider.getTestStatusArtifacts(targetToRun);
       if (statusArtifacts.size() != 1) {
@@ -456,49 +495,70 @@ public class RunCommand implements BlazeCommand  {
       Path tmpDirRoot = TestStrategy.getTmpRoot(
           env.getWorkspace(), env.getExecRoot(), executionOptions);
       PathFragment relativeTmpDir = tmpDirRoot.relativeTo(env.getExecRoot());
-      Duration timeout = executionOptions.testTimeout.get(
+      Duration timeout = configuration.getTestTimeout().get(
           testAction.getTestProperties().getTimeout());
-      runEnvironment.putAll(StandaloneTestStrategy.DEFAULT_LOCAL_POLICY.computeTestEnvironment(
+      runEnvironment.putAll(testPolicy.computeTestEnvironment(
           testAction,
           env.getClientEnv(),
           timeout,
           settings.getRunfilesDir().relativeTo(env.getExecRoot()),
           relativeTmpDir.getRelative(TestStrategy.getTmpDirName(testAction))));
       workingDir = env.getExecRoot();
+
+      if (!prepareTestEnvironment(env, testAction)) {
+        return BlazeCommandResult.exitCode(ExitCode.LOCAL_ENVIRONMENTAL_ERROR);
+      }
+
       try {
         cmdLine.addAll(TestStrategy.getArgs(testAction));
         cmdLine.addAll(commandLineArgs);
+        prettyCmdLine.addAll(cmdLine);
       } catch (ExecException e) {
         env.getReporter().handle(Event.error(e.getMessage()));
         return BlazeCommandResult.exitCode(ExitCode.LOCAL_ENVIRONMENTAL_ERROR);
       }
     } else {
       workingDir = runfilesDir;
-      List<String> prettyCmdLine = new ArrayList<>();
       List<String> args = computeArgs(env, targetToRun, commandLineArgs);
-      constructCommandLine(cmdLine, prettyCmdLine, env,
-          shellExecutable, targetToRun, runUnderTarget, args);
+      constructCommandLine(
+          cmdLine, prettyCmdLine, env, shExecutable, targetToRun, runUnderTarget, args);
     }
 
     if (runOptions.scriptPath != null) {
       String unisolatedCommand = CommandFailureUtils.describeCommand(
           CommandDescriptionForm.COMPLETE_UNISOLATED,
           cmdLine, runEnvironment, workingDir.getPathString());
-      if (writeScript(env, runOptions.scriptPath, unisolatedCommand)) {
+      if (writeScript(env, shExecutable, runOptions.scriptPath, unisolatedCommand)) {
         return BlazeCommandResult.exitCode(ExitCode.SUCCESS);
       } else {
         return BlazeCommandResult.exitCode(ExitCode.RUN_FAILURE);
       }
     }
 
+    // We need to do update runEnvironment so that the environment of --batch is not contaminated
+    // with that required for the server. Note that some differences between the environment of
+    // the process being run and the environment of the client are still possible if the environment
+    // variables added for the server were not in the original client environment.
+    //
+    // This is done after writing the script for --script_path so that that is not contaminated
+    // with the original client environment (CommandFailureUtils.describeCommand() puts
+    // runEnvironment into the written script)
+    boolean batchMode = env.getRuntime().getStartupOptionsProvider()
+        .getOptions(BlazeServerStartupOptions.class).batch;
+    if (batchMode) {
+      runEnvironment.putAll(env.getClientEnv());
+    }
+
+    env.getReporter().handle(Event.info(
+        null, "Running command line: " + ShellEscaper.escapeJoinAll(prettyCmdLine)));
+
     ExecRequest.Builder execDescription = ExecRequest.newBuilder()
         .setWorkingDirectory(
             ByteString.copyFrom(workingDir.getPathString(), StandardCharsets.ISO_8859_1));
 
-    ImmutableList<String> shellCmdLine = ImmutableList.<String>of(
-        shellExecutable.getPathString(),
-        "-c",
-        ShellEscaper.escapeJoinAll(cmdLine));
+    ImmutableList<String> shellCmdLine =
+        ImmutableList.<String>of(
+            shExecutable.getPathString(), "-c", ShellEscaper.escapeJoinAll(cmdLine));
 
     for (String arg : shellCmdLine) {
       execDescription.addArgv(ByteString.copyFrom(arg, StandardCharsets.ISO_8859_1));
@@ -514,6 +574,16 @@ public class RunCommand implements BlazeCommand  {
     return BlazeCommandResult.execute(execDescription.build());
   }
 
+  private boolean prepareTestEnvironment(CommandEnvironment env, TestRunnerAction action) {
+    try {
+      action.prepare(env.getRuntime().getFileSystem(), env.getExecRoot());
+      return true;
+    } catch (IOException e) {
+      env.getReporter().handle(Event.error("Error while setting up test: " + e.getMessage()));
+      return false;
+    }
+  }
+
   /**
    * Ensures that runfiles are built for the specified target. If they already
    * are, does nothing, otherwise builds them.
@@ -522,19 +592,11 @@ public class RunCommand implements BlazeCommand  {
    * @return the path of the runfiles directory.
    * @throws CommandException
    */
-  private Path ensureRunfilesBuilt(CommandEnvironment env, ConfiguredTarget target)
-      throws CommandException {
-    FilesToRunProvider provider = target.getProvider(FilesToRunProvider.class);
-    RunfilesSupport runfilesSupport = provider == null ? null : provider.getRunfilesSupport();
-    if (runfilesSupport == null) {
-      return env.getWorkingDirectory();
-    }
-
+  private Path ensureRunfilesBuilt(CommandEnvironment env, RunfilesSupport runfilesSupport,
+      BuildConfiguration configuration) throws CommandException {
     Artifact manifest = Preconditions.checkNotNull(runfilesSupport.getRunfilesManifest());
     PathFragment runfilesDir = runfilesSupport.getRunfilesDirectoryExecPath();
     Path workingDir = env.getExecRoot().getRelative(runfilesDir);
-    BuildConfiguration configuration =
-        env.getSkyframeExecutor().getConfiguration(env.getReporter(), target.getConfigurationKey());
     // On Windows, runfiles tree is disabled.
     // Workspace name directory doesn't exist, so don't add it.
     if (configuration.runfilesEnabled()) {
@@ -558,12 +620,17 @@ public class RunCommand implements BlazeCommand  {
     return workingDir;
   }
 
-  private boolean writeScript(CommandEnvironment env, PathFragment scriptPathFrag, String cmd) {
-    final String SH_SHEBANG = "#!/bin/sh";
+  private boolean writeScript(
+      CommandEnvironment env,
+      PathFragment shellExecutable,
+      PathFragment scriptPathFrag,
+      String cmd) {
     Path scriptPath = env.getWorkingDirectory().getRelative(scriptPathFrag);
     try {
-      FileSystemUtils.writeContent(scriptPath, StandardCharsets.ISO_8859_1,
-          SH_SHEBANG + "\n" + cmd + " \"$@\"");
+      FileSystemUtils.writeContent(
+          scriptPath,
+          StandardCharsets.ISO_8859_1,
+          "#!" + shellExecutable.getPathString() + "\n" + cmd + " \"$@\"");
       scriptPath.setExecutable(true);
     } catch (IOException e) {
       env.getReporter().handle(Event.error("Error writing run script:" + e.getMessage()));

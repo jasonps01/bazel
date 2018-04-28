@@ -59,11 +59,13 @@ import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.CommandLine;
+import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.PrerequisiteArtifacts;
 import com.google.devtools.build.lib.analysis.RuleContext;
+import com.google.devtools.build.lib.analysis.ShToolchain;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
@@ -120,7 +122,6 @@ import com.google.devtools.build.lib.rules.objc.ObjcProvider.Flag;
 import com.google.devtools.build.lib.rules.objc.ObjcVariablesExtension.VariableCategory;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -547,7 +548,7 @@ public class CompilationSupport {
 
     activatedCrosstoolSelectables.addAll(ruleContext.getFeatures());
 
-    activatedCrosstoolSelectables.addAll(CcCommon.getCoverageFeatures(ruleContext));
+    activatedCrosstoolSelectables.addAll(CcCommon.getCoverageFeatures(toolchain));
 
     try {
       return ccToolchain
@@ -1151,13 +1152,13 @@ public class CompilationSupport {
         CppHelper.getFdoSupportUsingDefaultCcToolchainAttribute(ruleContext);
     CppLinkActionBuilder executableLinkAction =
         new CppLinkActionBuilder(
-                ruleContext,
-                binaryToLink,
-                toolchain,
-                fdoSupport,
-                getFeatureConfiguration(ruleContext, toolchain, buildConfiguration, objcProvider),
-                createObjcCppSemantics(
-                    objcProvider, /* privateHdrs= */ ImmutableList.of(), /* pchHdr= */ null))
+            ruleContext,
+            binaryToLink,
+            toolchain,
+            fdoSupport,
+            getFeatureConfiguration(ruleContext, toolchain, buildConfiguration, objcProvider),
+            createObjcCppSemantics(
+                objcProvider, /* privateHdrs= */ ImmutableList.of(), /* pchHdr= */ null))
             .setMnemonic("ObjcLink")
             .addActionInputs(bazelBuiltLibraries)
             .addActionInputs(objcProvider.getCcLibraries())
@@ -1204,44 +1205,6 @@ public class CompilationSupport {
     }
 
     return this;
-  }
-
-  /**
-   * Registers any actions necessary to link this rule and its dependencies. Automatically infers
-   * the toolchain from the configuration of this CompilationSupport - if a different toolchain is
-   * required, use the custom toolchain override.
-   *
-   * <p>Dsym bundle is generated if {@link ObjcConfiguration#generateDsym()} is set.
-   *
-   * <p>When Bazel flags {@code --compilation_mode=opt} and {@code --objc_enable_binary_stripping}
-   * are specified, additional optimizations will be performed on the linked binary: all-symbol
-   * stripping (using {@code /usr/bin/strip}) and dead-code stripping (using linker flags: {@code
-   * -dead_strip} and {@code -no_dead_strip_inits_and_terms}).
-   *
-   * @param objcProvider common information about this rule's attributes and its dependencies
-   * @param j2ObjcMappingFileProvider contains mapping files for j2objc transpilation
-   * @param j2ObjcEntryClassProvider contains j2objc entry class information for dead code removal
-   * @param extraLinkArgs any additional arguments to pass to the linker
-   * @param extraLinkInputs any additional input artifacts to pass to the link action
-   * @param dsymOutputType the file type of the dSYM bundle to be generated
-   * @return this compilation support
-   */
-  CompilationSupport registerLinkActions(
-      ObjcProvider objcProvider,
-      J2ObjcMappingFileProvider j2ObjcMappingFileProvider,
-      J2ObjcEntryClassProvider j2ObjcEntryClassProvider,
-      ExtraLinkArgs extraLinkArgs,
-      Iterable<Artifact> extraLinkInputs,
-      DsymOutputType dsymOutputType)
-      throws InterruptedException {
-    return registerLinkActions(
-        objcProvider,
-        j2ObjcMappingFileProvider,
-        j2ObjcEntryClassProvider,
-        extraLinkArgs,
-        extraLinkInputs,
-        dsymOutputType,
-        CppHelper.getToolchainUsingDefaultCcToolchainAttribute(ruleContext));
   }
 
   /**
@@ -1356,13 +1319,13 @@ public class CompilationSupport {
             .build();
     CppLinkAction fullyLinkAction =
         new CppLinkActionBuilder(
-                ruleContext,
-                outputArchive,
-                ccToolchain,
-                fdoSupport,
-                getFeatureConfiguration(ruleContext, ccToolchain, buildConfiguration, objcProvider),
-                createObjcCppSemantics(
-                    objcProvider, /* privateHdrs= */ ImmutableList.of(), /* pchHdr= */ null))
+            ruleContext,
+            outputArchive,
+            ccToolchain,
+            fdoSupport,
+            getFeatureConfiguration(ruleContext, ccToolchain, buildConfiguration, objcProvider),
+            createObjcCppSemantics(
+                objcProvider, /* privateHdrs= */ ImmutableList.of(), /* pchHdr= */ null))
             .addActionInputs(objcProvider.getObjcLibraries())
             .addActionInputs(objcProvider.getCcLibraries())
             .addActionInputs(objcProvider.get(IMPORTED_LIBRARY).toSet())
@@ -1416,10 +1379,11 @@ public class CompilationSupport {
                     debugSymbolFileZipEntry,
                     debugSymbolFile.getExecPathString()));
 
+    PathFragment shExecutable = ShToolchain.getPathOrError(ruleContext);
     ruleContext.registerAction(
         new SpawnAction.Builder()
             .setMnemonic("UnzipDsym")
-            .setShellCommand(unzipDsymCommand.toString())
+            .setShellCommand(shExecutable, unzipDsymCommand.toString())
             .addInput(tempDsymBundleZip)
             .addOutput(dsymPlist)
             .addOutput(debugSymbolFile)
@@ -1514,13 +1478,6 @@ public class CompilationSupport {
         j2ObjcMappingFileProvider.getArchiveSourceMappingFiles();
 
     for (Artifact j2objcArchive : objcProvider.get(ObjcProvider.J2OBJC_LIBRARY)) {
-      PathFragment paramFilePath =
-          FileSystemUtils.replaceExtension(
-              j2objcArchive.getOwner().toPathFragment(), ".param.j2objc");
-      Artifact paramFile =
-          ruleContext.getUniqueDirectoryArtifact(
-              "_j2objc_pruned", paramFilePath,
-              buildConfiguration.getBinDirectory(ruleContext.getRule().getRepository()));
       Artifact prunedJ2ObjcArchive = intermediateArtifacts.j2objcPrunedArchive(j2objcArchive);
       Artifact dummyArchive =
           Iterables.getOnlyElement(
@@ -1547,13 +1504,6 @@ public class CompilationSupport {
               .build();
 
       ruleContext.registerAction(
-          new ParameterFileWriteAction(
-              ruleContext.getActionOwner(),
-              paramFile,
-              commandLine,
-              ParameterFile.ParameterFileType.UNQUOTED,
-              ISO_8859_1));
-      ruleContext.registerAction(
           ObjcRuleClasses.spawnAppleEnvActionBuilder(
                   XcodeConfigProvider.fromRuleContext(ruleContext),
                   appleConfiguration.getSingleArchPlatform())
@@ -1561,14 +1511,17 @@ public class CompilationSupport {
               .setExecutable(pruner)
               .addInput(dummyArchive)
               .addInput(pruner)
-              .addInput(paramFile)
               .addInput(j2objcArchive)
               .addInput(xcrunwrapper(ruleContext).getExecutable())
               .addTransitiveInputs(j2ObjcDependencyMappingFiles)
               .addTransitiveInputs(j2ObjcHeaderMappingFiles)
               .addTransitiveInputs(j2ObjcArchiveSourceMappingFiles)
               .addCommandLine(
-                  CustomCommandLine.builder().addFormatted("@%s", paramFile.getExecPath()).build())
+                  commandLine,
+                  ParamFileInfo.builder(ParameterFile.ParameterFileType.UNQUOTED)
+                      .setCharset(ISO_8859_1)
+                      .setUseAlways(true)
+                      .build())
               .addOutput(prunedJ2ObjcArchive)
               .build(ruleContext));
     }

@@ -59,7 +59,6 @@ public class FakeCppCompileAction extends CppCompileAction {
       ActionOwner owner,
       NestedSet<Artifact> allInputs,
       FeatureConfiguration featureConfiguration,
-      PathFragment crosstoolTopPathFragment,
       CcToolchainFeatures.Variables variables,
       Artifact sourceFile,
       boolean shouldScanIncludes,
@@ -86,7 +85,6 @@ public class FakeCppCompileAction extends CppCompileAction {
         owner,
         allInputs,
         featureConfiguration,
-        crosstoolTopPathFragment,
         variables,
         sourceFile,
         shouldScanIncludes,
@@ -100,10 +98,10 @@ public class FakeCppCompileAction extends CppCompileAction {
         prunableInputs,
         outputFile,
         dotdFile,
-        null,
-        null,
-        null,
-        null,
+        /* gcnoFile=*/ null,
+        /* dwoFile=*/ null,
+        /* ltoIndexingFile=*/ null,
+        /* optionalSourceFile=*/ null,
         localShellEnvironment,
         // We only allow inclusion of header files explicitly declared in
         // "srcs", so we only use declaredIncludeSrcs, not declaredIncludeDirs.
@@ -115,7 +113,7 @@ public class FakeCppCompileAction extends CppCompileAction {
         CcCompilationContextInfo.disallowUndeclaredHeaders(ccCompilationContextInfo),
         nocopts,
         lipoScannables,
-        ImmutableList.<Artifact>of(),
+        /* additionalIncludeScanningRoots=*/ ImmutableList.of(),
         GUID,
         executionInfo,
         CppCompileAction.CPP_COMPILE,
@@ -160,9 +158,10 @@ public class FakeCppCompileAction extends CppCompileAction {
           new HeaderDiscovery.Builder()
               .setAction(this)
               .setSourceFile(getSourceFile())
-              .setDependencies(processDepset(execRoot, reply).getDependencies())
+              .setDependencies(
+                  processDepset(actionExecutionContext, execRoot, reply).getDependencies())
               .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
-              .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());
+              .setAllowedDerivedinputs(getAllowedDerivedInputs());
 
       if (needsIncludeValidation) {
         discoveryBuilder.shouldValidateInclusions();
@@ -183,16 +182,16 @@ public class FakeCppCompileAction extends CppCompileAction {
     // listed in the "srcs" of the cc_fake_binary or in the "srcs" of a cc_library that it
     // depends on.
     try {
-      validateInclusions(
-          discoveredInputs,
-          actionExecutionContext.getArtifactExpander(),
-          actionExecutionContext.getEventHandler());
+      validateInclusions(actionExecutionContext, discoveredInputs);
     } catch (ActionExecutionException e) {
       // TODO(bazel-team): (2009) make this into an error, once most of the current warnings
       // are fixed.
-      actionExecutionContext.getEventHandler().handle(Event.warn(
-          getOwner().getLocation(),
-          e.getMessage() + ";\n  this warning may eventually become an error"));
+      actionExecutionContext
+          .getEventHandler()
+          .handle(
+              Event.warn(
+                  getOwner().getLocation(),
+                  e.getMessage() + ";\n  this warning may eventually become an error"));
     }
 
     updateActionInputs(discoveredInputs);

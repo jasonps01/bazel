@@ -9,18 +9,17 @@ filegroup(
         "//third_party/ijar:srcs",
         "//third_party/iossim:srcs",
         "//third_party/grpc:srcs",
+        "//third_party/jarjar:srcs",
         "//third_party/java/android_databinding:srcs",
         "//third_party/java/aosp_gradle_core:srcs",
         "//third_party/java/apkbuilder:srcs",
         "//third_party/java/dd_plist:srcs",
         "//third_party/java/j2objc:srcs",
         "//third_party/java/jacoco:srcs",
-        "//third_party/java/jarjar:srcs",
         "//third_party/java/javapoet:srcs",
         "//third_party/java/jcommander:srcs",
         "//third_party/java/jopt-simple:srcs",
         "//third_party/java/jdk/langtools:srcs",
-        "//third_party/java/jdk/javabuilder:srcs",
         "//third_party/java/proguard:srcs",
         "//third_party/javascript/bootstrap:srcs",
         "//third_party/checker_framework_dataflow:srcs",
@@ -331,12 +330,22 @@ java_import(
 )
 
 java_import(
+    name = "error_prone_annotations",
+    jars = [
+        "error_prone/error_prone_annotations-2.2.0.jar",
+        "error_prone/error_prone_type_annotations-2.3.1.jar",
+    ],
+)
+
+java_import(
     name = "error_prone",
     jars = [
-        "error_prone/error_prone_check_api-2.2.0.jar",
-        "error_prone/error_prone_core-2.2.0.jar",
-        "error_prone/error_prone_annotations-2.2.0.jar",
-        "error_prone/error_prone_annotation-2.2.0.jar",
+        "error_prone/error_prone_annotation-2.3.1.jar",
+        "error_prone/error_prone_check_api-2.3.1.jar",
+        "error_prone/error_prone_core-2.3.1.jar",
+    ],
+    exports = [
+        ":error_prone_annotations",
     ],
     deps = [
         ":auto_common",
@@ -375,29 +384,20 @@ java_import(
 filegroup(
     name = "bootstrap_guava_and_error_prone-jars",
     srcs = [
-        "auto/auto-common-0.3.jar",
-        "error_prone/error_prone_annotation-2.2.0.jar",
         "error_prone/error_prone_annotations-2.2.0.jar",
-        "error_prone/error_prone_check_api-2.2.0.jar",
-        "error_prone/error_prone_core-2.2.0.jar",
         "guava/guava-24.1-jre.jar",
-        "hungarian_algorithm/software-and-algorithms-1.0.jar",
         "jcip_annotations/jcip-annotations-1.0-1.jar",
         "jsr305/jsr-305.jar",
-        "pcollections/pcollections-2.1.2.jar",
-        "//third_party/checker_framework_dataflow:bootstrap",
-        "//third_party/checker_framework_javacutil:bootstrap",
-        "//third_party/jformatstring:bootstrap",
     ],
 )
 
 java_import(
     name = "guava",
-    jars = [
-        "error_prone/error_prone_annotations-2.2.0.jar",
-        "jcip_annotations/jcip-annotations-1.0-1.jar",
-        "jsr305/jsr-305.jar",
-        "guava/guava-24.1-jre.jar",
+    jars = ["guava/guava-24.1-jre.jar"],
+    exports = [
+        ":error_prone_annotations",
+        ":jcip_annotations",
+        ":jsr305",
     ],
 )
 
@@ -420,6 +420,15 @@ java_import(
 filegroup(
     name = "guava-jars",
     srcs = ["guava/guava-24.1-jre.jar"],
+)
+
+# javax.annotation.Generated is not included in the default root modules in 9,
+# see: http://openjdk.java.net/jeps/320.
+java_import(
+    name = "javax_annotations",
+    jars = ["javax_annotations/javax.annotation-api-1.3.2.jar"],
+    neverlink = 1,  # @Generated is source-retention
+    srcjar = "javax_annotations/javax.annotation-api-1.3.2-sources.jar",
 )
 
 java_import(

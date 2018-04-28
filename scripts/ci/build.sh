@@ -194,7 +194,7 @@ function ensure_gpg_secret_key_imported() {
     keyfile=$(mktemp --tmpdir)
     chmod 0600 "${keyfile}"
     gsutil cat "gs://bazel-encrypted-secrets/release-key.gpg.enc" | \
-        gcloud kms decrypt --location "global" --keyring "buildkite" --key "bazel-release-key" --plaintext-file "-" --ciphertext-file "${keyfile}"
+        gcloud kms decrypt --location "global" --keyring "buildkite" --key "bazel-release-key" --ciphertext-file "-" --plaintext-file "${keyfile}"
     gpg --allow-secret-key-import --import "${keyfile}"
     rm -f "${keyfile}"
   fi
@@ -324,6 +324,6 @@ function deploy_release() {
   github_working_dir="$(mktemp -d --tmpdir)"
   echo "github_working_dir = ${github_working_dir}"
   cp "${artifact_dir}"/* "${github_working_dir}"
-  rm -f "${github_working_dir}/bazel_${release_label}"*.{deb,dsc,tar.gz}
+  rm -f "${github_working_dir}/bazel_${release_label}"*.{dsc,tar.gz}{,.sha256,.sig}
   release_to_github "${github_working_dir}"
 }

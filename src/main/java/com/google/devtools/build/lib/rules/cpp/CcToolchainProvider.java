@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfig
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
 import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoMode;
+import com.google.devtools.build.lib.rules.cpp.Link.LinkingMode;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
@@ -120,6 +121,8 @@ public final class CcToolchainProvider extends ToolchainInfo {
   private final boolean useLLVMCoverageMapFormat;
   private final boolean codeCoverageEnabled;
   private final boolean isHostConfiguration;
+  private final boolean forcePic;
+  private final boolean shouldStripBinaries;
 
   public CcToolchainProvider(
       ImmutableMap<String, Object> values,
@@ -190,6 +193,13 @@ public final class CcToolchainProvider extends ToolchainInfo {
     this.useLLVMCoverageMapFormat = useLLVMCoverageMapFormat;
     this.codeCoverageEnabled = codeCoverageEnabled;
     this.isHostConfiguration = isHostConfiguration;
+    if (cppConfiguration != null) {
+      this.forcePic = cppConfiguration.forcePic();
+      this.shouldStripBinaries = cppConfiguration.shouldStripBinaries();
+    } else {
+      this.forcePic = false;
+      this.shouldStripBinaries = false;
+    }
   }
 
   /** Returns c++ Make variables. */
@@ -246,6 +256,23 @@ public final class CcToolchainProvider extends ToolchainInfo {
     result.put("ABI", abi);
 
     return result.build();
+  }
+
+  /**
+   * Returns true if Fission is specified and supported by the CROSSTOOL for the build implied by
+   * the given configuration and toolchain.
+   */
+  public boolean useFission() {
+    return Preconditions.checkNotNull(cppConfiguration).fissionIsActiveForCurrentCompilationMode()
+        && supportsFission();
+  }
+
+  /**
+   * Returns true if Fission and PER_OBJECT_DEBUG_INFO are specified and supported by the CROSSTOOL
+   * for the build implied by the given configuration, toolchain and feature configuration.
+   */
+  public boolean shouldCreatePerObjectDebugInfo(FeatureConfiguration featureConfiguration) {
+    return useFission() && featureConfiguration.isEnabled(CppRuleClasses.PER_OBJECT_DEBUG_INFO);
   }
 
   @Override
@@ -772,39 +799,76 @@ public final class CcToolchainProvider extends ToolchainInfo {
   }
 
   /** Returns linker flags for fully statically linked outputs. */
-  FlagList getFullyStaticLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
+  FlagList getLegacyFullyStaticLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
     return new FlagList(
-        configureLinkerOptions(compilationMode, lipoMode, LinkingMode.FULLY_STATIC),
+        configureAllLegacyLinkOptions(compilationMode, lipoMode, LinkingMode.LEGACY_FULLY_STATIC),
         ImmutableList.<String>of());
   }
 
   /** Returns linker flags for mostly static linked outputs. */
-  FlagList getMostlyStaticLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
+  FlagList getLegacyMostlyStaticLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
     return new FlagList(
-        configureLinkerOptions(compilationMode, lipoMode, LinkingMode.MOSTLY_STATIC),
+        configureAllLegacyLinkOptions(compilationMode, lipoMode, LinkingMode.STATIC),
         ImmutableList.<String>of());
   }
 
   /** Returns linker flags for mostly static shared linked outputs. */
-  FlagList getMostlyStaticSharedLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
+  FlagList getLegacyMostlyStaticSharedLinkFlags(
+      CompilationMode compilationMode, LipoMode lipoMode) {
     return new FlagList(
-        configureLinkerOptions(compilationMode, lipoMode, LinkingMode.MOSTLY_STATIC_LIBRARIES),
+        configureAllLegacyLinkOptions(
+            compilationMode, lipoMode, LinkingMode.LEGACY_MOSTLY_STATIC_LIBRARIES),
         ImmutableList.<String>of());
   }
 
   /** Returns linker flags for artifacts that are not fully or mostly statically linked. */
-  FlagList getDynamicLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
+  FlagList getLegacyDynamicLinkFlags(CompilationMode compilationMode, LipoMode lipoMode) {
     return new FlagList(
-        configureLinkerOptions(compilationMode, lipoMode, LinkingMode.DYNAMIC),
+        configureAllLegacyLinkOptions(compilationMode, lipoMode, LinkingMode.DYNAMIC),
         ImmutableList.of());
   }
 
-  ImmutableList<String> configureLinkerOptions(
-      CompilationMode compilationMode,
-      LipoMode lipoMode,
-      LinkingMode linkingMode) {
-    return toolchainInfo.configureLinkerOptions(
-        compilationMode, lipoMode, linkingMode);
+  /**
+   * Return all flags coming from naked {@code linker_flag} fields in the crosstool. {@code
+   * linker_flag}s coming from linking_mode_flags and compilation_mode_flags are not included. If
+   * you need all possible linker flags, use {@link #configureAllLegacyLinkOptions(CompilationMode,
+   * LipoMode, LinkingMode)}.
+   */
+  public ImmutableList<String> getLegacyLinkOptions() {
+    return toolchainInfo.getLegacyLinkOptions();
+  }
+
+  /**
+   * Return all flags coming from {@code compiler_flag} crosstool fields excluding flags coming from
+   * --copt options and copts attribute.
+   */
+  public ImmutableList<String> getLegacyCompileOptions() {
+    ImmutableList.Builder<String> coptsBuilder =
+        ImmutableList.<String>builder()
+            .addAll(getToolchainCompilerFlags())
+            .addAll(getCFlagsByCompilationMode().get(cppConfiguration.getCompilationMode()))
+            .addAll(getLipoCFlags().get(cppConfiguration.getLipoMode()));
+
+    if (cppConfiguration.isOmitfp()) {
+      coptsBuilder.add("-fomit-frame-pointer");
+      coptsBuilder.add("-fasynchronous-unwind-tables");
+      coptsBuilder.add("-DNO_FRAME_POINTER");
+    }
+
+    return coptsBuilder.build();
+  }
+
+  public ImmutableList<String> getLegacyCompileOptionsWithCopts() {
+    return ImmutableList.<String>builder()
+        .addAll(getLegacyCompileOptions())
+        .addAll(cppConfiguration.getCopts())
+        .build();
+  }
+
+  /** Return all possible {@code linker_flag} flags from the crosstool. */
+  ImmutableList<String> configureAllLegacyLinkOptions(
+      CompilationMode compilationMode, LipoMode lipoMode, LinkingMode linkingMode) {
+    return toolchainInfo.configureAllLegacyLinkOptions(compilationMode, lipoMode, linkingMode);
   }
 
   /** Returns the GNU System Name */
@@ -844,15 +908,16 @@ public final class CcToolchainProvider extends ToolchainInfo {
               + "in addition to the ones returned by this method"
   )
   public ImmutableList<String> getCompilerOptions() {
-    return CppHelper.getCompilerOptions(cppConfiguration, this);
+    return getLegacyCompileOptionsWithCopts();
   }
 
   /**
    * WARNING: This method is only added to allow incremental migration of existing users. Please do
    * not use in new code. Will be removed soon as part of the new Skylark API to the C++ toolchain.
    *
-   * Returns the list of additional C-specific options to use for compiling C. These should be go on
-   * the command line after the common options returned by {@link CppHelper#getCompilerOptions}.
+   * <p>Returns the list of additional C-specific options to use for compiling C. These should be go
+   * on the command line after the common options returned by {@link
+   * CcToolchainProvider#getLegacyCompileOptionsWithCopts()}.
    */
   @SkylarkCallable(
       name = "c_options",
@@ -868,19 +933,29 @@ public final class CcToolchainProvider extends ToolchainInfo {
    * WARNING: This method is only added to allow incremental migration of existing users. Please do
    * not use in new code. Will be removed soon as part of the new Skylark API to the C++ toolchain.
    *
-   * Returns the list of additional C++-specific options to use for compiling C++. These should be
-   * on the command line after the common options returned by {@link #getCompilerOptions}.
+   * <p>Returns the list of additional C++-specific options to use for compiling C++. These should
+   * be on the command line after the common options returned by {@link #getCompilerOptions}.
    */
   @SkylarkCallable(
       name = "cxx_options",
       doc =
           "Returns the list of additional C++-specific options to use for compiling C++. "
               + "These should be go on the command line after the common options returned by "
-              + "<code>compiler_options</code>"
-  )
+              + "<code>compiler_options</code>")
   @Deprecated
-  public ImmutableList<String> getCxxOptions() {
-    return CppHelper.getCxxOptions(cppConfiguration, this);
+  public ImmutableList<String> getCxxOptionsWithCopts() {
+    return ImmutableList.<String>builder()
+        .addAll(getLegacyCxxOptions())
+        .addAll(cppConfiguration.getCxxopts())
+        .build();
+  }
+
+  public ImmutableList<String> getLegacyCxxOptions() {
+    return ImmutableList.<String>builder()
+        .addAll(getToolchainCxxFlags())
+        .addAll(getCxxFlagsByCompilationMode().get(cppConfiguration.getCompilationMode()))
+        .addAll(getLipoCxxFlags().get(cppConfiguration.getLipoMode()))
+        .build();
   }
 
   /**
@@ -971,6 +1046,14 @@ public final class CcToolchainProvider extends ToolchainInfo {
 
   public boolean isHostConfiguration() {
     return isHostConfiguration;
+  }
+
+  public boolean getForcePic() {
+    return forcePic;
+  }
+
+  public boolean getShouldStripBinaries() {
+    return shouldStripBinaries;
   }
 }
 

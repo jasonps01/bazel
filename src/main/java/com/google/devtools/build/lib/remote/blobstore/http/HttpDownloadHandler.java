@@ -32,6 +32,7 @@ import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.util.internal.StringUtil;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 
@@ -42,6 +43,8 @@ final class HttpDownloadHandler extends AbstractHttpHandler<HttpObject> {
   private long bytesReceived;
   private OutputStream out;
   private boolean keepAlive = HttpVersion.HTTP_1_1.isKeepAliveDefault();
+  private boolean downloadSucceeded;
+  private HttpResponse response;
 
   public HttpDownloadHandler(Credentials credentials) {
     super(credentials);
@@ -50,33 +53,70 @@ final class HttpDownloadHandler extends AbstractHttpHandler<HttpObject> {
   @Override
   protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) throws Exception {
     if (!msg.decoderResult().isSuccess()) {
-      failAndResetUserPromise(new IOException("Failed to parse the HTTP response."));
+      failAndClose(new IOException("Failed to parse the HTTP response."), ctx);
+      return;
+    }
+    if (!(msg instanceof HttpResponse) && !(msg instanceof HttpContent)) {
+      failAndClose(
+          new IllegalArgumentException(
+              "Unsupported message type: " + StringUtil.simpleClassName(msg)),
+          ctx);
       return;
     }
     checkState(userPromise != null, "response before request");
+
     if (msg instanceof HttpResponse) {
-      HttpResponse response = (HttpResponse) msg;
+      response = (HttpResponse) msg;
+      if (!response.protocolVersion().equals(HttpVersion.HTTP_1_1)) {
+        HttpException error =
+            new HttpException(
+                response, "HTTP version 1.1 is required, was: " + response.protocolVersion(), null);
+        failAndClose(error, ctx);
+        return;
+      }
+      if (!HttpUtil.isContentLengthSet(response) && !HttpUtil.isTransferEncodingChunked(response)) {
+        HttpException error =
+            new HttpException(
+                response, "Missing 'Content-Length' or 'Transfer-Encoding: chunked' header", null);
+        failAndClose(error, ctx);
+        return;
+      }
+      downloadSucceeded = response.status().equals(HttpResponseStatus.OK);
+      if (!downloadSucceeded) {
+        out = new ByteArrayOutputStream();
+      }
       keepAlive = HttpUtil.isKeepAlive((HttpResponse) msg);
       if (HttpUtil.isContentLengthSet(response)) {
         contentLength = HttpUtil.getContentLength(response);
       }
-      if (!response.status().equals(HttpResponseStatus.OK)) {
-        failAndReset(
-            new HttpException(response, "Download failed with status: " + response.status(), null),
-            ctx);
+
+      if (!downloadSucceeded
+          && (contentLength == 0 || HttpUtil.isTransferEncodingChunked(response))) {
+        HttpException error = new HttpException(response, response.status().toString(), null);
+        failAndReset(error, ctx);
+        return;
       }
-    } else if (msg instanceof HttpContent) {
+    }
+
+    if (msg instanceof HttpContent) {
+      checkState(response != null, "content before headers");
+
       ByteBuf content = ((HttpContent) msg).content();
       bytesReceived += content.readableBytes();
       content.readBytes(out, content.readableBytes());
       if (bytesReceived == contentLength || msg instanceof LastHttpContent) {
-        succeedAndReset(ctx);
+        if (downloadSucceeded) {
+          succeedAndReset(ctx);
+        } else {
+          String errorMsg = response.status() + "\n";
+          errorMsg +=
+              new String(
+                  ((ByteArrayOutputStream) out).toByteArray(), HttpUtil.getCharset(response));
+          out.close();
+          HttpException error = new HttpException(response, errorMsg, null);
+          failAndReset(error, ctx);
+        }
       }
-    } else {
-      failAndReset(
-          new IllegalArgumentException(
-              "Unsupported message type: " + StringUtil.simpleClassName(msg)),
-          ctx);
     }
   }
 
@@ -98,7 +138,7 @@ final class HttpDownloadHandler extends AbstractHttpHandler<HttpObject> {
         .addListener(
             (f) -> {
               if (!f.isSuccess()) {
-                failAndReset(f.cause(), ctx);
+                failAndClose(f.cause(), ctx);
               }
             });
   }
@@ -115,7 +155,7 @@ final class HttpDownloadHandler extends AbstractHttpHandler<HttpObject> {
     return httpRequest;
   }
 
-  private void succeedAndReset(ChannelHandlerContext ctx) throws IOException {
+  private void succeedAndReset(ChannelHandlerContext ctx) {
     try {
       succeedAndResetUserPromise();
     } finally {
@@ -123,7 +163,16 @@ final class HttpDownloadHandler extends AbstractHttpHandler<HttpObject> {
     }
   }
 
-  private void failAndReset(Throwable t, ChannelHandlerContext ctx) throws IOException {
+  @SuppressWarnings("FutureReturnValueIgnored")
+  private void failAndClose(Throwable t, ChannelHandlerContext ctx) {
+    try {
+      failAndResetUserPromise(t);
+    } finally {
+      ctx.close();
+    }
+  }
+
+  private void failAndReset(Throwable t, ChannelHandlerContext ctx) {
     try {
       failAndResetUserPromise(t);
     } finally {
@@ -132,7 +181,7 @@ final class HttpDownloadHandler extends AbstractHttpHandler<HttpObject> {
   }
 
   @SuppressWarnings("FutureReturnValueIgnored")
-  private void reset(ChannelHandlerContext ctx) throws IOException {
+  private void reset(ChannelHandlerContext ctx) {
     try {
       if (!keepAlive) {
         ctx.close();
@@ -142,6 +191,8 @@ final class HttpDownloadHandler extends AbstractHttpHandler<HttpObject> {
       bytesReceived = 0;
       out = null;
       keepAlive = HttpVersion.HTTP_1_1.isKeepAliveDefault();
+      downloadSucceeded = false;
+      response = null;
     }
   }
 }

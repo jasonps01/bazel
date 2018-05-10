@@ -87,7 +87,9 @@ public class LtoBackendActionTest extends BuildViewTestCase {
             null,
             new FileOutErr(),
             ImmutableMap.<String, String>of(),
-            null);
+            ImmutableMap.of(),
+            null,
+            /*actionFileSystem=*/ null);
   }
 
   @Test

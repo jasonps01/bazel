@@ -20,7 +20,6 @@ import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
-import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.Builder;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
@@ -64,8 +63,8 @@ public class AndroidResourcesProcessorBuilder {
           .withSeparator(ToArg.SeparatorType.COLON_COMMA)
           .toArgConverter();
 
-  private ResourceDependencies resourceDependencies;
-  private AssetDependencies assetDependencies;
+  private ResourceDependencies resourceDependencies = ResourceDependencies.empty();
+  private AssetDependencies assetDependencies = AssetDependencies.empty();
 
   private Artifact proguardOut;
   private Artifact mainDexProguardOut;
@@ -235,7 +234,7 @@ public class AndroidResourcesProcessorBuilder {
     return ResourceApk.fromTransitiveResources(
         resourceDependencies,
         assetDependencies,
-        manifestOut == null ? manifest.getManifest() : manifestOut,
+        manifest.withProcessedManifest(manifestOut == null ? manifest.getManifest() : manifestOut),
         rTxtOut);
   }
 
@@ -306,7 +305,9 @@ public class AndroidResourcesProcessorBuilder {
         sourceJarOut,
         apkOut,
         dataBindingInfoZip,
-        resourceDependencies);
+        resourceDependencies,
+        proguardOut,
+        mainDexProguardOut);
   }
 
   public AndroidResourcesProcessorBuilder setJavaPackage(String customJavaPackage) {
@@ -504,7 +505,7 @@ public class AndroidResourcesProcessorBuilder {
       StampedAndroidManifest primaryManifest,
       List<Artifact> outs,
       NestedSetBuilder<Artifact> inputs,
-      Builder builder) {
+      CustomCommandLine.Builder builder) {
 
     // Add data
     builder.add(

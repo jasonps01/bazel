@@ -16,10 +16,14 @@ package com.google.devtools.build.lib.collect.nestedset;
 import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.SettableFuture;
+import com.google.devtools.build.lib.collect.nestedset.NestedSetStore.NestedSetStorageEndpoint;
 import com.google.devtools.build.lib.skyframe.serialization.AutoRegistry;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodecs;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationConstants;
-import com.google.devtools.build.lib.skyframe.serialization.testutils.SerializationTester;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationResult;
+import com.google.protobuf.ByteString;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -30,10 +34,6 @@ import org.mockito.Mockito;
 /** Tests for {@link NestedSet} serialization. */
 @RunWith(JUnit4.class)
 public class NestedSetCodecTest {
-
-  private static final NestedSet<String> SHARED_NESTED_SET =
-      NestedSetBuilder.<String>stableOrder().add("e").build();
-
   @Before
   public void setUp() {
     SerializationConstants.shouldSerializeNestedSet = true;
@@ -49,7 +49,7 @@ public class NestedSetCodecTest {
     ObjectCodecs objectCodecs =
         new ObjectCodecs(
             AutoRegistry.get().getBuilder().setAllowDefaultCodec(true).build(), ImmutableMap.of());
-    checkCodec(objectCodecs);
+    NestedSetCodecTestUtils.checkCodec(objectCodecs, false);
   }
 
   @Test
@@ -59,10 +59,98 @@ public class NestedSetCodecTest {
             AutoRegistry.get()
                 .getBuilder()
                 .setAllowDefaultCodec(true)
-                .add(new NestedSetCodecWithStore<>(new NestedSetStore()))
+                .add(new NestedSetCodecWithStore<>(NestedSetStore.inMemory()))
                 .build(),
             ImmutableMap.of());
-    checkCodec(objectCodecs);
+    NestedSetCodecTestUtils.checkCodec(objectCodecs, true);
+  }
+
+  /**
+   * Tests that serialization of a {@code NestedSet<NestedSet<String>>} waits on the writes of the
+   * inner NestedSets.
+   */
+  @Test
+  public void testNestedNestedSetSerialization() throws Exception {
+    NestedSetStorageEndpoint mockStorage = Mockito.mock(NestedSetStorageEndpoint.class);
+    SettableFuture<Void> innerWrite = SettableFuture.create();
+    SettableFuture<Void> outerWrite = SettableFuture.create();
+    Mockito.when(mockStorage.put(Mockito.any(), Mockito.any()))
+        // The write of the inner NestedSet {"a", "b"}
+        .thenReturn(innerWrite)
+        // The write of the inner NestedSet {"c", "d"}
+        .thenReturn(innerWrite)
+        // The write of the outer NestedSet {{"a", "b"}, {"c", "d"}}
+        .thenReturn(outerWrite);
+    NestedSetStore nestedSetStore = new NestedSetStore(mockStorage);
+    ObjectCodecs objectCodecs =
+        new ObjectCodecs(
+            AutoRegistry.get()
+                .getBuilder()
+                .setAllowDefaultCodec(true)
+                .add(new NestedSetCodecWithStore<>(nestedSetStore))
+                .build(),
+            ImmutableMap.of());
+
+    NestedSet<NestedSet<String>> nestedNestedSet =
+        NestedSetBuilder.create(
+            Order.STABLE_ORDER,
+            NestedSetBuilder.create(Order.STABLE_ORDER, "a", "b"),
+            NestedSetBuilder.create(Order.STABLE_ORDER, "c", "d"));
+
+    SerializationResult<ByteString> result =
+        objectCodecs.serializeMemoizedAndBlocking(nestedNestedSet);
+    outerWrite.set(null);
+    assertThat(result.getFutureToBlockWritesOn().isDone()).isFalse();
+    innerWrite.set(null);
+    assertThat(result.getFutureToBlockWritesOn().isDone()).isTrue();
+  }
+
+  @Test
+  public void testNestedNestedSetsWithCommonDependencyWaitOnSameInnerFuture() throws Exception {
+    NestedSetStorageEndpoint mockStorage = Mockito.mock(NestedSetStorageEndpoint.class);
+    SettableFuture<Void> sharedInnerWrite = SettableFuture.create();
+    SettableFuture<Void> outerWrite = SettableFuture.create();
+    Mockito.when(mockStorage.put(Mockito.any(), Mockito.any()))
+        // The write of the shared inner NestedSet {"a", "b"}
+        .thenReturn(sharedInnerWrite)
+        // The write of the inner NestedSet {"c", "d"}
+        .thenReturn(Futures.immediateFuture(null))
+        // The write of the outer NestedSet {{"a", "b"}, {"c", "d"}}
+        .thenReturn(outerWrite)
+        // The write of the inner NestedSet {"e", "f"}
+        .thenReturn(Futures.immediateFuture(null));
+    NestedSetStore nestedSetStore = new NestedSetStore(mockStorage);
+    ObjectCodecs objectCodecs =
+        new ObjectCodecs(
+            AutoRegistry.get()
+                .getBuilder()
+                .setAllowDefaultCodec(true)
+                .add(new NestedSetCodecWithStore<>(nestedSetStore))
+                .build(),
+            ImmutableMap.of());
+
+    NestedSet<String> sharedInnerNestedSet = NestedSetBuilder.create(Order.STABLE_ORDER, "a", "b");
+    NestedSet<NestedSet<String>> nestedNestedSet1 =
+        NestedSetBuilder.create(
+            Order.STABLE_ORDER,
+            sharedInnerNestedSet,
+            NestedSetBuilder.create(Order.STABLE_ORDER, "c", "d"));
+    NestedSet<NestedSet<String>> nestedNestedSet2 =
+        NestedSetBuilder.create(
+            Order.STABLE_ORDER,
+            sharedInnerNestedSet,
+            NestedSetBuilder.create(Order.STABLE_ORDER, "e", "f"));
+
+    SerializationResult<ByteString> result1 =
+        objectCodecs.serializeMemoizedAndBlocking(nestedNestedSet1);
+    SerializationResult<ByteString> result2 =
+        objectCodecs.serializeMemoizedAndBlocking(nestedNestedSet2);
+    outerWrite.set(null);
+    assertThat(result1.getFutureToBlockWritesOn().isDone()).isFalse();
+    assertThat(result2.getFutureToBlockWritesOn().isDone()).isFalse();
+    sharedInnerWrite.set(null);
+    assertThat(result1.getFutureToBlockWritesOn().isDone()).isTrue();
+    assertThat(result2.getFutureToBlockWritesOn().isDone()).isTrue();
   }
 
   @Test
@@ -80,55 +168,5 @@ public class NestedSetCodecTest {
                 .build());
     NestedSet<String> singletonNestedSet = new NestedSet<>(Order.STABLE_ORDER, "a");
     objectCodecs.serialize(singletonNestedSet);
-  }
-
-  private void checkCodec(ObjectCodecs objectCodecs) throws Exception {
-    new SerializationTester(
-            NestedSetBuilder.emptySet(Order.STABLE_ORDER),
-            NestedSetBuilder.emptySet(Order.NAIVE_LINK_ORDER),
-            NestedSetBuilder.create(Order.STABLE_ORDER, "a"),
-            NestedSetBuilder.create(Order.STABLE_ORDER, "a", "b", "c"),
-            NestedSetBuilder.<String>stableOrder()
-                .add("a")
-                .add("b")
-                .addTransitive(
-                    NestedSetBuilder.<String>stableOrder()
-                        .add("c")
-                        .addTransitive(SHARED_NESTED_SET)
-                        .build())
-                .addTransitive(
-                    NestedSetBuilder.<String>stableOrder()
-                        .add("d")
-                        .addTransitive(SHARED_NESTED_SET)
-                        .build())
-                .addTransitive(NestedSetBuilder.emptySet(Order.STABLE_ORDER))
-                .build())
-        .setObjectCodecs(objectCodecs)
-        .setVerificationFunction(NestedSetCodecTest::verifyDeserialization)
-        .runTests();
-  }
-
-  private static void verifyDeserialization(
-      NestedSet<String> subject, NestedSet<String> deserialized) {
-    assertThat(subject.getOrder()).isEqualTo(deserialized.getOrder());
-    assertThat(subject.toSet()).isEqualTo(deserialized.toSet());
-    verifyStructure(subject.rawChildren(), deserialized.rawChildren());
-  }
-
-  private static void verifyStructure(Object lhs, Object rhs) {
-    if (lhs == NestedSet.EMPTY_CHILDREN) {
-      assertThat(rhs).isSameAs(NestedSet.EMPTY_CHILDREN);
-    } else if (lhs instanceof Object[]) {
-      assertThat(rhs).isInstanceOf(Object[].class);
-      Object[] lhsArray = (Object[]) lhs;
-      Object[] rhsArray = (Object[]) rhs;
-      int n = lhsArray.length;
-      assertThat(rhsArray).hasLength(n);
-      for (int i = 0; i < n; ++i) {
-        verifyStructure(lhsArray[i], rhsArray[i]);
-      }
-    } else {
-      assertThat(lhs).isEqualTo(rhs);
-    }
   }
 }

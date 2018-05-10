@@ -43,14 +43,15 @@ import com.google.devtools.build.lib.actions.extra.ExtraActionInfo;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.collect.CollectionUtils;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadCompatible;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams.Linkstamp;
-import com.google.devtools.build.lib.rules.cpp.Link.LinkStaticness;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
+import com.google.devtools.build.lib.rules.cpp.Link.LinkingMode;
 import com.google.devtools.build.lib.rules.cpp.LinkerInputs.LibraryToLink;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
@@ -116,6 +117,8 @@ public final class CppLinkAction extends AbstractAction
 
   /** True for cc_fake_binary targets. */
   private final boolean fake;
+
+  private final Iterable<Artifact> fakeLinkerInputArtifacts;
   private final boolean isLtoIndexing;
 
   private final PathFragment ldExecutable;
@@ -157,6 +160,7 @@ public final class CppLinkAction extends AbstractAction
       Artifact linkOutput,
       LibraryToLink interfaceOutputLibrary,
       boolean fake,
+      Iterable<Artifact> fakeLinkerInputArtifacts,
       boolean isLtoIndexing,
       ImmutableList<Artifact> linkstampObjects,
       LinkCommandLine linkCommandLine,
@@ -178,6 +182,7 @@ public final class CppLinkAction extends AbstractAction
     this.linkOutput = linkOutput;
     this.interfaceOutputLibrary = interfaceOutputLibrary;
     this.fake = fake;
+    this.fakeLinkerInputArtifacts = CollectionUtils.makeImmutable(fakeLinkerInputArtifacts);
     this.isLtoIndexing = isLtoIndexing;
     this.linkstampObjects = linkstampObjects;
     this.linkCommandLine = linkCommandLine;
@@ -351,11 +356,9 @@ public final class CppLinkAction extends AbstractAction
 
     try {
       // Concatenate all the (fake) .o files into the result.
-      for (LinkerInput linkerInput : getLinkCommandLine().getLinkerInputs()) {
-        Artifact objectFile = linkerInput.getArtifact();
-        if ((CppFileTypes.OBJECT_FILE.matches(objectFile.getFilename())
-                || CppFileTypes.PIC_OBJECT_FILE.matches(objectFile.getFilename()))
-            && linkerInput.isFake()) {
+      for (Artifact objectFile : fakeLinkerInputArtifacts) {
+        if (CppFileTypes.OBJECT_FILE.matches(objectFile.getFilename())
+            || CppFileTypes.PIC_OBJECT_FILE.matches(objectFile.getFilename())) {
           s.append(
               FileSystemUtils.readContentAsLatin1(
                   actionExecutionContext.getInputPath(objectFile))); // (IOException)
@@ -414,14 +417,13 @@ public final class CppLinkAction extends AbstractAction
     // The uses of getLinkConfiguration in this method may not be consistent with the computed key.
     // I.e., this may be incrementally incorrect.
     CppLinkInfo.Builder info = CppLinkInfo.newBuilder();
-    info.addAllInputFile(Artifact.toExecPaths(
-        LinkerInputs.toLibraryArtifacts(getLinkCommandLine().getLinkerInputs())));
+    info.addAllInputFile(Artifact.toExecPaths(getLinkCommandLine().getLinkerInputArtifacts()));
     info.setOutputFile(getPrimaryOutput().getExecPathString());
     if (interfaceOutputLibrary != null) {
       info.setInterfaceOutputFile(interfaceOutputLibrary.getArtifact().getExecPathString());
     }
     info.setLinkTargetType(getLinkCommandLine().getLinkTargetType().name());
-    info.setLinkStaticness(getLinkCommandLine().getLinkStaticness().name());
+    info.setLinkStaticness(getLinkCommandLine().getLinkingMode().name());
     info.addAllLinkStamp(Artifact.toExecPaths(getLinkstampObjects()));
     info.addAllBuildInfoHeaderArtifact(Artifact.toExecPaths(getBuildInfoHeaderArtifacts()));
     info.addAllLinkOpt(getLinkCommandLine().getRawLinkArgv(null));
@@ -497,11 +499,11 @@ public final class CppLinkAction extends AbstractAction
   public ResourceSet estimateResourceConsumptionLocal() {
     // It's ok if this behaves differently even if the key is identical.
     ResourceSet minLinkResources =
-        getLinkCommandLine().getLinkStaticness() == Link.LinkStaticness.DYNAMIC
-        ? MIN_DYNAMIC_LINK_RESOURCES
-        : MIN_STATIC_LINK_RESOURCES;
+        getLinkCommandLine().getLinkingMode() == LinkingMode.DYNAMIC
+            ? MIN_DYNAMIC_LINK_RESOURCES
+            : MIN_STATIC_LINK_RESOURCES;
 
-    final int inputSize = Iterables.size(getLinkCommandLine().getLinkerInputs());
+    final int inputSize = Iterables.size(getLinkCommandLine().getLinkerInputArtifacts());
 
     return ResourceSet.createWithRamCpuIo(
         Math.max(inputSize * LINK_RESOURCES_PER_INPUT.getMemoryMb(),
@@ -552,7 +554,7 @@ public final class CppLinkAction extends AbstractAction
     final ImmutableSet<Linkstamp> linkstamps;
     final ImmutableList<String> linkopts;
     final LinkTargetType linkType;
-    final LinkStaticness linkStaticness;
+    final LinkingMode linkingMode;
     final boolean fake;
     final boolean isNativeDeps;
     final boolean useTestOnlyFlags;
@@ -582,7 +584,7 @@ public final class CppLinkAction extends AbstractAction
           builder.getLinkstamps(),
           ImmutableList.copyOf(builder.getLinkopts()),
           builder.getLinkType(),
-          builder.getLinkStaticness(),
+          builder.getLinkingMode(),
           builder.isFake(),
           builder.isNativeDeps(),
           builder.useTestOnlyFlags());
@@ -602,7 +604,7 @@ public final class CppLinkAction extends AbstractAction
         ImmutableSet<Linkstamp> linkstamps,
         ImmutableList<String> linkopts,
         LinkTargetType linkType,
-        LinkStaticness linkStaticness,
+        Link.LinkingMode linkingMode,
         boolean fake,
         boolean isNativeDeps,
         boolean useTestOnlyFlags) {
@@ -617,7 +619,7 @@ public final class CppLinkAction extends AbstractAction
       this.linkstamps = linkstamps;
       this.linkopts = linkopts;
       this.linkType = linkType;
-      this.linkStaticness = linkStaticness;
+      this.linkingMode = linkingMode;
       this.fake = fake;
       this.isNativeDeps = isNativeDeps;
       this.useTestOnlyFlags = useTestOnlyFlags;
@@ -676,12 +678,10 @@ public final class CppLinkAction extends AbstractAction
     public LinkTargetType getLinkType() {
       return this.linkType;
     }
-    
-    /**
-     * Returns the staticness of the linking of this target.
-     */
-    public LinkStaticness getLinkStaticness() {
-      return this.linkStaticness;
+
+    /** Returns the staticness of the linking of this target. */
+    public LinkingMode getLinkingMode() {
+      return this.linkingMode;
     }
     
     /**

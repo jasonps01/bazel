@@ -51,7 +51,7 @@ import com.google.devtools.build.lib.query2.output.OutputFormatter.AbstractUnord
 import com.google.devtools.build.lib.query2.output.QueryOptions.OrderOutput;
 import com.google.devtools.build.lib.query2.proto.proto2api.Build;
 import com.google.devtools.build.lib.query2.proto.proto2api.Build.GeneratedFile;
-import com.google.devtools.build.lib.query2.proto.proto2api.Build.QueryResult.Builder;
+import com.google.devtools.build.lib.query2.proto.proto2api.Build.QueryResult;
 import com.google.devtools.build.lib.query2.proto.proto2api.Build.SourceFile;
 import com.google.devtools.build.lib.syntax.Type;
 import java.io.IOException;
@@ -61,7 +61,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
@@ -122,7 +121,7 @@ public class ProtoOutputFormatter extends AbstractUnorderedFormatter {
       final OutputStream out, final QueryOptions options) {
     return new OutputFormatterCallback<Target>() {
 
-      private Builder queryResult;
+      private QueryResult.Builder queryResult;
 
       @Override
       public void start() {
@@ -184,33 +183,7 @@ public class ProtoOutputFormatter extends AbstractUnorderedFormatter {
       if (includeLocation()) {
         rulePb.setLocation(location);
       }
-      Map<Attribute, Build.Attribute> serializedAttributes = Maps.newHashMap();
-      AggregatingAttributeMapper attributeMapper = AggregatingAttributeMapper.of(rule);
-      for (Attribute attr : rule.getAttributes()) {
-        if ((!includeDefaultValues && !rule.isAttributeValueExplicitlySpecified(attr))
-            || !includeAttribute(rule, attr)) {
-          continue;
-        }
-        Object attributeValue;
-        if (flattenSelects || !attributeMapper.isConfigurable(attr.getName())) {
-          attributeValue =
-              flattenAttributeValues(attr.getType(), getPossibleAttributeValues(rule, attr));
-        } else {
-          attributeValue = attributeMapper.getSelectorList(attr.getName(), attr.getType());
-        }
-        Build.Attribute serializedAttribute =
-            AttributeFormatter.getAttributeProto(
-                attr,
-                attributeValue,
-                rule.isAttributeValueExplicitlySpecified(attr),
-                /*encodeBooleanAndTriStateAsIntegerAndString=*/ true);
-        serializedAttributes.put(attr, serializedAttribute);
-      }
-      rulePb.addAllAttribute(
-          serializedAttributes.values().stream().distinct().collect(Collectors.toList()));
-
-      postProcess(rule, rulePb, serializedAttributes);
-
+      addAttributes(rulePb, rule);
       String transitiveHashCode = rule.getRuleClassObject().getRuleDefinitionEnvironmentHashCode();
       if (transitiveHashCode != null && includeRuleDefinitionEnvironment()) {
         // The RuleDefinitionEnvironment is always defined for Skylark rules and
@@ -226,7 +199,7 @@ public class ProtoOutputFormatter extends AbstractUnorderedFormatter {
           aspectResolver.computeAspectDependencies(target, dependencyFilter);
       // Add information about additional attributes from aspects.
       List<Build.Attribute> attributes = new ArrayList<>(aspectsDependencies.asMap().size());
-      for (Entry<Attribute, Collection<Label>> entry : aspectsDependencies.asMap().entrySet()) {
+      for (Map.Entry<Attribute, Collection<Label>> entry : aspectsDependencies.asMap().entrySet()) {
         Attribute attribute = entry.getKey();
         Collection<Label> labels = entry.getValue();
         if (!includeAspectAttribute(attribute, labels)) {
@@ -265,7 +238,6 @@ public class ProtoOutputFormatter extends AbstractUnorderedFormatter {
       for (String feature : rule.getFeatures()) {
         rulePb.addDefaultSetting(feature);
       }
-
       targetPb.setType(RULE);
       targetPb.setRule(rulePb);
     } else if (target instanceof OutputFile) {
@@ -362,6 +334,40 @@ public class ProtoOutputFormatter extends AbstractUnorderedFormatter {
     }
 
     return targetPb.build();
+  }
+
+  protected void addAttributes(Build.Rule.Builder rulePb, Rule rule)
+      throws InterruptedException {
+    Map<Attribute, Build.Attribute> serializedAttributes = Maps.newHashMap();
+    AggregatingAttributeMapper attributeMapper = AggregatingAttributeMapper.of(rule);
+    for (Attribute attr : rule.getAttributes()) {
+      if (!shouldIncludeAttribute(rule, attr)) {
+        continue;
+      }
+      Object attributeValue;
+      if (flattenSelects || !attributeMapper.isConfigurable(attr.getName())) {
+        attributeValue =
+            flattenAttributeValues(attr.getType(), getPossibleAttributeValues(rule, attr));
+      } else {
+        attributeValue = attributeMapper.getSelectorList(attr.getName(), attr.getType());
+      }
+      Build.Attribute serializedAttribute =
+          AttributeFormatter.getAttributeProto(
+              attr,
+              attributeValue,
+              rule.isAttributeValueExplicitlySpecified(attr),
+              /*encodeBooleanAndTriStateAsIntegerAndString=*/ true);
+      serializedAttributes.put(attr, serializedAttribute);
+    }
+    rulePb.addAllAttribute(
+        serializedAttributes.values().stream().distinct().collect(Collectors.toList()));
+
+    postProcess(rule, rulePb, serializedAttributes);
+  }
+
+  protected boolean shouldIncludeAttribute(Rule rule, Attribute attr) {
+    return (includeDefaultValues || rule.isAttributeValueExplicitlySpecified(attr))
+        && includeAttribute(rule, attr);
   }
 
   private static Object getAspectAttributeValue(Attribute attribute, Collection<Label> labels) {
@@ -466,7 +472,7 @@ public class ProtoOutputFormatter extends AbstractUnorderedFormatter {
       Map<Object, Object> mergedDict = new HashMap<>();
       for (Object possibleValue : possibleValues) {
         Map<Object, Object> stringDict = (Map<Object, Object>) possibleValue;
-        for (Entry<Object, Object> entry : stringDict.entrySet()) {
+        for (Map.Entry<Object, Object> entry : stringDict.entrySet()) {
           mergedDict.put(entry.getKey(), entry.getValue());
         }
       }

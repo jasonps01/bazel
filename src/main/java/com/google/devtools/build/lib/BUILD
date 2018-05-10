@@ -5,7 +5,7 @@ package(
 )
 
 # Generate list of all srcs via:
-# blaze query 'filter("srcs", kind("filegroup rule", //third_party/bazel/src/main/java/com/google/devtools/build/lib/...))' | sort | sed -e "s/^/\"/" | sed -e "s/$/\",/" | fgrep -v "build/lib:srcs" | sed "s:third_party/bazel/::"
+# bazel query 'filter("srcs", kind("filegroup rule", //src/main/java/com/google/devtools/build/lib/...))' | sort | sed -e "s/^/\"/" | sed -e "s/$/\",/" | fgrep -v "build/lib:srcs"
 filegroup(
     name = "srcs",
     srcs = glob(["**"]) + [
@@ -57,6 +57,8 @@ filegroup(
         "//src/main/java/com/google/devtools/build/lib/skyframe/packages:srcs",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization:srcs",
         "//src/main/java/com/google/devtools/build/lib/skylarkbuildapi:srcs",
+        "//src/main/java/com/google/devtools/build/lib/skylarkbuildapi/cpp:srcs",
+        "//src/main/java/com/google/devtools/build/lib/skylarkbuildapi/java:srcs",
         "//src/main/java/com/google/devtools/build/lib/skylarkdebug/proto:srcs",
         "//src/main/java/com/google/devtools/build/lib/skylarkinterface/processor:srcs",
         "//src/main/java/com/google/devtools/build/lib/ssd:srcs",
@@ -252,6 +254,19 @@ java_library(
     ],
 )
 
+java_library(
+    name = "crash-utils",
+    srcs = [
+        "util/BazelCrashUtils.java",
+        "util/CustomExitCodePublisher.java",
+    ],
+    deps = [
+        ":exitcode-external",
+        "//third_party:guava",
+        "//third_party:jsr305",
+    ],
+)
+
 # Event reporting infrastructure.
 java_library(
     name = "events",
@@ -413,6 +428,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
         "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/autocodec",
+        "//src/main/java/com/google/devtools/build/lib/skylarkbuildapi",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/build/skyframe",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
@@ -848,6 +864,7 @@ java_library(
         "rules/java/JavaBinary.java",
         "rules/java/JavaCcLinkParamsProvider.java",
         "rules/java/JavaConfigurationLoader.java",
+        "rules/java/JavaHostRuntimeAliasRule.java",
         "rules/java/JavaImport.java",
         "rules/java/JavaImportBaseRule.java",
         "rules/java/JavaInfo.java",
@@ -857,7 +874,7 @@ java_library(
         "rules/java/JavaPlugin.java",
         "rules/java/JavaPrimaryClassProvider.java",
         "rules/java/JavaRuntime.java",
-        "rules/java/JavaRuntimeAlias.java",
+        "rules/java/JavaRuntimeAliasRule.java",
         "rules/java/JavaRuntimeClasspathProvider.java",
         "rules/java/JavaRuntimeRule.java",
         "rules/java/JavaRuntimeSuite.java",
@@ -865,7 +882,7 @@ java_library(
         "rules/java/JavaSkylarkCommon.java",
         "rules/java/JavaSourceInfoProvider.java",
         "rules/java/JavaToolchain.java",
-        "rules/java/JavaToolchainAlias.java",
+        "rules/java/JavaToolchainAliasRule.java",
         "rules/java/JavaToolchainRule.java",
         "rules/java/JavaToolchainSkylarkApiProvider.java",
         "rules/java/ProguardHelper.java",
@@ -903,6 +920,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/rules/cpp",
         "//src/main/java/com/google/devtools/build/lib/shell",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/autocodec",
+        "//src/main/java/com/google/devtools/build/lib/skylarkbuildapi/java",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:extra_actions_base_java_proto",
@@ -995,6 +1013,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/rules/cpp",
         "//src/main/java/com/google/devtools/build/lib/shell",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/autocodec",
+        "//src/main/java/com/google/devtools/build/lib/skylarkbuildapi/java",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:extra_actions_base_java_proto",

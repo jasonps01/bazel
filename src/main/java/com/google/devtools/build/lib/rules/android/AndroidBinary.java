@@ -48,7 +48,6 @@ import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
-import com.google.devtools.build.lib.analysis.actions.SpawnAction.Builder;
 import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -59,6 +58,7 @@ import com.google.devtools.build.lib.packages.TriState;
 import com.google.devtools.build.lib.rules.android.AndroidBinaryMobileInstall.MobileInstallResourceApks;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidAaptVersion;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses.MultidexMode;
+import com.google.devtools.build.lib.rules.android.ZipFilterBuilder.CheckHashMismatchMode;
 import com.google.devtools.build.lib.rules.cpp.CppSemantics;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
@@ -198,17 +198,20 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
 
     if (AndroidResources.decoupleDataProcessing(ruleContext)) {
       StampedAndroidManifest manifest =
-          AndroidManifest.from(ruleContext, androidSemantics).mergeWithDeps(ruleContext);
+          AndroidManifest.fromAttributes(ruleContext, androidSemantics).mergeWithDeps(ruleContext);
       applicationManifest =
           ApplicationManifest.fromExplicitManifest(ruleContext, manifest.getManifest());
 
+      AndroidAaptVersion aaptVersion = AndroidAaptVersion.chooseTargetAaptVersion(ruleContext);
       resourceApk =
           ProcessedAndroidData.processBinaryDataFrom(
                   ruleContext,
                   manifest,
                   /* conditionalKeepRules = */ shouldShrinkResourceCycles(
-                      ruleContext, shrinkResources))
-              .generateRClass(ruleContext);
+                      ruleContext, shrinkResources),
+                  applicationManifest.getManifestValues(),
+                  aaptVersion)
+              .generateRClass(ruleContext, aaptVersion);
     } else {
       applicationManifest =
           androidSemantics.getManifestForRule(ruleContext).mergeWith(ruleContext, resourceDeps);
@@ -440,8 +443,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
       Artifact java8LegacyDex;
       if (binaryJar.equals(jarToDex)) {
         // No Proguard: use canned Java 8 legacy .dex file
-        java8LegacyDex =
-            ruleContext.getPrerequisiteArtifact("$java8_legacy_dex", Mode.TARGET);
+        java8LegacyDex = ruleContext.getPrerequisiteArtifact("$java8_legacy_dex", Mode.TARGET);
       } else {
         // Proguard is used: build custom Java 8 legacy .dex file
         java8LegacyDex = getDxArtifact(ruleContext, "_java8_legacy.dex.zip");
@@ -476,11 +478,12 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
               .addInput(java8LegacyDex)
               .addOutput(finalClassesDex)
               // Order matters here: we want java8LegacyDex to be the highest-numbered classesN.dex
-              .addCommandLine(CustomCommandLine.builder()
-                  .addExecPath("--input_zip", dexPostprocessingOutput.classesDexZip())
-                  .addExecPath("--input_zip", java8LegacyDex)
-                  .addExecPath("--output_zip", finalClassesDex)
-                  .build())
+              .addCommandLine(
+                  CustomCommandLine.builder()
+                      .addExecPath("--input_zip", dexPostprocessingOutput.classesDexZip())
+                      .addExecPath("--input_zip", java8LegacyDex)
+                      .addExecPath("--output_zip", finalClassesDex)
+                      .build())
               .build(ruleContext));
       finalShardDexZips =
           ImmutableList.<Artifact>builder().addAll(finalShardDexZips).add(java8LegacyDex).build();
@@ -538,7 +541,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
               AndroidRuleClasses.INSTRUMENTATION_TEST_CHECK_RESULTS);
 
       SpawnAction.Builder checkAction =
-          new Builder()
+          new SpawnAction.Builder()
               .setExecutable(checker)
               .addInput(targetManifest)
               .addInput(instrumentationManifest)
@@ -687,8 +690,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
 
     AndroidSdkProvider sdk = AndroidSdkProvider.fromRuleContext(ruleContext);
     NestedSetBuilder<Artifact> libraryJars =
-        NestedSetBuilder.<Artifact>naiveLinkOrder()
-            .add(sdk.getAndroidJar());
+        NestedSetBuilder.<Artifact>naiveLinkOrder().add(sdk.getAndroidJar());
     if (AndroidCommon.getAndroidConfig(ruleContext).desugarJava8Libs()) {
       // Proguard sees the desugared app, so it needs legacy APIs to resolve symbols
       libraryJars.addTransitive(
@@ -1761,7 +1763,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
     Artifact filteredDeployJar =
         ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_TEST_FILTERED_JAR);
     AndroidCommon.createZipFilterAction(
-        ruleContext, deployJar, filterJar, filteredDeployJar, /* checkHashMismatch */ false);
+        ruleContext, deployJar, filterJar, filteredDeployJar, CheckHashMismatchMode.NONE);
     return filteredDeployJar;
   }
 }

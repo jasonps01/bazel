@@ -20,6 +20,7 @@ import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import java.util.Optional;
 import javax.annotation.Nullable;
 
 /**
@@ -45,7 +46,8 @@ public final class ResourceApk {
   private final AndroidResources primaryResources;
   private final AndroidAssets primaryAssets;
 
-  private final Artifact manifest; // The non-binary XML version of AndroidManifest.xml
+  // The non-binary XML version of AndroidManifest.xml
+  private final ProcessedAndroidManifest manifest;
   private final Artifact rTxt;
   @Nullable private final Artifact resourceProguardConfig;
   @Nullable private final Artifact mainDexProguardConfig;
@@ -68,13 +70,17 @@ public final class ResourceApk {
         resourceContainer,
         resourceContainer.getAndroidResources(),
         resourceContainer.getAndroidAssets(),
-        resourceContainer.getManifest(),
+        resourceContainer.getProcessedManifest(),
         resourceContainer.getRTxt(),
         resourceProguardConfig,
         mainDexProguardConfig);
   }
 
-  public static ResourceApk of(ValidatedAndroidResources resources, MergedAndroidAssets assets) {
+  public static ResourceApk of(
+      ValidatedAndroidResources resources,
+      MergedAndroidAssets assets,
+      @Nullable Artifact resourceProguardConfig,
+      @Nullable Artifact mainDexProguardConfig) {
     return new ResourceApk(
         resources.getApk(),
         resources.getJavaSourceJar(),
@@ -84,10 +90,10 @@ public final class ResourceApk {
         resources,
         resources,
         assets,
-        resources.getManifest(),
+        resources.getProcessedManifest(),
         resources.getRTxt(),
-        null,
-        null);
+        resourceProguardConfig,
+        mainDexProguardConfig);
   }
 
   private ResourceApk(
@@ -99,7 +105,7 @@ public final class ResourceApk {
       @Nullable ValidatedAndroidData validatedResources,
       AndroidResources primaryResources,
       AndroidAssets primaryAssets,
-      Artifact manifest,
+      ProcessedAndroidManifest manifest,
       Artifact rTxt,
       @Nullable Artifact resourceProguardConfig,
       @Nullable Artifact mainDexProguardConfig) {
@@ -150,8 +156,12 @@ public final class ResourceApk {
     return primaryAssets;
   }
 
-  public Artifact getManifest() {
+  public ProcessedAndroidManifest getProcessedManifest() {
     return manifest;
+  }
+
+  public Artifact getManifest() {
+    return manifest.getManifest();
   }
 
   public Artifact getRTxt() {
@@ -169,7 +179,7 @@ public final class ResourceApk {
   static ResourceApk fromTransitiveResources(
       ResourceDependencies resourceDeps,
       AssetDependencies assetDeps,
-      Artifact manifest,
+      ProcessedAndroidManifest manifest,
       Artifact rTxt) {
     return new ResourceApk(
         null,
@@ -212,11 +222,37 @@ public final class ResourceApk {
    * <p>If the ResourceApk was generated from local resources, that will be the direct dependencies
    * and the rest will be transitive.
    */
-  private AndroidResourcesInfo toResourceInfo(Label label) {
+  AndroidResourcesInfo toResourceInfo(Label label) {
     if (validatedResources == null) {
-      return resourceDeps.toInfo(label);
+      return resourceDeps.toInfo(label, manifest, rTxt);
     }
     return resourceDeps.toInfo(validatedResources);
+  }
+
+  // TODO(b/77574966): Stop returning an Optional once we get rid of ResourceContainer and can
+  // guarantee that only properly merged assets are passed into this object.
+  Optional<AndroidAssetsInfo> toAssetsInfo(Label label) {
+    if (primaryAssets instanceof MergedAndroidAssets) {
+      MergedAndroidAssets merged = (MergedAndroidAssets) primaryAssets;
+      AndroidAssetsInfo assetsInfo = merged.toProvider();
+      return Optional.of(assetsInfo);
+    } else if (primaryAssets == null) {
+      return Optional.of(assetDeps.toInfo(label));
+    } else {
+      return Optional.empty();
+    }
+  }
+
+  // TODO(b/77574966): Remove this cast once we get rid of ResourceContainer and can guarantee
+  // that only properly merged resources are passed into this object.
+  Optional<AndroidManifestInfo> toManifestInfo() {
+    if (validatedResources instanceof ValidatedAndroidResources) {
+      ValidatedAndroidResources validated = (ValidatedAndroidResources) validatedResources;
+
+      return Optional.of(validated.getStampedManifest().toProvider());
+    }
+
+    return Optional.empty();
   }
 
   public void addToConfiguredTargetBuilder(
@@ -224,18 +260,18 @@ public final class ResourceApk {
     AndroidResourcesInfo resourceInfo = toResourceInfo(label);
     builder.addNativeDeclaredProvider(resourceInfo);
 
-    // TODO(b/77574966): Remove this cast once we get rid of ResourceContainer and can guarantee
-    // that only properly merged resources are passed into this object.
-    if (primaryAssets instanceof MergedAndroidAssets) {
-      MergedAndroidAssets merged = (MergedAndroidAssets) primaryAssets;
-      builder.addNativeDeclaredProvider(merged.toProvider());
+    Optional<AndroidManifestInfo> manifestInfo = toManifestInfo();
+    manifestInfo.ifPresent(builder::addNativeDeclaredProvider);
 
+    Optional<AndroidAssetsInfo> assetsInfo = toAssetsInfo(label);
+    if (assetsInfo.isPresent()) {
+      builder.addNativeDeclaredProvider(assetsInfo.get());
+      if (assetsInfo.get().getValidationResult() != null) {
       // Asset merging output isn't consumed by anything. Require it to be run by top-level targets
       // so we can validate there are no asset merging conflicts.
-      builder.addOutputGroup(OutputGroupInfo.HIDDEN_TOP_LEVEL, merged.getMergedAssets());
-
-    } else if (primaryAssets == null) {
-      builder.addNativeDeclaredProvider(assetDeps.toInfo(label));
+        builder.addOutputGroup(
+            OutputGroupInfo.HIDDEN_TOP_LEVEL, assetsInfo.get().getValidationResult());
+      }
     }
 
     if (includeSkylarkApiProvider) {

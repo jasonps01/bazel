@@ -37,6 +37,7 @@ import com.google.devtools.build.lib.packages.OutputFile;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.rules.cpp.CppConfigurationLoader.CppConfigurationParameters;
 import com.google.devtools.build.lib.rules.cpp.CrosstoolConfigurationLoader.CrosstoolFile;
+import com.google.devtools.build.lib.rules.cpp.Link.LinkingMode;
 import com.google.devtools.build.lib.rules.cpp.transitions.ContextCollectorOwnerTransition;
 import com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
@@ -252,30 +253,27 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
             ? cppToolchainInfo.getDefaultSysroot()
             : params.sysrootLabel.getPackageFragment(),
         params.sysrootLabel,
+        new FlagList(coptsBuilder.build(), ImmutableList.copyOf(cppOptions.coptList)),
+        new FlagList(cxxOptsBuilder.build(), ImmutableList.copyOf(cppOptions.cxxoptList)),
         new FlagList(
-            coptsBuilder.build(),
-            ImmutableList.copyOf(cppOptions.coptList)),
-        new FlagList(
-            cxxOptsBuilder.build(),
-            ImmutableList.copyOf(cppOptions.cxxoptList)),
-        new FlagList(
-            ImmutableList.copyOf(toolchain.getUnfilteredCxxFlagList()),
-            ImmutableList.of()),
+            ImmutableList.copyOf(toolchain.getUnfilteredCxxFlagList()), ImmutableList.of()),
         ImmutableList.copyOf(cppOptions.conlyoptList),
         new FlagList(
-            cppToolchainInfo.configureLinkerOptions(
-                compilationMode, cppOptions.getLipoMode(), LinkingMode.FULLY_STATIC),
+            cppToolchainInfo.configureAllLegacyLinkOptions(
+                compilationMode, cppOptions.getLipoMode(), LinkingMode.LEGACY_FULLY_STATIC),
             ImmutableList.of()),
         new FlagList(
-            cppToolchainInfo.configureLinkerOptions(
-                compilationMode, cppOptions.getLipoMode(), LinkingMode.MOSTLY_STATIC),
+            cppToolchainInfo.configureAllLegacyLinkOptions(
+                compilationMode, cppOptions.getLipoMode(), LinkingMode.STATIC),
             ImmutableList.of()),
         new FlagList(
-            cppToolchainInfo.configureLinkerOptions(
-                compilationMode, cppOptions.getLipoMode(), LinkingMode.MOSTLY_STATIC_LIBRARIES),
+            cppToolchainInfo.configureAllLegacyLinkOptions(
+                compilationMode,
+                cppOptions.getLipoMode(),
+                LinkingMode.LEGACY_MOSTLY_STATIC_LIBRARIES),
             ImmutableList.of()),
         new FlagList(
-            cppToolchainInfo.configureLinkerOptions(
+            cppToolchainInfo.configureAllLegacyLinkOptions(
                 compilationMode, cppOptions.getLipoMode(), LinkingMode.DYNAMIC),
             ImmutableList.of()),
         ImmutableList.copyOf(cppOptions.coptList),
@@ -365,7 +363,19 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
 
   @VisibleForTesting
   static LinkingMode importLinkingMode(CrosstoolConfig.LinkingMode mode) {
-    return LinkingMode.valueOf(mode.name());
+    switch (mode.name()) {
+      case "FULLY_STATIC":
+        return LinkingMode.LEGACY_FULLY_STATIC;
+      case "MOSTLY_STATIC_LIBRARIES":
+        return LinkingMode.LEGACY_MOSTLY_STATIC_LIBRARIES;
+      case "MOSTLY_STATIC":
+        return LinkingMode.STATIC;
+      case "DYNAMIC":
+        return LinkingMode.DYNAMIC;
+      default:
+        throw new IllegalArgumentException(
+            String.format("Linking mode '%s' not known.", mode.name()));
+    }
   }
 
   /** Returns the {@link CppToolchainInfo} used by this configuration. */
@@ -551,7 +561,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
    * options that should be used for all three languages. There may be additional C-specific or
    * C++-specific options that should be used, in addition to the ones returned by this method.
    *
-   * <p>Deprecated: Use {@link CppHelper#getCompilerOptions}
+   * <p>Deprecated: Use {@link CcToolchainProvider#getLegacyCompileOptionsWithCopts()}
    */
   // TODO(b/64384912): Migrate skylark callers and remove.
   @SkylarkCallable(
@@ -587,7 +597,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
    * Returns the list of additional C++-specific options to use for compiling C++. These should be
    * on the command line after the common options returned by {@link #getCompilerOptions}.
    *
-   * <p>Deprecated: Use {@link CppHelper#getCxxOptions}
+   * <p>Deprecated: Use {@link CcToolchainProvider#getCxxOptionsWithCopts}
    */
   // TODO(b/64384912): Migrate skylark callers and remove.
   @SkylarkCallable(
@@ -892,12 +902,12 @@ public final class CppConfiguration extends BuildConfiguration.Fragment {
    */
   // TODO(b/64384912): Remove in favor of overload with isLLVMCompiler.
   @Deprecated
-  public boolean isLLVMOptimizedFdo() {
-    return cppOptions.getFdoOptimize() != null
-        && (CppFileTypes.LLVM_PROFILE.matches(cppOptions.getFdoOptimize())
-            || CppFileTypes.LLVM_PROFILE_RAW.matches(cppOptions.getFdoOptimize())
-            || (isLLVMCompiler()
-                && cppOptions.getFdoOptimize().endsWith(".zip")));
+  public boolean shouldIncludeZipperInToolchain() {
+    return (cppOptions.getFdoOptimize() != null
+            && (CppFileTypes.LLVM_PROFILE.matches(cppOptions.getFdoOptimize())
+                || CppFileTypes.LLVM_PROFILE_RAW.matches(cppOptions.getFdoOptimize())
+                || (isLLVMCompiler() && cppOptions.getFdoOptimize().endsWith(".zip"))))
+        || (cppOptions.getFdoProfileLabel() != null);
   }
 
   /** Returns true if LIPO optimization is implied by the flags of this build. */

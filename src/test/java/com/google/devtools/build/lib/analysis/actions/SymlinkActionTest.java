@@ -88,7 +88,9 @@ public class SymlinkActionTest extends BuildViewTestCase {
                 null,
                 null,
                 ImmutableMap.<String, String>of(),
-                null));
+                ImmutableMap.of(),
+                null,
+                /*actionFileSystem=*/ null));
     assertThat(actionResult.spawnResults()).isEmpty();
     assertThat(output.isSymbolicLink()).isTrue();
     assertThat(output.resolveSymbolicLinks()).isEqualTo(input);

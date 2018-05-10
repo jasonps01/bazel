@@ -93,7 +93,6 @@ import com.google.devtools.build.lib.skyframe.PackageLookupValue;
 import com.google.devtools.build.lib.skyframe.PackageValue;
 import com.google.devtools.build.lib.skyframe.PrepareDepsOfPatternsFunction;
 import com.google.devtools.build.lib.skyframe.RecursivePackageProviderBackedTargetPatternResolver;
-import com.google.devtools.build.lib.skyframe.SkyFunctions;
 import com.google.devtools.build.lib.skyframe.TargetPatternValue;
 import com.google.devtools.build.lib.skyframe.TargetPatternValue.TargetPatternKey;
 import com.google.devtools.build.lib.skyframe.TransitiveTraversalValue;
@@ -113,7 +112,6 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.RejectedExecutionException;
@@ -739,11 +737,8 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   @ThreadSafe
   @Override
   public ThreadSafeMutableSet<Target> getBuildFiles(
-      QueryExpression caller,
-      ThreadSafeMutableSet<Target> nodes,
-      boolean buildFiles,
-      boolean loads)
-      throws QueryException {
+      QueryExpression caller, ThreadSafeMutableSet<Target> nodes, boolean buildFiles, boolean loads)
+      throws QueryException, InterruptedException {
     ThreadSafeMutableSet<Target> dependentFiles = createThreadSafeMutableSet();
     Set<PackageIdentifier> seenPackages = new HashSet<>();
     // Keep track of seen labels, to avoid adding a fake subinclude label that also exists as a
@@ -869,10 +864,10 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
 
     // First, look for errors in the successfully evaluated TransitiveTraversalValues. They may
     // have encountered errors that they were able to recover from.
-    Set<Entry<SkyKey, SkyValue>> successfulEntries =
+    Set<Map.Entry<SkyKey, SkyValue>> successfulEntries =
         graph.getSuccessfulValues(transitiveTraversalKeys).entrySet();
     ImmutableSet.Builder<SkyKey> successfulKeysBuilder = ImmutableSet.builder();
-    for (Entry<SkyKey, SkyValue> successfulEntry : successfulEntries) {
+    for (Map.Entry<SkyKey, SkyValue> successfulEntry : successfulEntries) {
       successfulKeysBuilder.add(successfulEntry.getKey());
       TransitiveTraversalValue value = (TransitiveTraversalValue) successfulEntry.getValue();
       String firstErrorMessage = value.getFirstErrorMessage();
@@ -885,7 +880,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     // Next, look for errors from the unsuccessfully evaluated TransitiveTraversal skyfunctions.
     Iterable<SkyKey> unsuccessfulKeys =
         Iterables.filter(transitiveTraversalKeys, Predicates.not(Predicates.in(successfulKeys)));
-    Set<Entry<SkyKey, Exception>> errorEntries =
+    Set<Map.Entry<SkyKey, Exception>> errorEntries =
         graph.getMissingAndExceptions(unsuccessfulKeys).entrySet();
     for (Map.Entry<SkyKey, Exception> entry : errorEntries) {
       if (entry.getValue() == null) {
@@ -1027,7 +1022,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     while (!currentToOriginal.isEmpty()) {
       Multimap<SkyKey, PathFragment> packageLookupKeysToOriginal = ArrayListMultimap.create();
       Multimap<SkyKey, PathFragment> packageLookupKeysToCurrent = ArrayListMultimap.create();
-      for (Entry<PathFragment, PathFragment> entry : currentToOriginal.entries()) {
+      for (Map.Entry<PathFragment, PathFragment> entry : currentToOriginal.entries()) {
         PathFragment current = entry.getKey();
         PathFragment original = entry.getValue();
         for (SkyKey packageLookupKey : getPkgLookupKeysForFile(original, current)) {
@@ -1092,10 +1087,13 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
         Package::getBuildFile);
   }
 
+  /**
+   * Calculates the set of packages that transitively depend on, via load statements, the specified
+   * paths. The emitted {@link Target}s are BUILD file targets.
+   */
   @ThreadSafe
-  QueryTaskFuture<Void> getRBuildFilesParallel(
-      final Collection<PathFragment> fileIdentifiers,
-      final Callback<Target> callback) {
+  QueryTaskFuture<Void> getRBuildFiles(
+      Collection<PathFragment> fileIdentifiers, Callback<Target> callback) {
     return QueryTaskFutureImpl.ofDelegate(
         safeSubmit(
             () -> {
@@ -1103,56 +1101,6 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
                   SkyQueryEnvironment.this, fileIdentifiers, callback);
               return null;
             }));
-  }
-
-  /**
-   * Calculates the set of {@link Package} objects, represented as source file targets, that depend
-   * on the given list of BUILD files and subincludes (other files are filtered out).
-   */
-  @ThreadSafe
-  QueryTaskFuture<Void> getRBuildFiles(
-      Collection<PathFragment> fileIdentifiers, Callback<Target> callback) {
-    try {
-      Collection<SkyKey> files = getFileStateKeysForFileFragments(fileIdentifiers);
-      Uniquifier<SkyKey> keyUniquifier =
-          new UniquifierImpl<>(SkyKeyKeyExtractor.INSTANCE, /*concurrencyLevel=*/ 1);
-      Collection<SkyKey> current = keyUniquifier.unique(graph.getSuccessfulValues(files).keySet());
-      Set<SkyKey> resultKeys = CompactHashSet.create();
-      while (!current.isEmpty()) {
-        Collection<Iterable<SkyKey>> reverseDeps = graph.getReverseDeps(current).values();
-        current = new HashSet<>();
-        for (SkyKey rdep : Iterables.concat(reverseDeps)) {
-          if (rdep.functionName().equals(SkyFunctions.PACKAGE)) {
-            resultKeys.add(rdep);
-            // Every package has a dep on the external package, so we need to include those edges
-            // too.
-            if (rdep.equals(PackageValue.key(Label.EXTERNAL_PACKAGE_IDENTIFIER))) {
-              if (keyUniquifier.unique(rdep)) {
-                current.add(rdep);
-              }
-            }
-          } else if (!rdep.functionName().equals(SkyFunctions.PACKAGE_LOOKUP)) {
-            // Packages may depend on the existence of subpackages, but these edges aren't relevant
-            // to rbuildfiles.
-            if (keyUniquifier.unique(rdep)) {
-              current.add(rdep);
-            }
-          }
-        }
-        if (resultKeys.size() >= BATCH_CALLBACK_SIZE) {
-          for (Iterable<SkyKey> batch : Iterables.partition(resultKeys, BATCH_CALLBACK_SIZE)) {
-            getBuildFileTargetsForPackageKeysAndProcessViaCallback(batch, callback);
-          }
-          resultKeys.clear();
-        }
-      }
-      getBuildFileTargetsForPackageKeysAndProcessViaCallback(resultKeys, callback);
-      return immediateSuccessfulFuture(null);
-    } catch (QueryException e) {
-      return immediateFailedFuture(e);
-    } catch (InterruptedException e) {
-      return immediateCancelledFuture();
-    }
   }
 
   @Override

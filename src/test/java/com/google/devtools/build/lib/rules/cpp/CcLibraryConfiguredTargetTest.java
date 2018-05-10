@@ -289,8 +289,8 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
     CppLinkInfo cppLinkInfo = info.getExtension(CppLinkInfo.cppLinkInfo);
     assertThat(cppLinkInfo).isNotNull();
 
-    Iterable<String> inputs = Artifact.asExecPaths(
-        LinkerInputs.toLibraryArtifacts(action.getLinkCommandLine().getLinkerInputs()));
+    Iterable<String> inputs =
+        Artifact.asExecPaths(action.getLinkCommandLine().getLinkerInputArtifacts());
     assertThat(cppLinkInfo.getInputFileList()).containsExactlyElementsIn(inputs);
     assertThat(cppLinkInfo.getOutputFile())
         .isEqualTo(action.getPrimaryOutput().getExecPathString());
@@ -298,7 +298,7 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
     assertThat(cppLinkInfo.getLinkTargetType())
         .isEqualTo(action.getLinkCommandLine().getLinkTargetType().name());
     assertThat(cppLinkInfo.getLinkStaticness())
-        .isEqualTo(action.getLinkCommandLine().getLinkStaticness().name());
+        .isEqualTo(action.getLinkCommandLine().getLinkingMode().name());
     Iterable<String> linkstamps = Artifact.asExecPaths(action.getLinkstampObjects());
     assertThat(cppLinkInfo.getLinkStampList()).containsExactlyElementsIn(linkstamps);
     Iterable<String> buildInfoHeaderArtifacts =
@@ -323,15 +323,15 @@ public class CcLibraryConfiguredTargetTest extends BuildViewTestCase {
     CppLinkInfo cppLinkInfo = info.getExtension(CppLinkInfo.cppLinkInfo);
     assertThat(cppLinkInfo).isNotNull();
 
-    Iterable<String> inputs = Artifact.asExecPaths(
-        LinkerInputs.toLibraryArtifacts(action.getLinkCommandLine().getLinkerInputs()));
+    Iterable<String> inputs =
+        Artifact.asExecPaths(action.getLinkCommandLine().getLinkerInputArtifacts());
     assertThat(cppLinkInfo.getInputFileList()).containsExactlyElementsIn(inputs);
     assertThat(cppLinkInfo.getOutputFile())
         .isEqualTo(action.getPrimaryOutput().getExecPathString());
     assertThat(cppLinkInfo.getLinkTargetType())
         .isEqualTo(action.getLinkCommandLine().getLinkTargetType().name());
     assertThat(cppLinkInfo.getLinkStaticness())
-        .isEqualTo(action.getLinkCommandLine().getLinkStaticness().name());
+        .isEqualTo(action.getLinkCommandLine().getLinkingMode().name());
     Iterable<String> linkstamps = Artifact.asExecPaths(action.getLinkstampObjects());
     assertThat(cppLinkInfo.getLinkStampList()).containsExactlyElementsIn(linkstamps);
     Iterable<String> buildInfoHeaderArtifacts =

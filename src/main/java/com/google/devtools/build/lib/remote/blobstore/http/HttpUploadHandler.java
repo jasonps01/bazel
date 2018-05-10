@@ -43,7 +43,7 @@ final class HttpUploadHandler extends AbstractHttpHandler<FullHttpResponse> {
   @Override
   protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse response) {
     if (!response.decoderResult().isSuccess()) {
-      failAndResetUserPromise(new IOException("Failed to parse the HTTP response."));
+      failAndClose(new IOException("Failed to parse the HTTP response."), ctx);
       return;
     }
     try {
@@ -53,8 +53,13 @@ final class HttpUploadHandler extends AbstractHttpHandler<FullHttpResponse> {
           && !response.status().equals(HttpResponseStatus.CREATED)
           && !response.status().equals(HttpResponseStatus.NO_CONTENT)) {
         // Supporting more than OK status to be compatible with nginx webdav.
-        failAndResetUserPromise(
-            new HttpException(response, "Upload failed with status: " + response.status(), null));
+        String errorMsg = response.status().toString();
+        if (response.content().readableBytes() > 0) {
+          byte[] data = new byte[response.content().readableBytes()];
+          response.content().readBytes(data);
+          errorMsg += "\n" + new String(data, HttpUtil.getCharset(response));
+        }
+        failAndResetUserPromise(new HttpException(response, errorMsg, null));
       } else {
         succeedAndResetUserPromise();
       }
@@ -85,7 +90,7 @@ final class HttpUploadHandler extends AbstractHttpHandler<FullHttpResponse> {
               if (f.isSuccess()) {
                 return;
               }
-              failAndResetUserPromise(f.cause());
+              failAndClose(f.cause(), ctx);
             });
     ctx.writeAndFlush(body)
         .addListener(
@@ -93,7 +98,7 @@ final class HttpUploadHandler extends AbstractHttpHandler<FullHttpResponse> {
               if (f.isSuccess()) {
                 return;
               }
-              failAndResetUserPromise(f.cause());
+              failAndClose(f.cause(), ctx);
             });
   }
 
@@ -112,5 +117,15 @@ final class HttpUploadHandler extends AbstractHttpHandler<FullHttpResponse> {
 
   private HttpChunkedInput buildBody(UploadCommand msg) {
     return new HttpChunkedInput(new ChunkedStream(msg.data()));
+  }
+
+
+  @SuppressWarnings("FutureReturnValueIgnored")
+  private void failAndClose(Throwable t, ChannelHandlerContext ctx) {
+    try {
+      failAndResetUserPromise(t);
+    } finally {
+      ctx.close();
+    }
   }
 }

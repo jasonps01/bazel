@@ -64,7 +64,7 @@ final class RemoteActionContextProvider extends ActionContextProvider {
     String buildRequestId = env.getBuildRequestId().toString();
     String commandId = env.getCommandId().toString();
 
-    if (remoteOptions.experimentalRemoteSpawnCache || remoteOptions.experimentalLocalDiskCache) {
+    if (remoteOptions.experimentalRemoteSpawnCache || remoteOptions.diskCache != null) {
       RemoteSpawnCache spawnCache =
           new RemoteSpawnCache(
               env.getExecRoot(),
@@ -72,7 +72,6 @@ final class RemoteActionContextProvider extends ActionContextProvider {
               cache,
               buildRequestId,
               commandId,
-              executionOptions.verboseFailures,
               env.getReporter(),
               digestUtil);
       return ImmutableList.of(spawnCache);
@@ -99,7 +98,7 @@ final class RemoteActionContextProvider extends ActionContextProvider {
         env.getOptions().getOptions(LocalExecutionOptions.class);
     LocalEnvProvider localEnvProvider =
         OS.getCurrent() == OS.DARWIN
-            ? new XcodeLocalEnvProvider(env.getRuntime().getProductName(), env.getClientEnv())
+            ? new XcodeLocalEnvProvider(env.getClientEnv())
             : (OS.getCurrent() == OS.WINDOWS
                 ? new WindowsLocalEnvProvider(env.getClientEnv())
                 : new PosixLocalEnvProvider(env.getClientEnv()));

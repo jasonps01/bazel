@@ -175,25 +175,17 @@ public final class RemoteOptions extends OptionsBase {
   )
   public boolean experimentalRemoteSpawnCache;
 
-  // TODO(davido): Find a better place for this and the next option.
   @Option(
-    name = "experimental_local_disk_cache",
-    defaultValue = "false",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    help = "Whether to use the experimental local disk cache."
-  )
-  public boolean experimentalLocalDiskCache;
-
-  @Option(
-    name = "experimental_local_disk_cache_path",
+    name = "disk_cache",
     defaultValue = "null",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
     converter = OptionsUtils.PathFragmentConverter.class,
-    help = "A file path to a local disk cache."
+    help =
+        "A path to a directory where Bazel can read and write actions and action outputs. "
+            + "If the directory does not exist, it will be created."
   )
-  public PathFragment experimentalLocalDiskCachePath;
+  public PathFragment diskCache;
 
   @Option(
     name = "experimental_guard_against_concurrent_changes",
@@ -222,4 +214,19 @@ public final class RemoteOptions extends OptionsBase {
             + "LogEntry.writeDelimitedTo(OutputStream)."
   )
   public String experimentalRemoteGrpcLog;
+
+  @Option(
+    name = "remote_allow_symlink_upload",
+    defaultValue = "true",
+    category = "remote",
+    documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
+    effectTags = {OptionEffectTag.EXECUTION},
+    help =
+        "If true, upload action symlink outputs to the remote cache. "
+            + "The remote cache currently doesn't support symlinks, "
+            + "so symlink outputs are converted into regular files. "
+            + "If this option is not enabled, "
+            + "otherwise cachable actions that output symlinks will fail."
+  )
+  public boolean allowSymlinkUpload;
 }

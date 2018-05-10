@@ -35,14 +35,12 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.exec.SpawnCache.CacheHandle;
 import com.google.devtools.build.lib.exec.SpawnRunner.ProgressStatus;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
-import com.google.devtools.build.lib.rules.fileset.FilesetActionContext;
 import com.google.devtools.build.lib.util.CommandFailureUtils;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.SortedMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -96,8 +94,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnActionConte
           // Actual execution.
           spawnResult = spawnRunner.exec(spawn, context);
           if (cacheHandle.willStore()) {
-            cacheHandle.store(
-                spawnResult, listExistingOutputFiles(spawn, actionExecutionContext.getExecRoot()));
+            cacheHandle.store(spawnResult);
           }
         }
       }
@@ -143,19 +140,6 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnActionConte
       throw new SpawnExecException(message, spawnResult, /*forciblyRunRemotely=*/false);
     }
     return ImmutableList.of(spawnResult);
-  }
-
-  private List<Path> listExistingOutputFiles(Spawn spawn, Path execRoot) {
-    ArrayList<Path> outputFiles = new ArrayList<>();
-    for (ActionInput output : spawn.getOutputFiles()) {
-      Path outputPath = execRoot.getRelative(output.getExecPathString());
-      // TODO(ulfjack): Store the actual list of output files in SpawnResult and use that instead
-      // of statting the files here again.
-      if (outputPath.exists()) {
-        outputFiles.add(outputPath);
-      }
-    }
-    return outputFiles;
   }
 
   private final class SpawnExecutionContextImpl implements SpawnExecutionContext {
@@ -233,11 +217,11 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnActionConte
     @Override
     public SortedMap<PathFragment, ActionInput> getInputMapping() throws IOException {
       if (lazyInputMapping == null) {
-        lazyInputMapping = spawnInputExpander.getInputMapping(
-            spawn,
-            actionExecutionContext.getArtifactExpander(),
-            actionExecutionContext.getActionInputFileCache(),
-            actionExecutionContext.getContext(FilesetActionContext.class));
+        lazyInputMapping =
+            spawnInputExpander.getInputMapping(
+                spawn,
+                actionExecutionContext.getArtifactExpander(),
+                actionExecutionContext.getActionInputFileCache());
       }
       return lazyInputMapping;
     }
@@ -253,6 +237,7 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnActionConte
       EventBus eventBus = actionExecutionContext.getEventBus();
       switch (state) {
         case EXECUTING:
+        case CHECKING_CACHE:
           eventBus.post(ActionStatusMessage.runningStrategy(action, name));
           break;
         case SCHEDULING:

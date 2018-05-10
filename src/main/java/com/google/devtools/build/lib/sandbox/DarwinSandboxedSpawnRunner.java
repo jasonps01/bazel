@@ -128,8 +128,7 @@ final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
     this.allowNetwork = SandboxHelpers.shouldAllowNetwork(cmdEnv.getOptions());
     this.alwaysWritableDirs = getAlwaysWritableDirs(cmdEnv.getRuntime().getFileSystem());
     this.processWrapper = ProcessWrapperUtil.getProcessWrapper(cmdEnv);
-    this.localEnvProvider =
-        new XcodeLocalEnvProvider(cmdEnv.getRuntime().getProductName(), cmdEnv.getClientEnv());
+    this.localEnvProvider = new XcodeLocalEnvProvider(cmdEnv.getClientEnv());
     this.sandboxBase = sandboxBase;
     this.timeoutKillDelay = timeoutKillDelay;
     this.sandboxfsProcess = sandboxfsProcess;
@@ -245,7 +244,7 @@ final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
 
     boolean allowNetworkForThisSpawn = allowNetwork || Spawns.requiresNetwork(spawn);
 
-    Map<PathFragment, Path> inputs = SandboxHelpers.getInputFiles(spawn, context, execRoot);
+    Map<PathFragment, Path> inputs = SandboxHelpers.processInputFiles(spawn, context, execRoot);
 
     SandboxedSpawn sandbox;
     if (sandboxfsProcess != null) {

@@ -13,7 +13,6 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.android;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -25,13 +24,6 @@ public class MergedAndroidAssets extends ParsedAndroidAssets {
   private final Artifact mergedAssets;
   private final AssetDependencies assetDependencies;
 
-  public static MergedAndroidAssets mergeFrom(
-      RuleContext ruleContext, ParsedAndroidAssets parsed, boolean neverlink)
-      throws InterruptedException {
-    return mergeFrom(ruleContext, parsed, AssetDependencies.fromRuleDeps(ruleContext, neverlink));
-  }
-
-  @VisibleForTesting
   static MergedAndroidAssets mergeFrom(
       RuleContext ruleContext, ParsedAndroidAssets parsed, AssetDependencies deps)
       throws InterruptedException {
@@ -46,7 +38,6 @@ public class MergedAndroidAssets extends ParsedAndroidAssets {
 
     builder
         .addOutput("--assetsOutput", mergedAssets)
-        .addInput("--androidJar", AndroidSdkProvider.fromRuleContext(ruleContext).getAndroidJar())
         .addInput(
             "--primaryData",
             AndroidDataConverter.MERGABLE_DATA_CONVERTER.map(parsed),
@@ -79,9 +70,7 @@ public class MergedAndroidAssets extends ParsedAndroidAssets {
   }
 
   AndroidAssetsInfo toProvider() {
-    // Create a new object to avoid passing around unwanted merge information to the provider
-    ParsedAndroidAssets parsed = new ParsedAndroidAssets(this);
-    return assetDependencies.toInfo(parsed);
+    return assetDependencies.toInfo(this);
   }
 
   public Artifact getMergedAssets() {

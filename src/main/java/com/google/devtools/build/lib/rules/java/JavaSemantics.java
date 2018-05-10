@@ -28,7 +28,6 @@ import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
 import com.google.devtools.build.lib.analysis.Runfiles;
-import com.google.devtools.build.lib.analysis.Runfiles.Builder;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.ComputedSubstitution;
@@ -45,6 +44,7 @@ import com.google.devtools.build.lib.rules.java.JavaConfiguration.OneVersionEnfo
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
+import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.File;
 import java.util.Collection;
@@ -115,7 +115,7 @@ public interface JavaSemantics {
   /** The java_toolchain.compatible_javacopts key for testonly compilations. */
   public static final String TESTONLY_JAVACOPTS_KEY = "testonly";
 
-  LabelLateBoundDefault<?> JAVA_TOOLCHAIN =
+  LabelLateBoundDefault<JavaConfiguration> JAVA_TOOLCHAIN =
       LabelLateBoundDefault.fromTargetConfiguration(
           JavaConfiguration.class,
           Label.parseAbsoluteUnchecked(JAVA_TOOLCHAIN_LABEL),
@@ -135,7 +135,7 @@ public interface JavaSemantics {
       OutputGroupInfo.HIDDEN_OUTPUT_GROUP_PREFIX + "gen_jars";
 
   /** Implementation for the :jvm attribute. */
-  static LabelLateBoundDefault<?> jvmAttribute(RuleDefinitionEnvironment env) {
+  static LabelLateBoundDefault<JavaConfiguration> jvmAttribute(RuleDefinitionEnvironment env) {
     return LabelLateBoundDefault.fromTargetConfiguration(
         JavaConfiguration.class,
         env.getToolsLabel(JavaImplicitAttributes.JDK_LABEL),
@@ -143,7 +143,7 @@ public interface JavaSemantics {
   }
 
   /** Implementation for the :host_jdk attribute. */
-  static LabelLateBoundDefault<?> hostJdkAttribute(RuleDefinitionEnvironment env) {
+  static LabelLateBoundDefault<JavaConfiguration> hostJdkAttribute(RuleDefinitionEnvironment env) {
     return LabelLateBoundDefault.fromHostConfiguration(
         JavaConfiguration.class,
         env.getToolsLabel(JavaImplicitAttributes.HOST_JDK_LABEL),
@@ -154,7 +154,7 @@ public interface JavaSemantics {
    * Implementation for the :java_launcher attribute. Note that the Java launcher is disabled by
    * default, so it returns null for the configuration-independent default value.
    */
-  LabelLateBoundDefault<?> JAVA_LAUNCHER =
+  LabelLateBoundDefault<JavaConfiguration> JAVA_LAUNCHER =
       LabelLateBoundDefault.fromTargetConfiguration(
           JavaConfiguration.class,
           null,
@@ -177,25 +177,25 @@ public interface JavaSemantics {
             return javaConfig.getJavaLauncherLabel();
           });
 
-  LabelListLateBoundDefault<?> JAVA_PLUGINS =
+  LabelListLateBoundDefault<JavaConfiguration> JAVA_PLUGINS =
       LabelListLateBoundDefault.fromTargetConfiguration(
           JavaConfiguration.class,
           (rule, attributes, javaConfig) -> ImmutableList.copyOf(javaConfig.getPlugins()));
 
   /** Implementation for the :proguard attribute. */
-  LabelLateBoundDefault<?> PROGUARD =
+  LabelLateBoundDefault<JavaConfiguration> PROGUARD =
       LabelLateBoundDefault.fromTargetConfiguration(
           JavaConfiguration.class,
           null,
           (rule, attributes, javaConfig) -> javaConfig.getProguardBinary());
 
-  LabelListLateBoundDefault<?> EXTRA_PROGUARD_SPECS =
+  LabelListLateBoundDefault<JavaConfiguration> EXTRA_PROGUARD_SPECS =
       LabelListLateBoundDefault.fromTargetConfiguration(
           JavaConfiguration.class,
           (rule, attributes, javaConfig) ->
               ImmutableList.copyOf(javaConfig.getExtraProguardSpecs()));
 
-  LabelListLateBoundDefault<?> BYTECODE_OPTIMIZERS =
+  LabelListLateBoundDefault<JavaConfiguration> BYTECODE_OPTIMIZERS =
       LabelListLateBoundDefault.fromTargetConfiguration(
           JavaConfiguration.class,
           (rule, attributes, javaConfig) -> {
@@ -440,22 +440,29 @@ public interface JavaSemantics {
    * @param ruleContext The rule context
    * @param common The common helper class.
    * @param deployArchiveBuilder the builder to construct the deploy archive action (mutable).
+   * @param unstrippedDeployArchiveBuilder the builder to construct the unstripped deploy archive
+   *     action (mutable).
    * @param runfilesBuilder the builder to construct the list of runfiles (mutable).
    * @param jvmFlags the list of flags to pass to the JVM when running the Java binary (mutable).
    * @param attributesBuilder the builder to construct the list of attributes of this target
-   *        (mutable).
-   * @return the launcher as an artifact
+   *     (mutable).
+   * @return the launcher and unstripped launcher as an artifact pair. If shouldStrip is false, then
+   *     they will be the same.
    * @throws InterruptedException
    */
-  Artifact getLauncher(final RuleContext ruleContext, final JavaCommon common,
-      DeployArchiveBuilder deployArchiveBuilder, Runfiles.Builder runfilesBuilder,
-      List<String> jvmFlags, JavaTargetAttributes.Builder attributesBuilder, boolean shouldStrip)
+  Pair<Artifact, Artifact> getLauncher(
+      final RuleContext ruleContext,
+      final JavaCommon common,
+      DeployArchiveBuilder deployArchiveBuilder,
+      DeployArchiveBuilder unstrippedDeployArchiveBuilder,
+      Runfiles.Builder runfilesBuilder,
+      List<String> jvmFlags,
+      JavaTargetAttributes.Builder attributesBuilder,
+      boolean shouldStrip)
       throws InterruptedException;
 
-  /**
-   * Add extra dependencies for runfiles of a Java binary.
-   */
-  void addDependenciesForRunfiles(RuleContext ruleContext, Builder builder);
+  /** Add extra dependencies for runfiles of a Java binary. */
+  void addDependenciesForRunfiles(RuleContext ruleContext, Runfiles.Builder builder);
 
   /**
    * Add a source artifact to a {@link JavaTargetAttributes.Builder}. It is called when a source

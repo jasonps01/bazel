@@ -1,4 +1,4 @@
-// Copyright 2014 The Bazel Authors. All rights reserved.
+// Copyright 2018 The Bazel Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,9 +33,7 @@ import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.skylarkbuildapi.RunfilesApi;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -47,7 +45,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
@@ -63,13 +60,8 @@ import javax.annotation.Nullable;
  * manifests" (see {@link PruningManifest}).
  */
 @Immutable
-@SkylarkModule(
-  name = "runfiles",
-  category = SkylarkModuleCategory.NONE,
-  doc = "An interface for a set of runfiles."
-)
 @AutoCodec
-public final class Runfiles {
+public final class Runfiles implements RunfilesApi {
   private static final Function<SymlinkEntry, Artifact> TO_ARTIFACT =
       new Function<SymlinkEntry, Artifact>() {
         @Override
@@ -350,11 +342,7 @@ public final class Runfiles {
    * Returns the collection of runfiles as artifacts, including both unconditional artifacts and
    * pruning manifest candidates.
    */
-  @SkylarkCallable(
-    name = "files",
-    doc = "Returns the set of runfiles as files.",
-    structField = true
-  )
+  @Override
   public NestedSet<Artifact> getArtifacts() {
     NestedSetBuilder<Artifact> allArtifacts = NestedSetBuilder.stableOrder();
     allArtifacts.addAll(unconditionalArtifacts.toCollection());
@@ -365,16 +353,12 @@ public final class Runfiles {
   }
 
   /** Returns the symlinks. */
-  @SkylarkCallable(name = "symlinks", doc = "Returns the set of symlinks.", structField = true)
+  @Override
   public NestedSet<SymlinkEntry> getSymlinks() {
     return symlinks;
   }
 
-  @SkylarkCallable(
-    name = "empty_filenames",
-    doc = "Returns names of empty files to create.",
-    structField = true
-  )
+  @Override
   public NestedSet<String> getEmptyFilenames() {
     Set<PathFragment> manifest = new TreeSet<>();
     Iterables.addAll(
@@ -406,9 +390,9 @@ public final class Runfiles {
     Map<PathFragment, Artifact> newManifest = new HashMap<>();
 
     outer:
-    for (Iterator<Entry<PathFragment, Artifact>> i = workingManifest.entrySet().iterator();
-         i.hasNext(); ) {
-      Entry<PathFragment, Artifact> entry = i.next();
+    for (Iterator<Map.Entry<PathFragment, Artifact>> i = workingManifest.entrySet().iterator();
+        i.hasNext(); ) {
+      Map.Entry<PathFragment, Artifact> entry = i.next();
       PathFragment source = entry.getKey();
       Artifact symlink = entry.getValue();
       // drop nested entries; warn if this changes anything
@@ -1178,17 +1162,11 @@ public final class Runfiles {
     }
   }
 
-  /** Provides a Skylark-visible way to merge two Runfiles objects. */
-  @SkylarkCallable(
-    name = "merge",
-    doc =
-        "Returns a new runfiles object that includes all the contents of this one and the "
-            + "argument."
-  )
-  public Runfiles merge(Runfiles other) {
+  @Override
+  public Runfiles merge(RunfilesApi other) {
     Runfiles.Builder builder = new Runfiles.Builder(suffix, false);
     builder.merge(this);
-    builder.merge(other);
+    builder.merge((Runfiles) other);
     return builder.build();
   }
 }

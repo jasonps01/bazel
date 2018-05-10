@@ -38,15 +38,21 @@ public class AssetDependencies {
   private final NestedSet<Artifact> transitiveAssets;
   private final NestedSet<Artifact> transitiveSymbols;
 
-  static AssetDependencies fromRuleDeps(RuleContext ruleContext, boolean neverlink) {
+  public static AssetDependencies fromRuleDeps(RuleContext ruleContext, boolean neverlink) {
+    return fromProviders(
+        AndroidCommon.getTransitivePrerequisites(
+            ruleContext, Mode.TARGET, AndroidAssetsInfo.PROVIDER),
+        neverlink);
+  }
+
+  public static AssetDependencies fromProviders(
+      Iterable<AndroidAssetsInfo> providers, boolean neverlink) {
     NestedSetBuilder<ParsedAndroidAssets> direct = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<ParsedAndroidAssets> transitive = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<Artifact> assets = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<Artifact> symbols = NestedSetBuilder.naiveLinkOrder();
 
-    for (AndroidAssetsInfo info :
-        AndroidCommon.getTransitivePrerequisites(
-            ruleContext, Mode.TARGET, AndroidAssetsInfo.PROVIDER)) {
+    for (AndroidAssetsInfo info : providers) {
       direct.addTransitive(info.getDirectParsedAssets());
       transitive.addTransitive(info.getTransitiveParsedAssets());
       assets.addTransitive(info.getAssets());
@@ -90,14 +96,18 @@ public class AssetDependencies {
   }
 
   /** Creates a new AndroidAssetInfo using the passed assets as the direct dependency. */
-  public AndroidAssetsInfo toInfo(ParsedAndroidAssets assets) {
+  public AndroidAssetsInfo toInfo(MergedAndroidAssets assets) {
     if (neverlink) {
       return AndroidAssetsInfo.empty(assets.getLabel());
     }
 
+    // Create a new object to avoid passing around unwanted merge information to the provider
+    ParsedAndroidAssets parsedAssets = new ParsedAndroidAssets(assets);
+
     return AndroidAssetsInfo.of(
         assets.getLabel(),
-        NestedSetBuilder.create(Order.NAIVE_LINK_ORDER, assets),
+        assets.getMergedAssets(),
+        NestedSetBuilder.create(Order.NAIVE_LINK_ORDER, parsedAssets),
         NestedSetBuilder.<ParsedAndroidAssets>naiveLinkOrder()
             .addTransitive(transitiveParsedAssets)
             .addTransitive(directParsedAssets)
@@ -119,7 +129,12 @@ public class AssetDependencies {
     }
 
     return AndroidAssetsInfo.of(
-        label, directParsedAssets, transitiveParsedAssets, transitiveAssets, transitiveSymbols);
+        label,
+        null,
+        directParsedAssets,
+        transitiveParsedAssets,
+        transitiveAssets,
+        transitiveSymbols);
   }
 
   public NestedSet<ParsedAndroidAssets> getDirectParsedAssets() {

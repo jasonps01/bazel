@@ -599,7 +599,47 @@ public class JavaSkylarkApiTest extends BuildViewTestCase {
       assertThat(e.getMessage())
           .contains("source_jars, sources and exports cannot be simultaneous empty");
     }
+  }
 
+  @Test
+  public void testJavaInfoWithNoSources() throws Exception {
+    writeBuildFileForJavaToolchain();
+    scratch.file("java/test/lib.jar");
+    scratch.file(
+        "java/test/BUILD",
+        "load(':custom_rule.bzl', 'java_custom_library')",
+        "java_custom_library(",
+        "  name = 'custom',",
+        "  jar = 'lib.jar',",
+        ")");
+    scratch.file(
+        "java/test/custom_rule.bzl",
+        "def _impl(ctx):",
+        "  jar = ctx.file.jar",
+        "  new = JavaInfo(output_jar = jar, use_ijar = False)",
+        "  old = java_common.create_provider(",
+        "      compile_time_jars = [jar],",
+        "      transitive_compile_time_jars = [jar],",
+        "      runtime_jars = [jar],",
+        "      use_ijar = False,",
+        "  )",
+        "  java_info = java_common.merge([old, new])",
+        "  return struct(providers = [java_info])",
+        "java_custom_library = rule(",
+        "  implementation = _impl,",
+        "  attrs = {",
+        "    'jar': attr.label(allow_files = True, single_file = True),",
+        "    '_java_toolchain': attr.label(default = Label('//java/com/google/test:toolchain')),",
+        "    '_host_javabase': attr.label(",
+        "        default = Label('" + HOST_JAVA_RUNTIME_LABEL + "'))",
+        "  },",
+        "  fragments = ['java']",
+        ")");
+    JavaCompilationArgsProvider provider =
+        JavaInfo.getProvider(
+            JavaCompilationArgsProvider.class, getConfiguredTarget("//java/test:custom"));
+    assertThat(prettyArtifactNames(provider.getDirectCompileTimeJars()))
+        .containsExactly("java/test/lib.jar");
   }
 
   @Test
@@ -841,11 +881,11 @@ public class JavaSkylarkApiTest extends BuildViewTestCase {
 
     SkylarkNestedSet transitiveCompileTimeJars = info.getTransitiveCompileTimeJars();
     assertThat(prettyArtifactNames(transitiveCompileTimeJars.getSet(Artifact.class)))
-        .containsExactly("foo/libc.jar");
+        .containsExactly("foo/liba.jar", "foo/libc.jar");
 
     SkylarkNestedSet transitiveRuntimeJars = info.getTransitiveRuntimeJars();
     assertThat(prettyArtifactNames(transitiveRuntimeJars.getSet(Artifact.class)))
-        .containsExactly("foo/libd.jar");
+        .containsExactly("foo/libd.jar", "foo/libb.jar");
   }
 
   @Test
@@ -928,9 +968,9 @@ public class JavaSkylarkApiTest extends BuildViewTestCase {
 
     List<String> transitiveCompileTimeJars =
         prettyArtifactNames(provider.getTransitiveCompileTimeJars());
-    assertThat(transitiveCompileTimeJars).containsExactly("foo/libc.jar");
+    assertThat(transitiveCompileTimeJars).containsExactly("foo/liba.jar", "foo/libc.jar");
     List<String> transitiveRuntimeJars = prettyArtifactNames(provider.getRuntimeJars());
-    assertThat(transitiveRuntimeJars).containsExactly("foo/libd.jar");
+    assertThat(transitiveRuntimeJars).containsExactly("foo/libd.jar", "foo/libb.jar");
 
     JavaSourceJarsProvider sourcesProvider =
         JavaInfo.getProvider(JavaSourceJarsProvider.class, target);
@@ -1600,6 +1640,33 @@ public class JavaSkylarkApiTest extends BuildViewTestCase {
         configuredTarget.get(new SkylarkKey(Label.parseAbsolute("//foo:rule.bzl"), "result"));
     Label javaToolchainLabel = ((Label) info.getValue("java_toolchain_label"));
     assertThat(javaToolchainLabel.toString()).isEqualTo("//java/com/google/test:toolchain");
+  }
+
+  @Test
+  public void testIncompatibleDisallowLegacyJavaInfo() throws Exception {
+    setSkylarkSemanticsOptions("--incompatible_disallow_legacy_javainfo");
+    scratch.file(
+        "java/test/custom_rule.bzl",
+        "def _impl(ctx):",
+        "  jar = ctx.actions.declare_file('jar')",
+        "  java_common.create_provider(",
+        "      compile_time_jars = [jar],",
+        "      transitive_compile_time_jars = [jar],",
+        "      runtime_jars = [jar],",
+        "      use_ijar = False,",
+        "  )",
+        "java_custom_library = rule(",
+        "  implementation = _impl,",
+        ")");
+    checkError(
+        "java/test",
+        "custom",
+        "create_provider is deprecated and cannot be used when "
+            + "--incompatible_disallow_legacy_javainfo is set. ",
+        "load(':custom_rule.bzl', 'java_custom_library')",
+        "java_custom_library(",
+        "  name = 'custom',",
+        ")");
   }
 
   private static boolean javaCompilationArgsHaveTheSameParent(

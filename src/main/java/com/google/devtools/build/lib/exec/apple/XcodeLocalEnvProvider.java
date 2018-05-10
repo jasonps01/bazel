@@ -14,10 +14,8 @@
 package com.google.devtools.build.lib.exec.apple;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
-import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.exec.local.LocalEnvProvider;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
 import com.google.devtools.build.lib.rules.apple.DottedVersion;
@@ -26,11 +24,14 @@ import com.google.devtools.build.lib.shell.Command;
 import com.google.devtools.build.lib.shell.CommandException;
 import com.google.devtools.build.lib.shell.CommandResult;
 import com.google.devtools.build.lib.shell.TerminationStatus;
-import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.vfs.Path;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.logging.Logger;
 
 /**
  * Adds to the given environment all variables that are dependent on system state of the host
@@ -44,19 +45,20 @@ import java.util.Map;
  * configuration.
  */
 public final class XcodeLocalEnvProvider implements LocalEnvProvider {
-  private static final String XCRUN_CACHE_FILENAME = "__xcruncache";
-  private static final String XCODE_LOCATOR_CACHE_FILENAME = "__xcodelocatorcache";
 
-  private final String productName;
+  private static final Logger log = Logger.getLogger(XcodeLocalEnvProvider.class.getName());
+
   private final Map<String, String> clientEnv;
+
+  private static final ConcurrentMap<String, String> sdkRootCache = new ConcurrentHashMap<>();
+  private static final ConcurrentMap<String, String> developerDirCache = new ConcurrentHashMap<>();
 
   /**
    * Creates a new {@link XcodeLocalEnvProvider}.
    *
    * @param clientEnv a map of the current Bazel command's environment
    */
-  public XcodeLocalEnvProvider(String productName, Map<String, String> clientEnv) {
-    this.productName = productName;
+  public XcodeLocalEnvProvider(Map<String, String> clientEnv) {
     this.clientEnv = clientEnv;
   }
 
@@ -89,7 +91,7 @@ public final class XcodeLocalEnvProvider implements LocalEnvProvider {
     String developerDir = "";
     if (containsXcodeVersion) {
       String version = env.get(AppleConfiguration.XCODE_VERSION_ENV_NAME);
-      developerDir = getDeveloperDir(execRoot, DottedVersion.fromString(version), productName);
+      developerDir = getDeveloperDir(execRoot, DottedVersion.fromString(version));
       newEnvBuilder.put("DEVELOPER_DIR", developerDir);
     }
     if (containsAppleSdkVersion) {
@@ -99,67 +101,46 @@ public final class XcodeLocalEnvProvider implements LocalEnvProvider {
       }
       String iosSdkVersion = env.get(AppleConfiguration.APPLE_SDK_VERSION_ENV_NAME);
       String appleSdkPlatform = env.get(AppleConfiguration.APPLE_SDK_PLATFORM_ENV_NAME);
-      newEnvBuilder.put(
-          "SDKROOT",
-          getSdkRoot(execRoot, developerDir, iosSdkVersion, appleSdkPlatform, productName));
+      newEnvBuilder.put("SDKROOT", getSdkRoot(developerDir, iosSdkVersion, appleSdkPlatform));
     }
 
     return newEnvBuilder.build();
   }
 
   /**
-   * Returns the absolute root path of the target Apple SDK on the host system for a given version
-   * of xcode (as defined by the given {@code developerDir}). This may spawn a process and use the
-   * {@code /usr/bin/xcrun} binary to locate the target SDK. This uses a local cache file under
-   * {@code bazel-out}, and will only spawn a new {@code xcrun} process in the case of a cache miss.
+   * Queries the path to the target Apple SDK on the host system for a given version of Xcode.
    *
-   * @param execRoot the execution root path, used to locate the cache file
+   * <p>This spawns a subprocess to run the {@code /usr/bin/xcrun} binary to locate the target SDK.
+   * As this is a costly operation, always call {@link #getSdkRoot(String, String, String)} instead,
+   * which does caching.
+   *
    * @param developerDir the value of {@code DEVELOPER_DIR} for the target version of xcode
-   * @param sdkVersion the sdk version, for example, "9.1"
-   * @param appleSdkPlatform the sdk platform, for example, "iPhoneOS"
-   * @param productName the product name
+   * @param sdkVersion the sdk version; for example, {@code 9.1}
+   * @param appleSdkPlatform the sdk platform; for example, {@code iPhoneOS}
+   * @return an absolute path to the root of the target Apple SDK
    * @throws IOException if there is an issue with obtaining the root from the spawned process,
    *     either because the SDK platform/version pair doesn't exist, or there was an unexpected
    *     issue finding or running the tool
    */
-  private static String getSdkRoot(
-      Path execRoot,
+  private static String querySdkRoot(
       String developerDir,
       String sdkVersion,
-      String appleSdkPlatform,
-      String productName)
+      String appleSdkPlatform)
       throws IOException {
-    if (OS.getCurrent() != OS.DARWIN) {
-      throw new IOException("Cannot locate iOS SDK on non-darwin operating system");
-    }
     try {
-      CacheManager cacheManager =
-          new CacheManager(
-              execRoot.getRelative(BlazeDirectories.getRelativeOutputPath(productName)),
-              XCRUN_CACHE_FILENAME);
-
       String sdkString = appleSdkPlatform.toLowerCase() + sdkVersion;
-      String cacheResult = cacheManager.getValue(developerDir, sdkString);
-      if (cacheResult != null) {
-        return cacheResult;
-      } else {
-        Map<String, String> env =
-            Strings.isNullOrEmpty(developerDir)
-                ? ImmutableMap.<String, String>of()
-                : ImmutableMap.of("DEVELOPER_DIR", developerDir);
-        CommandResult xcrunResult =
-            new Command(
-                    new String[] {"/usr/bin/xcrun", "--sdk", sdkString, "--show-sdk-path"},
-                    env,
-                    null)
-                .execute();
+      Map<String, String> env =
+          Strings.isNullOrEmpty(developerDir)
+              ? ImmutableMap.<String, String>of()
+              : ImmutableMap.of("DEVELOPER_DIR", developerDir);
+      CommandResult xcrunResult =
+          new Command(
+              new String[] {"/usr/bin/xcrun", "--sdk", sdkString, "--show-sdk-path"},
+              env,
+              null)
+              .execute();
 
-        // calling xcrun via Command returns a value with a newline on the end.
-        String sdkRoot = new String(xcrunResult.getStdout(), StandardCharsets.UTF_8).trim();
-
-        cacheManager.writeEntry(ImmutableList.of(developerDir, sdkString), sdkRoot);
-        return sdkRoot;
-      }
+      return new String(xcrunResult.getStdout(), StandardCharsets.UTF_8).trim();
     } catch (AbnormalTerminationException e) {
       TerminationStatus terminationStatus = e.getResult().getTerminationStatus();
 
@@ -170,17 +151,20 @@ public final class XcodeLocalEnvProvider implements LocalEnvProvider {
                     + "This most likely indicates that SDK version [%s] for platform [%s] is "
                     + "unsupported for the target version of xcode.\n"
                     + "%s\n"
-                    + "Stderr: %s",
+                    + "stdout: %s"
+                    + "stderr: %s",
                 terminationStatus.getExitCode(),
                 sdkVersion,
                 appleSdkPlatform,
                 terminationStatus.toString(),
+                new String(e.getResult().getStdout(), StandardCharsets.UTF_8),
                 new String(e.getResult().getStderr(), StandardCharsets.UTF_8)));
       }
       String message =
           String.format(
-              "xcrun failed.\n%s\n%s",
+              "xcrun failed.\n" + "%s\n" + "stdout: %s\n" + "stderr: %s",
               e.getResult().getTerminationStatus(),
+              new String(e.getResult().getStdout(), StandardCharsets.UTF_8),
               new String(e.getResult().getStderr(), StandardCharsets.UTF_8));
       throw new IOException(message, e);
     } catch (CommandException e) {
@@ -189,47 +173,62 @@ public final class XcodeLocalEnvProvider implements LocalEnvProvider {
   }
 
   /**
-   * Returns the absolute root path of the xcode developer directory on the host system for the
-   * given xcode version. This may spawn a process and use the {@code xcode-locator} binary. This
-   * uses a local cache file under {@code bazel-out}, and will only spawn a new process in the case
-   * of a cache miss.
+   * Returns the path to the target Apple SDK on the host system for a given version of Xcode.
+   *
+   * <p>This may delegate to {@link #querySdkRoot(String, String, String)} to obtain the path from
+   * external sources in the system. Values are cached in-memory throughout the lifetime of the
+   * Bazel server.
+   *
+   * @param developerDir the value of {@code DEVELOPER_DIR} for the target version of xcode
+   * @param sdkVersion the sdk version; for example, {@code 9.1}
+   * @param appleSdkPlatform the sdk platform; for example, {@code iPhoneOS}
+   * @return an absolute path to the root of the target Apple SDK
+   * @throws IOException if there is an issue with obtaining the root from the spawned process,
+   *     either because the SDK platform/version pair doesn't exist, or there was an unexpected
+   *     issue finding or running the tool
+   */
+  private static String getSdkRoot(String developerDir, String sdkVersion, String appleSdkPlatform)
+      throws IOException {
+    try {
+      return sdkRootCache.computeIfAbsent(
+          developerDir + ":" + appleSdkPlatform.toLowerCase() + ":" + sdkVersion,
+          (key) -> {
+            try {
+              String sdkRoot = querySdkRoot(developerDir, sdkVersion, appleSdkPlatform);
+              log.info("Queried Xcode SDK root with key " + key + " and got " + sdkRoot);
+              return sdkRoot;
+            } catch (IOException e) {
+              throw new UncheckedIOException(e);
+            }
+          });
+    } catch (UncheckedIOException e) {
+      throw e.getCause();
+    }
+  }
+
+  /**
+   * Queries the path to the Xcode developer directory on the host system for the given Xcode
+   * version.
+   *
+   * <p>This spawns a subprocess to run the {@code xcode-locator} binary. As this is a costly
+   * operation, always call {@link #getDeveloperDir(Path, DottedVersion)} instead, which does
+   * caching.
    *
    * @param execRoot the execution root path, used to locate the cache file
    * @param version the xcode version number to look up
-   * @param productName the product name
+   * @return an absolute path to the root of the Xcode developer directory
    * @throws IOException if there is an issue with obtaining the path from the spawned process,
    *     either because there is no installed xcode with the given version, or there was an
    *     unexpected issue finding or running the tool
    */
-  private static String getDeveloperDir(Path execRoot, DottedVersion version, String productName)
+  private static String queryDeveloperDir(Path execRoot, DottedVersion version)
       throws IOException {
-    if (OS.getCurrent() != OS.DARWIN) {
-      throw new IOException(
-          "Cannot locate xcode developer directory on non-darwin operating system");
-    }
+    String xcodeLocatorPath = execRoot.getRelative("_bin/xcode-locator").getPathString();
     try {
-      CacheManager cacheManager =
-          new CacheManager(
-              execRoot.getRelative(BlazeDirectories.getRelativeOutputPath(productName)),
-              XCODE_LOCATOR_CACHE_FILENAME);
+      CommandResult xcodeLocatorResult =
+          new Command(new String[] {xcodeLocatorPath, version.toString()}).execute();
 
-      String cacheResult = cacheManager.getValue(version.toString());
-      if (cacheResult != null) {
-        return cacheResult;
-      } else {
-        CommandResult xcodeLocatorResult =
-            new Command(
-                    new String[] {
-                      execRoot.getRelative("_bin/xcode-locator").getPathString(), version.toString()
-                    })
-                .execute();
-
-        String developerDir =
-            new String(xcodeLocatorResult.getStdout(), StandardCharsets.UTF_8).trim();
-
-        cacheManager.writeEntry(ImmutableList.of(version.toString()), developerDir);
-        return developerDir;
-      }
+      return new String(xcodeLocatorResult.getStdout(), StandardCharsets.UTF_8).trim();
     } catch (AbnormalTerminationException e) {
       TerminationStatus terminationStatus = e.getResult().getTerminationStatus();
 
@@ -237,25 +236,66 @@ public final class XcodeLocalEnvProvider implements LocalEnvProvider {
       if (e.getResult().getTerminationStatus().exited()) {
         message =
             String.format(
-                "xcode-locator failed with code %s.\n"
+                "Running '%s %s' failed with code %s.\n"
                     + "This most likely indicates that xcode version %s is not available on the "
                     + "host machine.\n"
                     + "%s\n"
+                    + "stdout: %s\n"
                     + "stderr: %s",
+                xcodeLocatorPath,
+                version,
                 terminationStatus.getExitCode(),
                 version,
                 terminationStatus.toString(),
+                new String(e.getResult().getStdout(), StandardCharsets.UTF_8),
                 new String(e.getResult().getStderr(), StandardCharsets.UTF_8));
       } else {
         message =
             String.format(
-                "xcode-locator failed. %s\nstderr: %s",
+                "Running '%s %s' failed.\n" + "%s\n" + "stdout: %s\n" + "stderr: %s",
+                xcodeLocatorPath,
+                version,
                 e.getResult().getTerminationStatus(),
+                new String(e.getResult().getStdout(), StandardCharsets.UTF_8),
                 new String(e.getResult().getStderr(), StandardCharsets.UTF_8));
       }
       throw new IOException(message, e);
     } catch (CommandException e) {
       throw new IOException(e);
+    }
+  }
+
+  /**
+   * Returns the absolute root path of the xcode developer directory on the host system for the
+   * given Xcode version.
+   *
+   * <p>This may delegate to {@link #queryDeveloperDir(Path, DottedVersion)} to obtain the path from
+   * external sources in the system. Values are cached in-memory throughout the lifetime of the
+   * Bazel server.
+   *
+   * @param execRoot the execution root path, used to locate the cache file
+   * @param version the xcode version number to look up
+   * @return an absolute path to the root of the Xcode developer directory
+   * @throws IOException if there is an issue with obtaining the path from the spawned process,
+   *     either because there is no installed xcode with the given version, or there was an
+   *     unexpected issue finding or running the tool
+   */
+  private static String getDeveloperDir(Path execRoot, DottedVersion version)
+      throws IOException {
+    try {
+      return developerDirCache.computeIfAbsent(
+          version.toString(),
+          (key) -> {
+            try {
+              String developerDir = queryDeveloperDir(execRoot, version);
+              log.info("Queried Xcode developer dir with key " + key + " and got " + developerDir);
+              return developerDir;
+            } catch (IOException e) {
+              throw new UncheckedIOException(e);
+            }
+          });
+    } catch (UncheckedIOException e) {
+      throw e.getCause();
     }
   }
 }

@@ -2315,8 +2315,6 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     Artifact output = getBinArtifact("out", ct);
     SpawnAction action = (SpawnAction) getGeneratingAction(output);
     assertThat(paramFileArgsForAction(action)).containsExactly("--foo");
-    // Assert that there is a file argument. Don't bother matching the exact string
-    assertThat(action.getArguments().stream().anyMatch(arg -> arg.matches("--file=.*"))).isTrue();
   }
 
   @Test
@@ -2718,7 +2716,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
 
     assertThat(expected).hasMessageThat()
         .contains("expected value of type 'int or function' for parameter 'default', "
-            + "in method call int(SkylarkLateBoundDefault default)");
+            + "in method call int(LateBoundDefault default)");
   }
 
   @Test

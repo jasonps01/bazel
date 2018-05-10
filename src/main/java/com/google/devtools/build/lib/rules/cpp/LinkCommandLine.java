@@ -25,9 +25,8 @@ import com.google.devtools.build.lib.collect.CollectionUtils;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
-import com.google.devtools.build.lib.rules.cpp.Link.LinkStaticness;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
-import com.google.devtools.build.lib.rules.cpp.Link.Staticness;
+import com.google.devtools.build.lib.rules.cpp.Link.LinkerOrArchiver;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
 import com.google.devtools.build.lib.util.Pair;
@@ -49,9 +48,9 @@ public final class LinkCommandLine extends CommandLine {
   // The feature config can be null for tests.
   @Nullable private final FeatureConfiguration featureConfiguration;
   private final ImmutableList<Artifact> buildInfoHeaderArtifacts;
-  private final Iterable<LinkerInput> linkerInputs;
+  private final Iterable<Artifact> linkerInputArtifacts;
   private final LinkTargetType linkTargetType;
-  private final LinkStaticness linkStaticness;
+  private final Link.LinkingMode linkingMode;
   private final ImmutableList<String> linkopts;
   @Nullable private final PathFragment toolchainLibrariesSolibDir;
   private final boolean nativeDeps;
@@ -64,9 +63,9 @@ public final class LinkCommandLine extends CommandLine {
       String actionName,
       String forcedToolPath,
       ImmutableList<Artifact> buildInfoHeaderArtifacts,
-      Iterable<LinkerInput> linkerInputs,
+      Iterable<Artifact> linkerInputArtifacts,
       LinkTargetType linkTargetType,
-      LinkStaticness linkStaticness,
+      Link.LinkingMode linkingMode,
       ImmutableList<String> linkopts,
       @Nullable PathFragment toolchainLibrariesSolibDir,
       boolean nativeDeps,
@@ -80,9 +79,9 @@ public final class LinkCommandLine extends CommandLine {
     this.variables = variables;
     this.featureConfiguration = featureConfiguration;
     this.buildInfoHeaderArtifacts = Preconditions.checkNotNull(buildInfoHeaderArtifacts);
-    this.linkerInputs = Preconditions.checkNotNull(linkerInputs);
+    this.linkerInputArtifacts = Preconditions.checkNotNull(linkerInputArtifacts);
     this.linkTargetType = Preconditions.checkNotNull(linkTargetType);
-    this.linkStaticness = Preconditions.checkNotNull(linkStaticness);
+    this.linkingMode = Preconditions.checkNotNull(linkingMode);
     this.linkopts = linkopts;
     this.toolchainLibrariesSolibDir = toolchainLibrariesSolibDir;
     this.nativeDeps = nativeDeps;
@@ -101,8 +100,8 @@ public final class LinkCommandLine extends CommandLine {
   }
 
   /** Returns the (ordered, immutable) list of paths to the linker's input files. */
-  public Iterable<LinkerInput> getLinkerInputs() {
-    return linkerInputs;
+  public Iterable<Artifact> getLinkerInputArtifacts() {
+    return linkerInputArtifacts;
   }
 
   /**
@@ -112,11 +111,9 @@ public final class LinkCommandLine extends CommandLine {
     return linkTargetType;
   }
 
-  /**
-   * Returns the "staticness" of the link.
-   */
-  public LinkStaticness getLinkStaticness() {
-    return linkStaticness;
+  /** Returns the "staticness" of the link. */
+  public Link.LinkingMode getLinkingMode() {
+    return linkingMode;
   }
 
   /**
@@ -186,7 +183,7 @@ public final class LinkCommandLine extends CommandLine {
       List<String> args,
       LinkTargetType linkTargetType) {
     Preconditions.checkNotNull(paramFile);
-    if (linkTargetType.staticness() == Staticness.STATIC) {
+    if (linkTargetType.linkerOrArchiver() == LinkerOrArchiver.ARCHIVER) {
       // Ar link commands can also generate huge command lines.
       List<String> paramFileArgs = new ArrayList<>();
       List<String> commandlineArgs = new ArrayList<>();
@@ -414,9 +411,9 @@ public final class LinkCommandLine extends CommandLine {
     private final RuleContext ruleContext;
     private String forcedToolPath;
     private ImmutableList<Artifact> buildInfoHeaderArtifacts = ImmutableList.of();
-    private Iterable<LinkerInput> linkerInputs = ImmutableList.of();
+    private Iterable<Artifact> linkerInputArtifacts = ImmutableList.of();
     @Nullable private LinkTargetType linkTargetType;
-    private LinkStaticness linkStaticness = LinkStaticness.FULLY_STATIC;
+    private Link.LinkingMode linkingMode = Link.LinkingMode.LEGACY_FULLY_STATIC;
     private ImmutableList<String> linkopts = ImmutableList.of();
     @Nullable private PathFragment toolchainLibrariesSolibDir;
     private boolean nativeDeps;
@@ -430,8 +427,8 @@ public final class LinkCommandLine extends CommandLine {
     }
 
     public LinkCommandLine build() {
-      
-      if (linkTargetType.staticness() == Staticness.STATIC) {
+
+      if (linkTargetType.linkerOrArchiver() == LinkerOrArchiver.ARCHIVER) {
         Preconditions.checkArgument(
             buildInfoHeaderArtifacts.isEmpty(),
             "build info headers may only be present on dynamic library or executable links");
@@ -452,9 +449,9 @@ public final class LinkCommandLine extends CommandLine {
           actionName,
           forcedToolPath,
           buildInfoHeaderArtifacts,
-          linkerInputs,
+          linkerInputArtifacts,
           linkTargetType,
-          linkStaticness,
+          linkingMode,
           linkopts,
           toolchainLibrariesSolibDir,
           nativeDeps,
@@ -475,11 +472,11 @@ public final class LinkCommandLine extends CommandLine {
       this.featureConfiguration = featureConfiguration;
       return this;
     }
-    
+
     /**
      * Sets the type of the link. It is an error to try to set this to {@link
      * LinkTargetType#INTERFACE_DYNAMIC_LIBRARY}. Note that all the static target types (see {@link
-     * LinkTargetType#staticness}) are equivalent, and there is no check that the output
+     * LinkTargetType#linkerOrArchiver}) are equivalent, and there is no check that the output
      * artifact matches the target type extension.
      */
     public Builder setLinkTargetType(LinkTargetType linkTargetType) {
@@ -489,12 +486,12 @@ public final class LinkCommandLine extends CommandLine {
     }
 
     /**
-     * Sets a list of linker inputs. These get turned into linker options depending on the
+     * Sets a list of linker input artifacts. These get turned into linker options depending on the
      * staticness and the target type. This call makes an immutable copy of the inputs, if the
      * provided Iterable isn't already immutable (see {@link CollectionUtils#makeImmutable}).
      */
-    public Builder setLinkerInputs(Iterable<LinkerInput> linkerInputs) {
-      this.linkerInputs = CollectionUtils.makeImmutable(linkerInputs);
+    public Builder setLinkerInputArtifacts(Iterable<Artifact> linkerInputArtifacts) {
+      this.linkerInputArtifacts = CollectionUtils.makeImmutable(linkerInputArtifacts);
       return this;
     }
 
@@ -502,7 +499,7 @@ public final class LinkCommandLine extends CommandLine {
      * Sets the linker options. These are passed to the linker in addition to the other linker
      * options like linker inputs, symbol count options, etc. The {@link #build} method throws an
      * exception if the linker options are non-empty for a static link (see {@link
-     * LinkTargetType#staticness()}).
+     * LinkTargetType#linkerOrArchiver()}).
      */
     public Builder setLinkopts(ImmutableList<String> linkopts) {
       this.linkopts = linkopts;
@@ -511,19 +508,19 @@ public final class LinkCommandLine extends CommandLine {
 
     /**
      * Sets how static the link is supposed to be. For static target types (see {@link
-     * LinkTargetType#staticness()}}), the {@link #build} method throws an exception if this
-     * is not {@link LinkStaticness#FULLY_STATIC}. The default setting is {@link
-     * LinkStaticness#FULLY_STATIC}.
+     * LinkTargetType#linkerOrArchiver()}}), the {@link #build} method throws an exception if this
+     * is not {@link Link.LinkingMode#LEGACY_FULLY_STATIC}. The default setting is {@link
+     * Link.LinkingMode#LEGACY_FULLY_STATIC}.
      */
-    public Builder setLinkStaticness(LinkStaticness linkStaticness) {
-      this.linkStaticness = linkStaticness;
+    public Builder setLinkingMode(Link.LinkingMode linkingMode) {
+      this.linkingMode = linkingMode;
       return this;
     }
 
     /**
      * The build info header artifacts are generated header files that are used for link stamping.
      * The {@link #build} method throws an exception if the build info header artifacts are
-     * non-empty for a static link (see {@link LinkTargetType#staticness()}}).
+     * non-empty for a static link (see {@link LinkTargetType#linkerOrArchiver()}}).
      */
     public Builder setBuildInfoHeaderArtifacts(ImmutableList<Artifact> buildInfoHeaderArtifacts) {
       this.buildInfoHeaderArtifacts = buildInfoHeaderArtifacts;
@@ -533,7 +530,7 @@ public final class LinkCommandLine extends CommandLine {
     /**
      * Whether the resulting library is intended to be used as a native library from another
      * programming language. This influences the rpath. The {@link #build} method throws an
-     * exception if this is true for a static link (see {@link LinkTargetType#staticness()}}).
+     * exception if this is true for a static link (see {@link LinkTargetType#linkerOrArchiver()}}).
      */
     public Builder setNativeDeps(boolean nativeDeps) {
       this.nativeDeps = nativeDeps;

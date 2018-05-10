@@ -17,6 +17,7 @@ package com.google.devtools.build.android.aapt2;
 import com.android.SdkConstants;
 import com.android.builder.core.VariantType;
 import com.android.repository.Revision;
+import com.android.resources.ResourceFolderType;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -26,6 +27,7 @@ import com.google.devtools.build.android.AndroidDataSerializer;
 import com.google.devtools.build.android.DataResourceXml;
 import com.google.devtools.build.android.FullyQualifiedName;
 import com.google.devtools.build.android.FullyQualifiedName.Factory;
+import com.google.devtools.build.android.FullyQualifiedName.Qualifiers;
 import com.google.devtools.build.android.FullyQualifiedName.VirtualType;
 import com.google.devtools.build.android.XmlResourceValues;
 import com.google.devtools.build.android.xml.Namespaces;
@@ -39,11 +41,15 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLInputFactory;
@@ -81,96 +87,125 @@ public class ResourceCompiler {
     private final Path compiledResourcesOut;
     private final Path aapt2;
     private final Revision buildToolsVersion;
-    private final boolean generatePseudoLocale;
+    private final Optional<Path> generatedResourcesOut;
 
     private CompileTask(
         Path file,
         Path compiledResourcesOut,
         Path aapt2,
         Revision buildToolsVersion,
-        boolean generatePseudoLocale) {
+        Optional<Path> generatedResourcesOut) {
       this.file = file;
       this.compiledResourcesOut = compiledResourcesOut;
       this.aapt2 = aapt2;
       this.buildToolsVersion = buildToolsVersion;
-      this.generatePseudoLocale = generatePseudoLocale;
+      this.generatedResourcesOut = generatedResourcesOut;
     }
 
     @Override
     public List<Path> call() throws Exception {
-      logger.fine(
-          new AaptCommandBuilder(aapt2)
-              .forBuildToolsVersion(buildToolsVersion)
-              .forVariantType(VariantType.LIBRARY)
-              .add("compile")
-              .add("-v")
-              .add("--legacy")
-              .when(generatePseudoLocale)
-              .thenAdd("--pseudo-localize")
-              .add("-o", compiledResourcesOut.toString())
-              .add(file.toString())
-              .execute("Compiling " + file));
-
-      String type = file.getParent().getFileName().toString();
-      String filename = file.getFileName().toString();
+      final String directoryName = file.getParent().getFileName().toString();
+      Qualifiers qualifiers = Qualifiers.parseFrom(directoryName);
+      String filename = interpolateAapt2Filename(qualifiers, file.getFileName().toString());
 
       List<Path> results = new ArrayList<>();
-      if (type.startsWith("values")) {
-        filename =
-            (filename.indexOf('.') != -1 ? filename.substring(0, filename.indexOf('.')) : filename)
-                + ".arsc";
+      compile(directoryName, filename, results, compiledResourcesOut, file, false);
+      if (qualifiers.asFolderType().equals(ResourceFolderType.VALUES)) {
+        extractAttributes(directoryName, filename, results);
 
-        XMLEventReader xmlEventReader = null;
-        try {
-          // aapt2 compile strips out namespaces and attributes from the resources tag.
-          // Read them here separately and package them with the other flat files.
-          xmlEventReader =
-              XMLInputFactory.newInstance()
-                  .createXMLEventReader(new FileInputStream(file.toString()));
-
-          // Iterate through the XML until we find a start element.
-          // This should mimic xmlEventReader.nextTag() except that it also skips DTD elements.
-          StartElement rootElement = null;
-          while (xmlEventReader.hasNext()) {
-            XMLEvent event = xmlEventReader.nextEvent();
-            if (event.getEventType() != XMLStreamConstants.COMMENT
-                && event.getEventType() != XMLStreamConstants.DTD
-                && event.getEventType() != XMLStreamConstants.PROCESSING_INSTRUCTION
-                && event.getEventType() != XMLStreamConstants.SPACE
-                && event.getEventType() != XMLStreamConstants.START_DOCUMENT) {
-
-              // If the event should not be skipped, try parsing it as a start element here.
-              // If the event is not a start element, an appropriate exception will be thrown.
-              rootElement = event.asStartElement();
-              break;
-            }
-          }
-
-          if (rootElement == null) {
-            throw new Exception("No start element found in resource XML file: " + file.toString());
-          }
-
-          Iterator<Attribute> attributeIterator =
-              XmlResourceValues.iterateAttributesFrom(rootElement);
-
-          if (attributeIterator.hasNext()) {
-            results.add(createAttributesProto(type, filename, attributeIterator));
-          }
-        } finally {
-          if (xmlEventReader != null) {
-            xmlEventReader.close();
-          }
+        if (qualifiers.containDefaultLocale()) {
+          // aapt2 only generates pseudo locales for the default locale.
+          generatedResourcesOut.ifPresent(
+              out -> compile(directoryName, filename, results, out, file, true));
         }
       }
-
-      final Path compiledResourcePath =
-          compiledResourcesOut.resolve(type + "_" + filename + ".flat");
-      Preconditions.checkArgument(
-          Files.exists(compiledResourcePath),
-          "%s does not exists after aapt2 ran.",
-          compiledResourcePath);
-      results.add(compiledResourcePath);
       return results;
+    }
+
+    static String interpolateAapt2Filename(Qualifiers qualifiers, String filename) {
+      return qualifiers.asFolderType().equals(ResourceFolderType.VALUES)
+          ? (filename.indexOf('.') != -1 ? filename.substring(0, filename.indexOf('.')) : filename)
+              + ".arsc"
+          : filename;
+    }
+
+    private void compile(
+        String type,
+        String filename,
+        List<Path> results,
+        Path compileOutRoot,
+        Path file,
+        boolean generatePseudoLocale) {
+      try {
+        Path destination = CompilingVisitor.destinationPath(file, compileOutRoot);
+        final Path compiledResourcePath = destination.resolve(type + "_" + filename + ".flat");
+
+        logger.fine(
+            new AaptCommandBuilder(aapt2)
+                .forBuildToolsVersion(buildToolsVersion)
+                .forVariantType(VariantType.LIBRARY)
+                .add("compile")
+                .add("-v")
+                .add("--legacy")
+                .when(generatePseudoLocale)
+                .thenAdd("--pseudo-localize")
+                .add("-o", destination.toString())
+                .add(file.toString())
+                .execute("Compiling " + file));
+
+        Preconditions.checkArgument(
+            Files.exists(compiledResourcePath),
+            "%s does not exists after aapt2 ran.",
+            compiledResourcePath);
+        results.add(compiledResourcePath);
+      } catch (IOException e) {
+        throw new CompileError(e);
+      }
+    }
+
+    private void extractAttributes(String type, String filename, List<Path> results)
+        throws Exception {
+      XMLEventReader xmlEventReader = null;
+      try {
+        // aapt2 compile strips out namespaces and attributes from the resources tag.
+        // Read them here separately and package them with the other flat files.
+        xmlEventReader =
+            XMLInputFactory.newInstance()
+                .createXMLEventReader(new FileInputStream(file.toString()));
+
+        // Iterate through the XML until we find a start element.
+        // This should mimic xmlEventReader.nextTag() except that it also skips DTD elements.
+        StartElement rootElement = null;
+        while (xmlEventReader.hasNext()) {
+          XMLEvent event = xmlEventReader.nextEvent();
+          if (event.getEventType() != XMLStreamConstants.COMMENT
+              && event.getEventType() != XMLStreamConstants.DTD
+              && event.getEventType() != XMLStreamConstants.PROCESSING_INSTRUCTION
+              && event.getEventType() != XMLStreamConstants.SPACE
+              && event.getEventType() != XMLStreamConstants.START_DOCUMENT) {
+
+            // If the event should not be skipped, try parsing it as a start element here.
+            // If the event is not a start element, an appropriate exception will be thrown.
+            rootElement = event.asStartElement();
+            break;
+          }
+        }
+
+        if (rootElement == null) {
+          throw new Exception("No start element found in resource XML file: " + file.toString());
+        }
+
+        Iterator<Attribute> attributeIterator =
+            XmlResourceValues.iterateAttributesFrom(rootElement);
+
+        if (attributeIterator.hasNext()) {
+          results.add(createAttributesProto(type, filename, attributeIterator));
+        }
+      } finally {
+        if (xmlEventReader != null) {
+          xmlEventReader.close();
+        }
+      }
     }
 
     private Path createAttributesProto(
@@ -215,63 +250,118 @@ public class ResourceCompiler {
   private static class CompilingVisitor extends SimpleFileVisitor<Path> {
 
     private final ListeningExecutorService executorService;
-    private final Path compiledResources;
-    private final List<ListenableFuture<List<Path>>> tasks = new ArrayList<>();
+    private final Path compiledResourcesOut;
+    private final Set<Path> pathToProcessed = new LinkedHashSet<>();
     private final Path aapt2;
     private final Revision buildToolsVersion;
-    private final boolean generatePseudoLocale;
+    private final Optional<Path> generatedResourcesOut;
 
     public CompilingVisitor(
         ListeningExecutorService executorService,
-        Path compiledResources,
+        Path compiledResourcesOut,
         Path aapt2,
         Revision buildToolsVersion,
-        boolean generatePseudoLocale) {
+        Optional<Path> generatedResourcesOut) {
       this.executorService = executorService;
-      this.compiledResources = compiledResources;
+      this.compiledResourcesOut = compiledResourcesOut;
       this.aapt2 = aapt2;
       this.buildToolsVersion = buildToolsVersion;
-      this.generatePseudoLocale = generatePseudoLocale;
+      this.generatedResourcesOut = generatedResourcesOut;
     }
+
+    static final Pattern REGION_PATTERN =
+        Pattern.compile("(sr[_\\-]r?latn)|(es[_\\-]r?419)", Pattern.CASE_INSENSITIVE);
 
     @Override
     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
       // Ignore directories and "hidden" files that start with .
       if (!Files.isDirectory(file) && !file.getFileName().toString().startsWith(".")) {
-        // Creates a relative output path based on the input path under the
-        // compiledResources path.
-        Path outputDirectory =
-            Files.createDirectories(
-                compiledResources.resolve(
-                    (file.isAbsolute() ? file.getRoot().relativize(file) : file)
-                        .getParent()
-                        .getParent()));
+        Path outputDirectory = destinationPath(file, compiledResourcesOut);
 
-        String resFolder = file.getParent().getFileName().toString().toLowerCase();
+        Path maybeFixedPath =
+            file.getParent()
+                .getParent()
+                .resolve(
+                    maybeFixRegion(file.getParent().getFileName()).resolve(file.getFileName()));
 
-        // Aapt cannot interpret these regions so we rename them to get them to compile
-        String renamedResFolder =
-            resFolder
-                .replaceFirst("sr[_\\-]r?latn", "b+sr+Latn")
-                .replaceFirst("es[_\\-]r?419", "b+es+419");
-
-        if (!renamedResFolder.equals(resFolder)) {
-          file =
-              Files.copy(
-                  file,
-                  Files.createDirectories(outputDirectory.resolve(renamedResFolder))
-                      .resolve(file.getFileName()));
+        if (!(maybeFixedPath.equals(file))) {
+          if (!Files.exists(maybeFixedPath)) {
+            logger.severe(
+                String.format(
+                    "The locale identifier  in %s is not supported by aapt2. Converting to %s. "
+                        + "This will be an error in the future.",
+                    file, maybeFixedPath));
+            // Only use the processed path if doesn't exist. If it exists, there are is already
+            // resources for that region.
+            pathToProcessed.add(
+                Files.copy(
+                    file,
+                    Files.createDirectories(
+                            outputDirectory.resolve(maybeFixedPath.getParent().getFileName()))
+                        .resolve(file.getFileName())));
+          } else {
+            logger.severe(
+                String.format(
+                    "Skipping resource compilation for %s: it has the same qualifiers as %s."
+                        + " The locale identifier is not supported by aapt2."
+                        + " This will be an error in the future.",
+                    file, maybeFixedPath));
+          }
+        } else {
+          pathToProcessed.add(file);
         }
-
-        tasks.add(
-            executorService.submit(
-                new CompileTask(
-                    file, outputDirectory, aapt2, buildToolsVersion, generatePseudoLocale)));
       }
       return super.visitFile(file, attrs);
     }
 
+    public static Path destinationPath(Path file, Path compiledResourcesOut) {
+      // Creates a relative output path based on the input path under the
+      // compiledResources path.
+      try {
+        return Files.createDirectories(
+            compiledResourcesOut.resolve(
+                (file.isAbsolute() ? file.getRoot().relativize(file) : file)
+                    .getParent()
+                    .getParent()));
+      } catch (IOException e) {
+        throw new CompileError(e);
+      }
+    }
+
+    /** Aapt cannot interpret these regions so we rename them to get them to compile. */
+    static Path maybeFixRegion(Path p) {
+      Matcher matcher = REGION_PATTERN.matcher(p.toString());
+      if (!matcher.find()) {
+        return p;
+      }
+      StringBuffer fixedConfiguration = new StringBuffer();
+      matcher.appendReplacement(
+          fixedConfiguration, matcher.group(2) == null ? "b+sr+Latn" : "b+es+419");
+      return p.getFileSystem().getPath(matcher.appendTail(fixedConfiguration).toString());
+    }
+
     List<Path> getCompiledArtifacts() {
+      generatedResourcesOut.ifPresent(
+          out -> {
+            try {
+              Files.createDirectories(out);
+            } catch (IOException e) {
+              throw new CompileError(e);
+            }
+          });
+
+      List<ListenableFuture<List<Path>>> tasks = new ArrayList<>();
+      for (Path uncompiled : pathToProcessed) {
+        tasks.add(
+            executorService.submit(
+                new CompileTask(
+                    uncompiled,
+                    compiledResourcesOut,
+                    aapt2,
+                    buildToolsVersion,
+                    generatedResourcesOut)));
+      }
+
       ImmutableList.Builder<Path> builder = ImmutableList.builder();
       List<Throwable> compilationErrors = new ArrayList<>();
       for (ListenableFuture<List<Path>> task : tasks) {
@@ -295,9 +385,16 @@ public class ResourceCompiler {
       Path aapt2,
       Revision buildToolsVersion,
       boolean generatePseudoLocale) {
+
     return new ResourceCompiler(
         new CompilingVisitor(
-            executorService, compiledResources, aapt2, buildToolsVersion, generatePseudoLocale));
+            executorService,
+            compiledResources,
+            aapt2,
+            buildToolsVersion,
+            generatePseudoLocale
+                ? Optional.of(compiledResources.resolve("generated"))
+                : Optional.empty()));
   }
 
   private ResourceCompiler(CompilingVisitor compilingVisitor) {

@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "src/main/cpp/util/file_platform.h"
 #include "src/tools/launcher/launcher.h"
 #include "src/tools/launcher/util/data_parser.h"
 #include "src/tools/launcher/util/launcher_util.h"
@@ -33,15 +34,33 @@ using std::string;
 using std::unordered_map;
 using std::vector;
 
+static std::string GetRunfilesDir(const char* argv0) {
+  string runfiles_dir;
+  // If RUNFILES_DIR is already set (probably we are either in a test or in a
+  // data dependency) then use it.
+  if (GetEnv("RUNFILES_DIR", &runfiles_dir)) {
+    return runfiles_dir;
+  }
+  // Otherwise this is probably a top-level non-test binary (e.g. a genrule
+  // tool) and should look for its runfiles beside the executable.
+  return GetBinaryPathWithExtension(argv0) + ".runfiles";
+}
+
 BinaryLauncherBase::BinaryLauncherBase(
     const LaunchDataParser::LaunchInfo& _launch_info, int argc, char* argv[])
     : launch_info(_launch_info),
       manifest_file(FindManifestFile(argv[0])),
+      runfiles_dir(GetRunfilesDir(argv[0])),
       workspace_name(GetLaunchInfoByKey(WORKSPACE_NAME)) {
   for (int i = 0; i < argc; i++) {
-    this->commandline_arguments.push_back(argv[i]);
+    commandline_arguments.push_back(argv[i]);
   }
-  ParseManifestFile(&this->manifest_file_map, this->manifest_file);
+  // Prefer to use the runfiles manifest, if it exists, but otherwise the
+  // runfiles directory will be used by default. On Windows, the manifest is
+  // used locally, and the runfiles directory is used remotely.
+  if (manifest_file != "") {
+    ParseManifestFile(&manifest_file_map, manifest_file);
+  }
 }
 
 static bool FindManifestFileImpl(const char* argv0, string* result) {
@@ -80,7 +99,7 @@ static bool FindManifestFileImpl(const char* argv0, string* result) {
 string BinaryLauncherBase::FindManifestFile(const char* argv0) {
   string manifest_file;
   if (!FindManifestFileImpl(argv0, &manifest_file)) {
-    die("Couldn't find runfiles manifest file.");
+    return "";
   }
   // The path will be set as the RUNFILES_MANIFEST_FILE envvar and used by the
   // shell script, so let's convert backslashes to forward slashes.
@@ -117,6 +136,21 @@ void BinaryLauncherBase::ParseManifestFile(ManifestFileMap* manifest_file_map,
 
 string BinaryLauncherBase::Rlocation(const string& path,
                                      bool need_workspace_name) const {
+  // If the manifest file map is empty, then we're using the runfiles directory
+  // instead.
+  if (manifest_file_map.empty()) {
+    if (blaze_util::IsAbsolute(path)) {
+      return path;
+    }
+
+    string query_path = runfiles_dir;
+    if (need_workspace_name) {
+      query_path += "/" + this->workspace_name;
+    }
+    query_path += "/" + path;
+    return query_path;
+  }
+
   string query_path = path;
   if (need_workspace_name) {
     query_path = this->workspace_name + "/" + path;
@@ -182,8 +216,12 @@ ExitCode BinaryLauncherBase::LaunchProcess(const string& executable,
   if (PrintLauncherCommandLine(executable, arguments)) {
     return 0;
   }
-  SetEnv("RUNFILES_MANIFEST_ONLY", "1");
-  SetEnv("RUNFILES_MANIFEST_FILE", manifest_file);
+  if (manifest_file != "") {
+    SetEnv("RUNFILES_MANIFEST_ONLY", "1");
+    SetEnv("RUNFILES_MANIFEST_FILE", manifest_file);
+  } else {
+    SetEnv("RUNFILES_DIR", runfiles_dir);
+  }
   CmdLine cmdline;
   CreateCommandLine(&cmdline, executable, arguments);
   PROCESS_INFORMATION processInfo = {0};

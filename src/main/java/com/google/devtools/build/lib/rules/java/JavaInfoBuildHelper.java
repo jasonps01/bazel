@@ -31,7 +31,6 @@ import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.actions.ActionConstructionContext;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
-import com.google.devtools.build.lib.analysis.actions.SpawnAction.Builder;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.StrictDepsMode;
 import com.google.devtools.build.lib.analysis.skylark.SkylarkActionFactory;
 import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleContext;
@@ -94,10 +93,6 @@ final class JavaInfoBuildHelper {
       Object hostJavabase,
       Location location)
       throws EvalException {
-    if (sourceFiles.isEmpty() && sourceJars.isEmpty() && exports.isEmpty()) {
-      throw new EvalException(
-          null, "source_jars, sources and exports cannot be simultaneous empty");
-    }
     final Artifact sourceJar;
     if (sourceFiles.isEmpty() && sourceJars.isEmpty()) {
       sourceJar = null;
@@ -391,21 +386,11 @@ final class JavaInfoBuildHelper {
     JavaCompilationArgs javaCompilationArgs =
         javaCompilationArgsBuilder.addTransitiveRuntimeJars(runtimeJars).build();
 
-    JavaCompilationArgs.Builder recursiveJavaCompilationArgs = JavaCompilationArgs.builder();
-    if (transitiveCompileTimeJars.isEmpty()) {
-      recursiveJavaCompilationArgs.addTransitiveCompileTimeJars(
-          javaCompilationArgs.getCompileTimeJars());
-      recursiveJavaCompilationArgs.addTransitiveFullCompileTimeJars(
-          javaCompilationArgs.getFullCompileTimeJars());
-    } else {
-      recursiveJavaCompilationArgs.addTransitiveCompileTimeJars(transitiveCompileTimeJars);
-    }
-
-    if (transitiveRuntimeJars.isEmpty()) {
-      recursiveJavaCompilationArgs.addTransitiveRuntimeJars(runtimeJars);
-    } else {
-      recursiveJavaCompilationArgs.addTransitiveRuntimeJars(transitiveRuntimeJars);
-    }
+    JavaCompilationArgs.Builder recursiveJavaCompilationArgs =
+        JavaCompilationArgs.builder()
+            .addTransitiveArgs(javaCompilationArgs, ClasspathType.BOTH)
+            .addTransitiveCompileTimeJars(transitiveCompileTimeJars)
+            .addTransitiveRuntimeJars(transitiveRuntimeJars);
 
     JavaInfo javaInfo =
         JavaInfo.Builder.create()
@@ -559,7 +544,7 @@ final class JavaInfoBuildHelper {
       commandLine.addLabel("--target_label", targetLabel);
     }
     SpawnAction.Builder actionBuilder =
-        new Builder()
+        new SpawnAction.Builder()
             .addInput(inputJar)
             .addOutput(interfaceJar)
             .setExecutable(ijarTarget)
@@ -589,7 +574,7 @@ final class JavaInfoBuildHelper {
             .add("--nostrip_jar")
             .addLabel("--target_label", targetLabel);
     SpawnAction.Builder actionBuilder =
-        new Builder()
+        new SpawnAction.Builder()
             .addInput(inputJar)
             .addOutput(outputJar)
             .setExecutable(ijarTarget)

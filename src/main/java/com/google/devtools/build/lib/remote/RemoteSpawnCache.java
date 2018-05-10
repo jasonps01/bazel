@@ -13,6 +13,8 @@
 // limitations under the License.
 package com.google.devtools.build.lib.remote;
 
+import static com.google.common.base.Strings.isNullOrEmpty;
+
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.ExecutionStrategy;
@@ -26,6 +28,7 @@ import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.SpawnCache;
+import com.google.devtools.build.lib.exec.SpawnRunner.ProgressStatus;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.remote.TreeNodeRepository.TreeNode;
 import com.google.devtools.build.lib.remote.util.DigestUtil;
@@ -40,19 +43,17 @@ import com.google.devtools.remoteexecution.v1test.Command;
 import io.grpc.Context;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.SortedMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nullable;
 
-/**
- * A remote {@link SpawnCache} implementation.
- */
+/** A remote {@link SpawnCache} implementation. */
 @ThreadSafe // If the RemoteActionCache implementation is thread-safe.
 @ExecutionStrategy(
-  name = {"remote-cache"},
-  contextType = SpawnCache.class
-)
+    name = {"remote-cache"},
+    contextType = SpawnCache.class)
 final class RemoteSpawnCache implements SpawnCache {
   private final Path execRoot;
   private final RemoteOptions options;
@@ -60,12 +61,10 @@ final class RemoteSpawnCache implements SpawnCache {
   private final AbstractRemoteActionCache remoteCache;
   private final String buildRequestId;
   private final String commandId;
-  private final boolean verboseFailures;
 
   @Nullable private final Reporter cmdlineReporter;
 
-  // Used to ensure that a warning is reported only once.
-  private final AtomicBoolean warningReported = new AtomicBoolean();
+  private final Set<String> reportedErrors = new HashSet<>();
 
   private final DigestUtil digestUtil;
 
@@ -75,13 +74,11 @@ final class RemoteSpawnCache implements SpawnCache {
       AbstractRemoteActionCache remoteCache,
       String buildRequestId,
       String commandId,
-      boolean verboseFailures,
       @Nullable Reporter cmdlineReporter,
       DigestUtil digestUtil) {
     this.execRoot = execRoot;
     this.options = options;
     this.remoteCache = remoteCache;
-    this.verboseFailures = verboseFailures;
     this.cmdlineReporter = cmdlineReporter;
     this.buildRequestId = buildRequestId;
     this.commandId = commandId;
@@ -91,6 +88,12 @@ final class RemoteSpawnCache implements SpawnCache {
   @Override
   public CacheHandle lookup(Spawn spawn, SpawnExecutionContext context)
       throws InterruptedException, IOException, ExecException {
+    boolean checkCache = options.remoteAcceptCached && Spawns.mayBeCached(spawn);
+
+    if (checkCache) {
+      context.report(ProgressStatus.CHECKING_CACHE, "remote-cache");
+    }
+
     // Temporary hack: the TreeNodeRepository should be created and maintained upstream!
     TreeNodeRepository repository =
         new TreeNodeRepository(execRoot, context.getActionInputFileCache(), digestUtil);
@@ -106,42 +109,44 @@ final class RemoteSpawnCache implements SpawnCache {
             spawn.getExecutionPlatform(),
             context.getTimeout(),
             Spawns.mayBeCached(spawn));
-
     // Look up action cache, and reuse the action output if it is found.
     final ActionKey actionKey = digestUtil.computeActionKey(action);
+
     Context withMetadata =
         TracingMetadataUtils.contextWithMetadata(buildRequestId, commandId, actionKey);
-    // Metadata will be available in context.current() until we detach.
-    // This is done via a thread-local variable.
-    Context previous = withMetadata.attach();
-    try {
-      ActionResult result =
-          this.options.remoteAcceptCached && Spawns.mayBeCached(spawn)
-              ? remoteCache.getCachedActionResult(actionKey)
-              : null;
-      if (result != null) {
-        // We don't cache failed actions, so we know the outputs exist.
-        // For now, download all outputs locally; in the future, we can reuse the digests to
-        // just update the TreeNodeRepository and continue the build.
-        remoteCache.download(result, execRoot, context.getFileOutErr());
-        SpawnResult spawnResult =
-            new SpawnResult.Builder()
-                .setStatus(Status.SUCCESS)
-                .setExitCode(result.getExitCode())
-                .setCacheHit(true)
-                .setRunnerName("remote cache hit")
-                .build();
-        return SpawnCache.success(spawnResult);
+
+    if (checkCache) {
+      // Metadata will be available in context.current() until we detach.
+      // This is done via a thread-local variable.
+      Context previous = withMetadata.attach();
+      try {
+        ActionResult result = remoteCache.getCachedActionResult(actionKey);
+        if (result != null) {
+          // We don't cache failed actions, so we know the outputs exist.
+          // For now, download all outputs locally; in the future, we can reuse the digests to
+          // just update the TreeNodeRepository and continue the build.
+          remoteCache.download(result, execRoot, context.getFileOutErr());
+          SpawnResult spawnResult =
+              new SpawnResult.Builder()
+                  .setStatus(Status.SUCCESS)
+                  .setExitCode(result.getExitCode())
+                  .setCacheHit(true)
+                  .setRunnerName("remote cache hit")
+                  .build();
+          return SpawnCache.success(spawnResult);
+        }
+      } catch (CacheNotFoundException e) {
+        // There's a cache miss. Fall back to local execution.
+      } catch (IOException e) {
+        String errorMsg = e.getMessage();
+        if (isNullOrEmpty(errorMsg)) {
+          errorMsg = e.getClass().getSimpleName();
+        }
+        errorMsg = "Error reading from the remote cache:\n" + errorMsg;
+        report(Event.warn(errorMsg));
+      } finally {
+        withMetadata.detach(previous);
       }
-    } catch (CacheNotFoundException e) {
-      // There's a cache miss. Fall back to local execution.
-    } catch (IOException e) {
-      // There's an IO error. Fall back to local execution.
-      reportOnce(
-          Event.warn(
-              "Some artifacts failed to be downloaded from the remote cache: " + e.getMessage()));
-    } finally {
-      withMetadata.detach(previous);
     }
     if (options.remoteUploadLocalResults) {
       return new CacheHandle() {
@@ -161,8 +166,8 @@ final class RemoteSpawnCache implements SpawnCache {
         }
 
         @Override
-        public void store(SpawnResult result, Collection<Path> files)
-            throws InterruptedException, IOException {
+        public void store(SpawnResult result)
+            throws ExecException, InterruptedException, IOException {
           if (options.experimentalGuardAgainstConcurrentChanges) {
             try {
               checkForConcurrentModifications();
@@ -176,16 +181,17 @@ final class RemoteSpawnCache implements SpawnCache {
                   && Status.SUCCESS.equals(result.status())
                   && result.exitCode() == 0;
           Context previous = withMetadata.attach();
+          Collection<Path> files =
+              RemoteSpawnRunner.resolveActionInputs(execRoot, spawn.getOutputFiles());
           try {
             remoteCache.upload(actionKey, execRoot, files, context.getFileOutErr(), uploadAction);
           } catch (IOException e) {
-            if (verboseFailures) {
-              report(Event.debug("Upload to remote cache failed: " + e.getMessage()));
-            } else {
-              reportOnce(
-                  Event.warn(
-                      "Some artifacts failed be uploaded to the remote cache: " + e.getMessage()));
+            String errorMsg = e.getMessage();
+            if (isNullOrEmpty(errorMsg)) {
+              errorMsg = e.getClass().getSimpleName();
             }
+            errorMsg = "Error writing to the remote cache:\n" + errorMsg;
+            report(Event.warn(errorMsg));
           } finally {
             withMetadata.detach(previous);
           }
@@ -215,14 +221,16 @@ final class RemoteSpawnCache implements SpawnCache {
     }
   }
 
-  private void reportOnce(Event evt) {
-    if (warningReported.compareAndSet(false, true)) {
-      report(evt);
-    }
-  }
-
   private void report(Event evt) {
-    if (cmdlineReporter != null) {
+    if (cmdlineReporter == null) {
+      return;
+    }
+
+    synchronized (this) {
+      if (reportedErrors.contains(evt.getMessage())) {
+        return;
+      }
+      reportedErrors.add(evt.getMessage());
       cmdlineReporter.handle(evt);
     }
   }

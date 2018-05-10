@@ -38,7 +38,6 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ForkJoinPool;
 import java.util.logging.Logger;
@@ -70,6 +69,7 @@ public abstract class AbstractParallelEvaluator {
       boolean keepGoing,
       int threadCount,
       DirtyTrackingProgressReceiver progressReceiver,
+      GraphInconsistencyReceiver graphInconsistencyReceiver,
       CycleDetector cycleDetector) {
     this.graph = graph;
     this.cycleDetector = cycleDetector;
@@ -85,6 +85,7 @@ public abstract class AbstractParallelEvaluator {
             storedEventFilter,
             errorInfoManager,
             Evaluate::new,
+            graphInconsistencyReceiver,
             threadCount);
   }
 
@@ -98,6 +99,7 @@ public abstract class AbstractParallelEvaluator {
       ErrorInfoManager errorInfoManager,
       boolean keepGoing,
       DirtyTrackingProgressReceiver progressReceiver,
+      GraphInconsistencyReceiver graphInconsistencyReceiver,
       ForkJoinPool forkJoinPool,
       CycleDetector cycleDetector) {
     this.graph = graph;
@@ -114,6 +116,7 @@ public abstract class AbstractParallelEvaluator {
             storedEventFilter,
             errorInfoManager,
             Evaluate::new,
+            graphInconsistencyReceiver,
             Preconditions.checkNotNull(forkJoinPool));
   }
 
@@ -222,7 +225,7 @@ public abstract class AbstractParallelEvaluator {
           // a child error.
           Map<SkyKey, ? extends NodeEntry> entriesToCheck =
               graph.getBatch(skyKey, Reason.OTHER, directDepsToCheck);
-          for (Entry<SkyKey, ? extends NodeEntry> entry : entriesToCheck.entrySet()) {
+          for (Map.Entry<SkyKey, ? extends NodeEntry> entry : entriesToCheck.entrySet()) {
             if (entry.getValue().isDone() && entry.getValue().getErrorInfo() != null) {
               // If any child has an error, we arbitrarily add a dep on the first one (needed
               // for error bubbling) and throw an exception coming from it.
@@ -231,7 +234,7 @@ public abstract class AbstractParallelEvaluator {
               state.addTemporaryDirectDeps(GroupedListHelper.create(errorKey));
               errorEntry.checkIfDoneForDirtyReverseDep(skyKey);
               // Perform the necessary bookkeeping for any deps that are not being used.
-              for (Entry<SkyKey, ? extends NodeEntry> depEntry : entriesToCheck.entrySet()) {
+              for (Map.Entry<SkyKey, ? extends NodeEntry> depEntry : entriesToCheck.entrySet()) {
                 if (!depEntry.getKey().equals(errorKey)) {
                   depEntry.getValue().removeReverseDep(skyKey);
                 }
@@ -442,6 +445,11 @@ public abstract class AbstractParallelEvaluator {
           env.doneBuilding();
         }
 
+        if (maybeEraseNodeToRestartFromScratch(skyKey, state, value)) {
+          evaluatorContext.getVisitor().enqueueEvaluation(skyKey);
+          return;
+        }
+
         // Helper objects for all the newly requested deps that weren't known to the environment,
         // and may contain duplicate elements.
         GroupedListHelper<SkyKey> newDirectDeps = env.getNewlyRequestedDeps();
@@ -554,7 +562,7 @@ public abstract class AbstractParallelEvaluator {
                 graph.createIfAbsentBatchAsync(
                     skyKey, Reason.RDEP_ADDITION, newDepsThatWerentInTheLastEvaluation);
 
-        for (Entry<SkyKey, ? extends NodeEntry> e :
+        for (Map.Entry<SkyKey, ? extends NodeEntry> e :
             graph
                 .getBatch(skyKey, Reason.ENQUEUING_CHILD, newDepsThatWereInTheLastEvaluation)
                 .entrySet()) {
@@ -563,7 +571,7 @@ public abstract class AbstractParallelEvaluator {
           enqueueChild(skyKey, state, newDirectDep, newDirectDepEntry, /*depAlreadyExists=*/ true);
         }
 
-        for (Entry<SkyKey, ? extends NodeEntry> e :
+        for (Map.Entry<SkyKey, ? extends NodeEntry> e :
             newDepsThatWerentInTheLastEvaluationNodes.get().entrySet()) {
           SkyKey newDirectDep = e.getKey();
           NodeEntry newDirectDepEntry = e.getValue();
@@ -599,6 +607,25 @@ public abstract class AbstractParallelEvaluator {
     }
 
     private static final int MAX_REVERSEDEP_DUMP_LENGTH = 1000;
+  }
+
+  private boolean maybeEraseNodeToRestartFromScratch(
+      SkyKey key, NodeEntry entry, SkyValue returnedValue) {
+    if (!SkyFunction.SENTINEL_FOR_RESTART_FROM_SCRATCH.equals(returnedValue)) {
+      return false;
+    }
+    evaluatorContext
+        .getGraphInconsistencyReceiver()
+        .noteInconsistencyAndMaybeThrow(
+            key, /*otherKey=*/ null, GraphInconsistencyReceiver.Inconsistency.RESET_REQUESTED);
+    entry.resetForRestartFromScratch();
+    // TODO(mschaller): rdeps of children have to be handled here. If the graph does not keep edges,
+    // nothing has to be done, since there are no reverse deps to keep consistent. If the graph
+    // keeps edges, it's a harder problem. The reverse deps could just be removed, but in the case
+    // that this node is dirty, the deps shouldn't be removed, they should just be transformed back
+    // to "known reverse deps" from "reverse deps declared during this evaluation" (the inverse of
+    // NodeEntry#checkIfDoneForDirtyReverseDep). Such a method doesn't currently exist, but could.
+    return true;
   }
 
   void propagateEvaluatorContextCrashIfAny() {
@@ -666,7 +693,7 @@ public abstract class AbstractParallelEvaluator {
     InterruptibleSupplier<Map<SkyKey, ? extends NodeEntry>> newlyAddedNewDepNodes =
         graph.getBatchAsync(skyKey, Reason.RDEP_ADDITION, newlyAddedNewDeps);
 
-    for (Entry<SkyKey, ? extends NodeEntry> newDep :
+    for (Map.Entry<SkyKey, ? extends NodeEntry> newDep :
         graph.getBatch(skyKey, Reason.SIGNAL_DEP, previouslyRegisteredNewDeps).entrySet()) {
       // Note that this depEntry can't be null. In a keep-going build, we expect all deps to be
       // done. In a non-keep-going build, If env.newlyRequestedDeps contained a key with a

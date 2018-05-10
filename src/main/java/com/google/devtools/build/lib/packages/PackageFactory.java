@@ -38,7 +38,6 @@ import com.google.devtools.build.lib.skylarkinterface.Param;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkSignature;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.BaseFunction;
-import com.google.devtools.build.lib.syntax.BazelLibrary;
 import com.google.devtools.build.lib.syntax.BuildFileAST;
 import com.google.devtools.build.lib.syntax.BuiltinFunction;
 import com.google.devtools.build.lib.syntax.ClassObject;
@@ -71,7 +70,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Future;
@@ -1557,7 +1555,7 @@ public final class PackageFactory {
         .setup("repository_name", repositoryNameFunction)
         .setup("environment_group", newEnvironmentGroupFunction.apply(context));
 
-    for (Entry<String, BuiltinRuleFunction> entry : ruleFunctions.entrySet()) {
+    for (Map.Entry<String, BuiltinRuleFunction> entry : ruleFunctions.entrySet()) {
       pkgEnv.setup(entry.getKey(), entry.getValue());
     }
 

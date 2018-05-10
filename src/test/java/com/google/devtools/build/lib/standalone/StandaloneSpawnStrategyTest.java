@@ -191,7 +191,9 @@ public class StandaloneSpawnStrategyTest {
         null,
         outErr,
         ImmutableMap.<String, String>of(),
-        SIMPLE_ARTIFACT_EXPANDER);
+        ImmutableMap.of(),
+        SIMPLE_ARTIFACT_EXPANDER,
+        /*actionFileSystem=*/ null);
   }
 
   @Test

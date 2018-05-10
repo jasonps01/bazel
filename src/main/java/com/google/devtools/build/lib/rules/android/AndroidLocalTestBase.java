@@ -36,6 +36,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.BuildType;
+import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidAaptVersion;
 import com.google.devtools.build.lib.rules.java.ClasspathConfiguredFragment;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
@@ -65,6 +66,7 @@ import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Nullable;
 
 /** A base implementation for the "android_local_test" rule. */
@@ -77,7 +79,6 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     ruleContext.checkSrcsSamePackage(true);
 
     JavaSemantics javaSemantics = createJavaSemantics();
-    AndroidSemantics androidSemantics = createAndroidSemantics();
     createAndroidMigrationSemantics().validateRuleContext(ruleContext);
     AndroidLocalTestConfiguration androidLocalTestConfiguration =
         ruleContext.getFragment(AndroidLocalTestConfiguration.class);
@@ -89,24 +90,25 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     JavaTargetAttributes.Builder attributesBuilder = javaCommon.initCommon();
 
     final ResourceApk resourceApk;
-    final Artifact unprocessedManifest;
 
     if (AndroidResources.decoupleDataProcessing(ruleContext)) {
-      StampedAndroidManifest manifest =
-          StampedAndroidManifest.from(ruleContext, androidSemantics).mergeWithDeps(ruleContext);
-      unprocessedManifest = manifest.getManifest();
-
       resourceApk =
-          ProcessedAndroidData.processLocalTestDataFrom(ruleContext, manifest)
-              .generateRClass(ruleContext);
+          buildResourceApk(
+              ruleContext,
+              AndroidManifest.fromAttributes(ruleContext),
+              AndroidResources.from(ruleContext, "resource_files"),
+              AndroidAssets.from(ruleContext),
+              ResourceDependencies.fromRuleDeps(ruleContext, /* neverlink = */ false),
+              AssetDependencies.fromRuleDeps(ruleContext, /* neverlink = */ false),
+              ApplicationManifest.getManifestValues(ruleContext),
+              AndroidAaptVersion.chooseTargetAaptVersion(ruleContext));
     } else {
       // Create the final merged manifest
       ResourceDependencies resourceDependencies =
           ResourceDependencies.fromRuleDeps(ruleContext, /* neverlink= */ false);
 
       ApplicationManifest applicationManifest =
-          getApplicationManifest(ruleContext, androidSemantics, resourceDependencies);
-      unprocessedManifest = applicationManifest.getManifest();
+          getApplicationManifest(ruleContext, resourceDependencies);
 
       // Create the final merged R class
       resourceApk =
@@ -128,8 +130,9 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
                   : null,
               null, /* featureOfArtifact */
               null /* featureAfterArtifact */);
-      attributesBuilder.addRuntimeClassPathEntry(resourceApk.getResourceJavaClassJar());
     }
+
+    attributesBuilder.addRuntimeClassPathEntry(resourceApk.getResourceJavaClassJar());
 
     // Exclude the Rs from the library from the runtime classpath.
     NestedSet<Artifact> excludedRuntimeArtifacts = getLibraryResourceJars(ruleContext);
@@ -145,7 +148,8 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
         Template.forResource(AndroidLocalTestBase.class, "robolectric_properties_template.txt");
     List<Substitution> substitutions = new ArrayList<>();
     substitutions.add(
-        Substitution.of("%android_merged_manifest%", unprocessedManifest.getRunfilesPathString()));
+        Substitution.of(
+            "%android_merged_manifest%", resourceApk.getManifest().getRunfilesPathString()));
     substitutions.add(
         Substitution.of("%android_merged_resources%", "jar:file:" + resourcesLocation + "!/res"));
     substitutions.add(
@@ -308,7 +312,7 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
             ruleContext,
             javaCommon,
             filesToBuild,
-            unprocessedManifest,
+            resourceApk.getManifest(),
             resourceApk.getResourceJavaClassJar(),
             resourceApk.getValidatedResources().getMergedResources(),
             generateBinaryResources ? resourceApk : null);
@@ -404,15 +408,13 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
    * @throws RuleErrorException
    */
   private ApplicationManifest getApplicationManifest(
-      RuleContext ruleContext,
-      AndroidSemantics androidSemantics,
-      ResourceDependencies resourceDependencies)
+      RuleContext ruleContext, ResourceDependencies resourceDependencies)
       throws InterruptedException, RuleErrorException {
     ApplicationManifest applicationManifest;
 
     if (AndroidResources.definesAndroidResources(ruleContext.attributes())) {
       AndroidResources.validateRuleContext(ruleContext);
-      ApplicationManifest ruleManifest = androidSemantics.getManifestForRule(ruleContext);
+      ApplicationManifest ruleManifest = ApplicationManifest.renamedFromRule(ruleContext);
       applicationManifest = ruleManifest.mergeWith(ruleContext, resourceDependencies);
     } else {
       // we don't have a manifest, merge like android_library with a stub manifest
@@ -511,8 +513,7 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     // The dep may be a simple JAR and not a java rule, hence we can't simply do
     // dep.getProvider(JavaCompilationArgsProvider.class).getRecursiveJavaCompilationArgs(),
     // so we reuse the logic within JavaCompilationArgs to handle both scenarios.
-    return JavaCompilationArgsProvider.legacyFromTargets(ImmutableList.of(deps))
-        .getRuntimeJars();
+    return JavaCompilationArgsProvider.legacyFromTargets(ImmutableList.of(deps)).getRuntimeJars();
   }
 
   private static String getAndCheckTestClass(
@@ -537,6 +538,33 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     return testClass;
   }
 
+  static ResourceApk buildResourceApk(
+      RuleContext ruleContext,
+      AndroidManifest manifest,
+      AndroidResources resources,
+      AndroidAssets assets,
+      ResourceDependencies resourceDeps,
+      AssetDependencies assetDeps,
+      Map<String, String> manifestValues,
+      AndroidAaptVersion aaptVersion)
+      throws InterruptedException {
+
+    StampedAndroidManifest stamped =
+        manifest.mergeWithDeps(
+            ruleContext, resourceDeps, manifestValues, /* useLegacyMerger = */ false);
+
+    return ProcessedAndroidData.processLocalTestDataFrom(
+            ruleContext,
+            stamped,
+            manifestValues,
+            aaptVersion,
+            resources,
+            assets,
+            resourceDeps,
+            assetDeps)
+        .generateRClass(ruleContext, aaptVersion);
+  }
+
   private static NestedSet<Artifact> getLibraryResourceJars(RuleContext ruleContext) {
     Iterable<AndroidLibraryResourceClassJarProvider> libraryResourceJarProviders =
         AndroidCommon.getTransitivePrerequisites(
@@ -551,9 +579,6 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
 
   /** Get JavaSemantics */
   protected abstract JavaSemantics createJavaSemantics();
-
-  /** Get AndroidSemantics */
-  protected abstract AndroidSemantics createAndroidSemantics();
 
   /** Get AndroidMigrationSemantics */
   protected abstract AndroidMigrationSemantics createAndroidMigrationSemantics();

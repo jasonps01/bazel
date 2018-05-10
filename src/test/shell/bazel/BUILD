@@ -332,9 +332,9 @@ sh_test(
 )
 
 sh_test(
-    name = "local_action_cache_test",
+    name = "disk_cache_test",
     size = "small",
-    srcs = ["local_action_cache_test.sh"],
+    srcs = ["disk_cache_test.sh"],
     data = [":test-deps"],
 )
 
@@ -382,6 +382,13 @@ sh_test(
     name = "workspace_test",
     size = "large",
     srcs = ["workspace_test.sh"],
+    data = [":test-deps"],
+)
+
+sh_test(
+    name = "workspace_resolved_test",
+    size = "medium",
+    srcs = ["workspace_resolved_test.sh"],
     data = [":test-deps"],
 )
 

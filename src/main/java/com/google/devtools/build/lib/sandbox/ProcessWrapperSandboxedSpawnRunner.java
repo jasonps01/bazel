@@ -56,7 +56,7 @@ final class ProcessWrapperSandboxedSpawnRunner extends AbstractSandboxSpawnRunne
     this.execRoot = cmdEnv.getExecRoot();
     this.localEnvProvider =
         OS.getCurrent() == OS.DARWIN
-            ? new XcodeLocalEnvProvider(productName, cmdEnv.getClientEnv())
+            ? new XcodeLocalEnvProvider(cmdEnv.getClientEnv())
             : new PosixLocalEnvProvider(cmdEnv.getClientEnv());
     this.sandboxBase = sandboxBase;
     this.timeoutKillDelay = timeoutKillDelay;
@@ -101,7 +101,7 @@ final class ProcessWrapperSandboxedSpawnRunner extends AbstractSandboxSpawnRunne
             sandboxExecRoot,
             commandLineBuilder.build(),
             environment,
-            SandboxHelpers.getInputFiles(spawn, context, execRoot),
+            SandboxHelpers.processInputFiles(spawn, context, execRoot),
             SandboxHelpers.getOutputFiles(spawn),
             getWritableDirs(sandboxExecRoot, environment));
 

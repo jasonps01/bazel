@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -49,9 +50,8 @@ import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
 import com.google.devtools.build.lib.rules.cpp.CppLinkAction.Context;
 import com.google.devtools.build.lib.rules.cpp.CppLinkAction.LinkArtifactFactory;
 import com.google.devtools.build.lib.rules.cpp.LibrariesToLinkCollector.CollectedLibrariesToLink;
-import com.google.devtools.build.lib.rules.cpp.Link.LinkStaticness;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
-import com.google.devtools.build.lib.rules.cpp.Link.Staticness;
+import com.google.devtools.build.lib.rules.cpp.Link.LinkerOrArchiver;
 import com.google.devtools.build.lib.rules.cpp.LinkerInputs.LibraryToLink;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -61,7 +61,6 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.regex.Matcher;
 import javax.annotation.Nullable;
@@ -124,7 +123,7 @@ public class CppLinkActionBuilder {
   private ImmutableList<String> additionalLinkstampDefines = ImmutableList.of();
   private final List<String> linkopts = new ArrayList<>();
   private LinkTargetType linkType = LinkTargetType.STATIC_LIBRARY;
-  private LinkStaticness linkStaticness = LinkStaticness.FULLY_STATIC;
+  private Link.LinkingMode linkingMode = Link.LinkingMode.LEGACY_FULLY_STATIC;
   private String libraryIdentifier = null;
   private ImmutableMap<Artifact, Artifact> ltoBitcodeFiles;
   private Artifact defFile;
@@ -280,7 +279,7 @@ public class CppLinkActionBuilder {
     this.linkstampsBuilder.addAll(linkContext.linkstamps);
     this.linkopts.addAll(linkContext.linkopts);
     this.linkType = linkContext.linkType;
-    this.linkStaticness = linkContext.linkStaticness;
+    this.linkingMode = linkContext.linkingMode;
     this.fake = linkContext.fake;
     this.isNativeDeps = linkContext.isNativeDeps;
     this.useTestOnlyFlags = linkContext.useTestOnlyFlags;
@@ -348,11 +347,9 @@ public class CppLinkActionBuilder {
   public LinkTargetType getLinkType() {
     return this.linkType;
   }
-  /**
-   * Returns the staticness of this link action.
-   */
-  public LinkStaticness getLinkStaticness() {
-    return this.linkStaticness;
+  /** Returns the staticness of this link action. */
+  public Link.LinkingMode getLinkingMode() {
+    return this.linkingMode;
   }
   /**
    * Returns linker inputs that are lto bitcode files in a map from the full bitcode file used by
@@ -492,8 +489,7 @@ public class CppLinkActionBuilder {
                 toolchain,
                 fdoSupport,
                 usePicForLtoBackendActions,
-                CppHelper.shouldCreatePerObjectDebugInfo(
-                    cppConfiguration, toolchain, featureConfiguration),
+                toolchain.shouldCreatePerObjectDebugInfo(featureConfiguration),
                 argv)
             : new LtoBackendArtifacts(
                 ltoOutputRootPrefix,
@@ -506,8 +502,7 @@ public class CppLinkActionBuilder {
                 toolchain,
                 fdoSupport,
                 usePicForLtoBackendActions,
-                CppHelper.shouldCreatePerObjectDebugInfo(
-                    cppConfiguration, toolchain, featureConfiguration),
+                toolchain.shouldCreatePerObjectDebugInfo(featureConfiguration),
                 argv);
     return ltoArtifact;
   }
@@ -525,7 +520,7 @@ public class CppLinkActionBuilder {
   private List<String> getLtoBackendCommandLineOptions() {
     List<String> argv = new ArrayList<>();
     argv.addAll(toolchain.getLinkOptions());
-    argv.addAll(CppHelper.getCompilerOptions(cppConfiguration, toolchain));
+    argv.addAll(toolchain.getLegacyCompileOptionsWithCopts());
     argv.addAll(cppConfiguration.getLtoBackendOptions());
     return argv;
   }
@@ -617,7 +612,9 @@ public class CppLinkActionBuilder {
   private ImmutableMap<Artifact, LtoBackendArtifacts> createSharedNonLtoArtifacts(
       boolean isLtoIndexing) {
     // Only create the shared LTO artifacts for a statically linked library that has bitcode files.
-    if (ltoBitcodeFiles == null || isLtoIndexing || linkType.staticness() != Staticness.STATIC) {
+    if (ltoBitcodeFiles == null
+        || isLtoIndexing
+        || linkType.linkerOrArchiver() != LinkerOrArchiver.ARCHIVER) {
       return ImmutableMap.<Artifact, LtoBackendArtifacts>of();
     }
 
@@ -678,11 +675,11 @@ public class CppLinkActionBuilder {
   }
 
   private ImmutableList<String> getToolchainFlags(List<String> linkopts) {
-    if (Staticness.STATIC.equals(linkType.staticness())) {
+    if (LinkerOrArchiver.ARCHIVER.equals(linkType.linkerOrArchiver())) {
       return ImmutableList.of();
     }
-    boolean fullyStatic = (linkStaticness == LinkStaticness.FULLY_STATIC);
-    boolean mostlyStatic = (linkStaticness == LinkStaticness.MOSTLY_STATIC);
+    boolean fullyStatic = (linkingMode == Link.LinkingMode.LEGACY_FULLY_STATIC);
+    boolean mostlyStatic = (linkingMode == Link.LinkingMode.STATIC);
     boolean sharedLinkopts =
         linkType == LinkTargetType.DYNAMIC_LIBRARY
             || linkopts.contains("-shared")
@@ -715,10 +712,14 @@ public class CppLinkActionBuilder {
                 toolchain,
                 sharedLinkopts,
                 featureConfiguration.isEnabled(CppRuleClasses.STATIC_LINK_CPP_RUNTIMES)));
+      } else {
+        result.addAll(toolchain.getLegacyLinkOptions());
       }
     } else {
       if (!featureConfiguration.isEnabled(CppRuleClasses.DYNAMIC_LINKING_MODE)) {
         result.addAll(CppHelper.getDynamicLinkOptions(cppConfiguration, toolchain, sharedLinkopts));
+      } else {
+        result.addAll(toolchain.getLegacyLinkOptions());
       }
     }
 
@@ -770,7 +771,7 @@ public class CppLinkActionBuilder {
 
     boolean needWholeArchive =
         wholeArchive
-            || needWholeArchive(linkStaticness, linkType, linkopts, isNativeDeps, cppConfiguration);
+            || needWholeArchive(linkingMode, linkType, linkopts, isNativeDeps, cppConfiguration);
     // Disallow LTO indexing for test targets that link statically, and optionally for any
     // linkstatic target (which can be used to disable LTO indexing for non-testonly cc_binary
     // built due to data dependences for a blaze test invocation). Otherwise this will provoke
@@ -793,7 +794,7 @@ public class CppLinkActionBuilder {
                 || !(ruleContext.isTestTarget() || ruleContext.isTestOnlyTarget()));
     boolean allowLtoIndexing =
         includeLinkStaticInLtoIndexing
-            || (linkStaticness == LinkStaticness.DYNAMIC && !ltoBitcodeFiles.isEmpty());
+            || (linkingMode == Link.LinkingMode.DYNAMIC && !ltoBitcodeFiles.isEmpty());
 
     NestedSet<LibraryToLink> originalUniqueLibraries = libraries.build();
 
@@ -844,23 +845,16 @@ public class CppLinkActionBuilder {
     }
 
     Map<Artifact, Artifact> ltoMapping = new HashMap<>();
-    ;
+
     if (isFinalLinkOfLtoBuild()) {
       for (LtoBackendArtifacts a : allLtoArtifacts) {
         ltoMapping.put(a.getBitcodeFile(), a.getObjectFile());
       }
     }
-    Iterable<Artifact> objectArtifacts =
+    ImmutableSet<Artifact> objectArtifacts =
         getArtifactsPossiblyLtoMapped(objectFileInputs, ltoMapping);
-    Iterable<Artifact> linkstampObjectArtifacts =
+    ImmutableSet<Artifact> linkstampObjectArtifacts =
         getArtifactsPossiblyLtoMapped(linkstampObjectFileInputs, ltoMapping);
-    Iterable<Artifact> expandedInputs =
-        getArtifactsPossiblyLtoMapped(
-            Link.mergeInputsDependencies(
-                uniqueLibraries,
-                needWholeArchive,
-                CppHelper.getArchiveType(cppConfiguration, toolchain)),
-            ltoMapping);
 
     ImmutableSet<Artifact> combinedObjectArtifacts =
         ImmutableSet.<Artifact>builder()
@@ -934,16 +928,12 @@ public class CppLinkActionBuilder {
               symbolCounts);
     }
 
-    final Iterable<LinkerInput> linkerInputs =
+    // Linker inputs without any start/end lib expansions.
+    final Iterable<LinkerInput> nonExpandedLinkerInputs =
         IterablesChain.<LinkerInput>builder()
             .add(objectFileInputs)
             .add(linkstampObjectFileInputs)
-            .add(
-                ImmutableIterable.from(
-                    Link.mergeInputsCmdLine(
-                        uniqueLibraries,
-                        needWholeArchive,
-                        CppHelper.getArchiveType(cppConfiguration, toolchain))))
+            .add(ImmutableIterable.from(uniqueLibraries))
             .add(
                 // Adding toolchain libraries without whole archive no-matter-what. People don't
                 // want to include whole libstdc++ in their binary ever.
@@ -980,7 +970,7 @@ public class CppLinkActionBuilder {
             toolchain,
             toolchainLibrariesSolibDir,
             linkType,
-            linkStaticness,
+            linkingMode,
             output,
             solibDir,
             isLtoIndexing,
@@ -988,13 +978,23 @@ public class CppLinkActionBuilder {
             featureConfiguration,
             thinltoParamFile,
             allowLtoIndexing,
-            linkerInputs,
+            nonExpandedLinkerInputs,
             needWholeArchive);
     CollectedLibrariesToLink collectedLibrariesToLink =
         librariesToLinkCollector.collectLibrariesToLink();
+
+    ImmutableSet<Artifact> expandedLinkerArtifacts =
+        getArtifactsPossiblyLtoMapped(
+            collectedLibrariesToLink.getExpandedLinkerInputs(), ltoMapping);
+
+    // Remove the linkstamp objects from inputs so that createLinkstampCompileAction doesn't cause a
+    // circular dependency.
+    ImmutableSet<Artifact> expandedLinkerArtifactsNoLinkstamps =
+        Sets.difference(expandedLinkerArtifacts, linkstampObjectArtifacts).immutableCopy();
+
     Variables variables =
         LinkBuildVariables.setupVariables(
-            this,
+            getLinkType().linkerOrArchiver().equals(LinkerOrArchiver.LINKER),
             configuration,
             output,
             paramFile,
@@ -1002,7 +1002,6 @@ public class CppLinkActionBuilder {
             thinltoMergedObjectFile,
             mustKeepDebug,
             symbolCounts,
-            cppConfiguration,
             toolchain,
             featureConfiguration,
             useTestOnlyFlags,
@@ -1031,12 +1030,13 @@ public class CppLinkActionBuilder {
           interfaceOutput == null,
           "interface output may only be non-null for dynamic library links");
     }
-    if (linkType.staticness() == Staticness.STATIC) {
+    if (linkType.linkerOrArchiver() == LinkerOrArchiver.ARCHIVER) {
       // solib dir must be null for static links
       toolchainLibrariesSolibDir = null;
 
       Preconditions.checkArgument(
-          linkStaticness == LinkStaticness.FULLY_STATIC, "static library link must be static");
+          linkingMode == Link.LinkingMode.LEGACY_FULLY_STATIC,
+          "static library link must be static");
       Preconditions.checkArgument(
           symbolCounts == null, "the symbol counts output must be null for static links");
       Preconditions.checkArgument(
@@ -1047,11 +1047,13 @@ public class CppLinkActionBuilder {
 
     LinkCommandLine.Builder linkCommandLineBuilder =
         new LinkCommandLine.Builder(ruleContext)
-            .setLinkerInputs(linkerInputs)
+            .setLinkerInputArtifacts(expandedLinkerArtifacts)
             .setLinkTargetType(linkType)
-            .setLinkStaticness(linkStaticness)
+            .setLinkingMode(linkingMode)
             .setToolchainLibrariesSolibDir(
-                linkType.staticness() == Staticness.STATIC ? null : toolchainLibrariesSolibDir)
+                linkType.linkerOrArchiver() == LinkerOrArchiver.ARCHIVER
+                    ? null
+                    : toolchainLibrariesSolibDir)
             .setNativeDeps(isNativeDeps)
             .setUseTestOnlyFlags(useTestOnlyFlags)
             .setParamFile(paramFile)
@@ -1079,7 +1081,9 @@ public class CppLinkActionBuilder {
 
     // For now, silently ignore linkopts if this is a static library
     linkoptsForVariables =
-        linkType.staticness() == Staticness.STATIC ? ImmutableList.of() : linkoptsForVariables;
+        linkType.linkerOrArchiver() == LinkerOrArchiver.ARCHIVER
+            ? ImmutableList.of()
+            : linkoptsForVariables;
     linkCommandLineBuilder.setLinkopts(linkoptsForVariables);
 
     Variables patchedVariables =
@@ -1111,10 +1115,10 @@ public class CppLinkActionBuilder {
     // order here is important.
     IterablesChain.Builder<Artifact> inputsBuilder =
         IterablesChain.<Artifact>builder()
-            .add(ImmutableList.copyOf(objectArtifacts))
+            .add(objectArtifacts)
             .add(ImmutableList.copyOf(nonCodeInputs))
             .add(dependencyInputsBuilder.build())
-            .add(ImmutableIterable.from(expandedInputs));
+            .add(expandedLinkerArtifactsNoLinkstamps);
 
     if (thinltoParamFile != null && !isLtoIndexing) {
       inputsBuilder.add(ImmutableList.of(thinltoParamFile));
@@ -1123,9 +1127,8 @@ public class CppLinkActionBuilder {
       inputsBuilder.add(ImmutableList.of(linkCommandLine.getParamFile()));
       // Pass along tree artifacts, so they can be properly expanded.
       ImmutableSet<Artifact> paramFileActionInputs =
-          ImmutableSet.<LinkerInput>copyOf(linkerInputs)
+          expandedLinkerArtifacts
               .stream()
-              .map(LinkerInput::getArtifact)
               .filter(a -> a.isTreeArtifact())
               .collect(ImmutableSet.toImmutableSet());
 
@@ -1153,7 +1156,7 @@ public class CppLinkActionBuilder {
     }
 
     if (!isLtoIndexing) {
-      for (Entry<Linkstamp, Artifact> linkstampEntry : linkstampMap.entrySet()) {
+      for (Map.Entry<Linkstamp, Artifact> linkstampEntry : linkstampMap.entrySet()) {
         analysisEnvironment.registerAction(
             CppLinkstampCompileHelper.createLinkstampCompileAction(
                 ruleContext,
@@ -1184,6 +1187,13 @@ public class CppLinkActionBuilder {
 
     inputsBuilder.add(linkstampObjectArtifacts);
 
+    ImmutableSet<Artifact> fakeLinkerInputArtifacts =
+        collectedLibrariesToLink.getExpandedLinkerInputs()
+            .stream()
+            .filter(LinkerInput::isFake)
+            .map(LinkerInput::getArtifact)
+            .collect(ImmutableSet.toImmutableSet());
+
     return new CppLinkAction(
         getOwner(),
         mnemonic,
@@ -1193,6 +1203,7 @@ public class CppLinkActionBuilder {
         output,
         interfaceOutputLibrary,
         fake,
+        fakeLinkerInputArtifacts,
         isLtoIndexing,
         linkstampMap
             .keySet()
@@ -1214,7 +1225,7 @@ public class CppLinkActionBuilder {
     return !isLtoIndexing && allLtoArtifacts != null;
   }
 
-  private Iterable<Artifact> getArtifactsPossiblyLtoMapped(
+  private ImmutableSet<Artifact> getArtifactsPossiblyLtoMapped(
       Iterable<LinkerInput> inputs, Map<Artifact, Artifact> ltoMapping) {
     Preconditions.checkNotNull(ltoMapping);
     ImmutableSet.Builder<Artifact> result = ImmutableSet.builder();
@@ -1234,13 +1245,13 @@ public class CppLinkActionBuilder {
 
   /** The default heuristic on whether we need to use whole-archive for the link. */
   private static boolean needWholeArchive(
-      LinkStaticness staticness,
+      Link.LinkingMode staticness,
       LinkTargetType type,
       Collection<String> linkopts,
       boolean isNativeDeps,
       CppConfiguration cppConfig) {
-    boolean fullyStatic = (staticness == LinkStaticness.FULLY_STATIC);
-    boolean mostlyStatic = (staticness == LinkStaticness.MOSTLY_STATIC);
+    boolean fullyStatic = (staticness == Link.LinkingMode.LEGACY_FULLY_STATIC);
+    boolean mostlyStatic = (staticness == Link.LinkingMode.STATIC);
     boolean sharedLinkopts =
         type.isDynamicLibrary() || linkopts.contains("-shared") || cppConfig.hasSharedLinkOption();
     return (isNativeDeps || cppConfig.legacyWholeArchive())
@@ -1500,10 +1511,10 @@ public class CppLinkActionBuilder {
   /**
    * Sets the degree of "staticness" of the link: fully static (static binding of all symbols),
    * mostly static (use dynamic binding only for symbols from glibc), dynamic (use dynamic binding
-   * wherever possible). The default is {@link LinkStaticness#FULLY_STATIC}.
+   * wherever possible). The default is {@link Link.LinkingMode#LEGACY_FULLY_STATIC}.
    */
-  public CppLinkActionBuilder setLinkStaticness(LinkStaticness linkStaticness) {
-    this.linkStaticness = linkStaticness;
+  public CppLinkActionBuilder setLinkingMode(Link.LinkingMode linkingMode) {
+    this.linkingMode = linkingMode;
     return this;
   }
 

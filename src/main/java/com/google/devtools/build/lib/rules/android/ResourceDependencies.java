@@ -90,10 +90,17 @@ public final class ResourceDependencies {
   private final boolean neverlink;
 
   public static ResourceDependencies fromRuleDeps(RuleContext ruleContext, boolean neverlink) {
+    return fromProviders(
+        AndroidCommon.getTransitivePrerequisites(
+            ruleContext, Mode.TARGET, AndroidResourcesInfo.PROVIDER),
+        neverlink);
+  }
+
+  public static ResourceDependencies fromProviders(
+      Iterable<AndroidResourcesInfo> providers, boolean neverlink) {
     NestedSetBuilder<ValidatedAndroidData> transitiveDependencies =
         NestedSetBuilder.naiveLinkOrder();
-    NestedSetBuilder<ValidatedAndroidData> directDependencies =
-        NestedSetBuilder.naiveLinkOrder();
+    NestedSetBuilder<ValidatedAndroidData> directDependencies = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<Artifact> transitiveResources = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<Artifact> transitiveAssets = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<Artifact> transitiveManifests = NestedSetBuilder.naiveLinkOrder();
@@ -103,19 +110,17 @@ public final class ResourceDependencies {
     NestedSetBuilder<Artifact> transitiveStaticLib = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<Artifact> transitiveRTxt = NestedSetBuilder.naiveLinkOrder();
 
-    for (AndroidResourcesInfo resources :
-        AndroidCommon.getTransitivePrerequisites(
-            ruleContext, Mode.TARGET, AndroidResourcesInfo.PROVIDER)) {
-        transitiveDependencies.addTransitive(resources.getTransitiveAndroidResources());
-        directDependencies.addTransitive(resources.getDirectAndroidResources());
-        transitiveResources.addTransitive(resources.getTransitiveResources());
-        transitiveAssets.addTransitive(resources.getTransitiveAssets());
-        transitiveManifests.addTransitive(resources.getTransitiveManifests());
-        transitiveAapt2RTxt.addTransitive(resources.getTransitiveAapt2RTxt());
-        transitiveSymbolsBin.addTransitive(resources.getTransitiveSymbolsBin());
-        transitiveCompiledSymbols.addTransitive(resources.getTransitiveCompiledSymbols());
-        transitiveStaticLib.addTransitive(resources.getTransitiveStaticLib());
-        transitiveRTxt.addTransitive(resources.getTransitiveRTxt());
+    for (AndroidResourcesInfo resources : providers) {
+      transitiveDependencies.addTransitive(resources.getTransitiveAndroidResources());
+      directDependencies.addTransitive(resources.getDirectAndroidResources());
+      transitiveResources.addTransitive(resources.getTransitiveResources());
+      transitiveAssets.addTransitive(resources.getTransitiveAssets());
+      transitiveManifests.addTransitive(resources.getTransitiveManifests());
+      transitiveAapt2RTxt.addTransitive(resources.getTransitiveAapt2RTxt());
+      transitiveSymbolsBin.addTransitive(resources.getTransitiveSymbolsBin());
+      transitiveCompiledSymbols.addTransitive(resources.getTransitiveCompiledSymbols());
+      transitiveStaticLib.addTransitive(resources.getTransitiveStaticLib());
+      transitiveRTxt.addTransitive(resources.getTransitiveRTxt());
     }
 
     return new ResourceDependencies(
@@ -245,10 +250,16 @@ public final class ResourceDependencies {
    */
   public AndroidResourcesInfo toInfo(ValidatedAndroidData newDirectResource) {
     if (neverlink) {
-      return ResourceDependencies.empty().toInfo(newDirectResource.getLabel());
+      return ResourceDependencies.empty()
+          .toInfo(
+              newDirectResource.getLabel(),
+              newDirectResource.getProcessedManifest(),
+              newDirectResource.getRTxt());
     }
     return new AndroidResourcesInfo(
         newDirectResource.getLabel(),
+        newDirectResource.getProcessedManifest(),
+        newDirectResource.getRTxt(),
         NestedSetBuilder.<ValidatedAndroidData>naiveLinkOrder()
             .addTransitive(transitiveResourceContainers)
             .addTransitive(directResourceContainers)
@@ -280,12 +291,15 @@ public final class ResourceDependencies {
    * @param label The label of the library exporting this provider.
    * @return A provider with the current resources and label.
    */
-  public AndroidResourcesInfo toInfo(Label label) {
+  public AndroidResourcesInfo toInfo(
+      Label label, ProcessedAndroidManifest manifest, Artifact rTxt) {
     if (neverlink) {
-      return ResourceDependencies.empty().toInfo(label);
+      return ResourceDependencies.empty().toInfo(label, manifest, rTxt);
     }
     return new AndroidResourcesInfo(
         label,
+        manifest,
+        rTxt,
         transitiveResourceContainers,
         directResourceContainers,
         transitiveResources,

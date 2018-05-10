@@ -34,7 +34,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ForkJoinPool;
 import javax.annotation.Nullable;
@@ -86,7 +85,8 @@ public abstract class AbstractExceptionalParallelEvaluator<E extends Exception>
       ErrorInfoManager errorInfoManager,
       boolean keepGoing,
       int threadCount,
-      DirtyTrackingProgressReceiver progressReceiver) {
+      DirtyTrackingProgressReceiver progressReceiver,
+      GraphInconsistencyReceiver graphInconsistencyReceiver) {
     super(
         graph,
         graphVersion,
@@ -98,6 +98,7 @@ public abstract class AbstractExceptionalParallelEvaluator<E extends Exception>
         keepGoing,
         threadCount,
         progressReceiver,
+        graphInconsistencyReceiver,
         new SimpleCycleDetector());
   }
 
@@ -111,6 +112,7 @@ public abstract class AbstractExceptionalParallelEvaluator<E extends Exception>
       ErrorInfoManager errorInfoManager,
       boolean keepGoing,
       DirtyTrackingProgressReceiver progressReceiver,
+      GraphInconsistencyReceiver graphInconsistencyReceiver,
       ForkJoinPool forkJoinPool,
       CycleDetector cycleDetector) {
     super(
@@ -123,6 +125,7 @@ public abstract class AbstractExceptionalParallelEvaluator<E extends Exception>
         errorInfoManager,
         keepGoing,
         progressReceiver,
+        graphInconsistencyReceiver,
         forkJoinPool,
         cycleDetector);
   }
@@ -234,7 +237,7 @@ public abstract class AbstractExceptionalParallelEvaluator<E extends Exception>
           evaluatorContext.getProgressReceiver());
     }
     try {
-      for (Entry<SkyKey, ? extends NodeEntry> e :
+      for (Map.Entry<SkyKey, ? extends NodeEntry> e :
           graph.createIfAbsentBatch(null, Reason.PRE_OR_POST_EVALUATION, skyKeys).entrySet()) {
         SkyKey skyKey = e.getKey();
         NodeEntry entry = e.getValue();
@@ -646,7 +649,7 @@ public abstract class AbstractExceptionalParallelEvaluator<E extends Exception>
       throws InterruptedException {
     Map<SkyKey, ? extends NodeEntry> prevNodeEntries =
         graph.createIfAbsentBatch(null, Reason.OTHER, injectionMap.keySet());
-    for (Entry<SkyKey, SkyValue> injectionEntry : injectionMap.entrySet()) {
+    for (Map.Entry<SkyKey, SkyValue> injectionEntry : injectionMap.entrySet()) {
       SkyKey key = injectionEntry.getKey();
       SkyValue value = injectionEntry.getValue();
       NodeEntry prevEntry = prevNodeEntries.get(key);

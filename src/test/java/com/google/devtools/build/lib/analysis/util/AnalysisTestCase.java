@@ -100,7 +100,6 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
   /** All the flags that can be passed to {@link BuildView#update}. */
   public enum Flag {
     KEEP_GOING,
-    SKYFRAME_LOADING_PHASE,
     // Configurations that only include the fragments a target needs to properly analyze.
     TRIMMED_CONFIGURATIONS
   }
@@ -157,6 +156,7 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
         new BlazeDirectories(
             new ServerDirectories(outputBase, outputBase, outputBase),
             rootDirectory,
+            /* defaultSystemJavabase= */ null,
             analysisMock.getProductName());
     workspaceStatusActionFactory =
         new AnalysisTestUtil.DummyWorkspaceStatusActionFactory(directories);
@@ -220,8 +220,7 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
         RepositoryDelegatorFunction.REPOSITORY_OVERRIDES,
         ImmutableMap.<RepositoryName, PathFragment>of())));
     packageManager = skyframeExecutor.getPackageManager();
-    loadingPhaseRunner = skyframeExecutor.getLoadingPhaseRunner(
-        pkgFactory.getRuleClassNames(), defaultFlags().contains(Flag.SKYFRAME_LOADING_PHASE));
+    loadingPhaseRunner = skyframeExecutor.getLoadingPhaseRunner(pkgFactory.getRuleClassNames());
     buildView = new BuildView(directories, ruleClassProvider, skyframeExecutor, null);
 
   }

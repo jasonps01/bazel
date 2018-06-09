@@ -24,6 +24,9 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.testing.EqualsTester;
+import com.google.devtools.build.lib.actions.FileStateValue;
+import com.google.devtools.build.lib.actions.FileValue;
+import com.google.devtools.build.lib.actions.InconsistentFilesystemException;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ServerDirectories;
 import com.google.devtools.build.lib.analysis.util.AnalysisMock;
@@ -133,7 +136,10 @@ public abstract class GlobFunctionTest {
         new AtomicReference<>(ImmutableSet.<PackageIdentifier>of());
     BlazeDirectories directories =
         new BlazeDirectories(
-            new ServerDirectories(root, root, root), root, TestConstants.PRODUCT_NAME);
+            new ServerDirectories(root, root, root),
+            root,
+            /* defaultSystemJavabase= */ null,
+            TestConstants.PRODUCT_NAME);
     ExternalFilesHelper externalFilesHelper =
         ExternalFilesHelper.createForTesting(
             pkgLocator,
@@ -157,10 +163,10 @@ public abstract class GlobFunctionTest {
             /*hardcodedBlacklistedPackagePrefixes=*/ ImmutableSet.of(),
             /*additionalBlacklistedPackagePrefixesFile=*/ PathFragment.EMPTY_FRAGMENT));
     skyFunctions.put(
-        SkyFunctions.FILE_STATE,
+        FileStateValue.FILE_STATE,
         new FileStateFunction(
             new AtomicReference<TimestampGranularityMonitor>(), externalFilesHelper));
-    skyFunctions.put(SkyFunctions.FILE, new FileFunction(pkgLocator));
+    skyFunctions.put(FileValue.FILE, new FileFunction(pkgLocator));
     skyFunctions.put(SkyFunctions.DIRECTORY_LISTING, new DirectoryListingFunction());
     skyFunctions.put(
         SkyFunctions.DIRECTORY_LISTING_STATE,

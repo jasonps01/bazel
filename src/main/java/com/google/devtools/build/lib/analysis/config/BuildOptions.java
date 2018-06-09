@@ -424,12 +424,21 @@ public final class BuildOptions implements Cloneable, Serializable {
     if (diff.areSame()) {
       return OptionsDiffForReconstruction.getEmpty(first.fingerprint, second.computeChecksum());
     }
-    HashMap<Class<? extends FragmentOptions>, Map<String, Object>> differingOptions =
-        new HashMap<>(diff.differingOptions.keySet().size());
-    for (Class<? extends FragmentOptions> clazz : diff.differingOptions.keySet()) {
+    LinkedHashMap<Class<? extends FragmentOptions>, Map<String, Object>> differingOptions =
+        new LinkedHashMap<>(diff.differingOptions.keySet().size());
+    for (Class<? extends FragmentOptions> clazz :
+        diff.differingOptions
+            .keySet()
+            .stream()
+            .sorted(lexicalFragmentOptionsComparator)
+            .collect(Collectors.toList())) {
       Collection<OptionDefinition> fields = diff.differingOptions.get(clazz);
-      HashMap<String, Object> valueMap = new HashMap<>(fields.size());
-      for (OptionDefinition optionDefinition : fields) {
+      LinkedHashMap<String, Object> valueMap = new LinkedHashMap<>(fields.size());
+      for (OptionDefinition optionDefinition :
+          fields
+              .stream()
+              .sorted(Comparator.comparing(o -> o.getField().getName()))
+              .collect(Collectors.toList())) {
         Object secondValue;
         try {
           secondValue = Iterables.getOnlyElement(diff.second.get(optionDefinition));
@@ -448,8 +457,14 @@ public final class BuildOptions implements Cloneable, Serializable {
     first.maybeInitializeFingerprintAndHashCode();
     return new OptionsDiffForReconstruction(
         differingOptions,
-        ImmutableSet.copyOf(diff.extraFirstFragments),
-        ImmutableList.copyOf(diff.extraSecondFragments),
+        diff.extraFirstFragments
+            .stream()
+            .sorted(lexicalFragmentOptionsComparator)
+            .collect(ImmutableSet.toImmutableSet()),
+        diff.extraSecondFragments
+            .stream()
+            .sorted(Comparator.comparing(o -> o.getClass().getName()))
+            .collect(ImmutableList.toImmutableList()),
         first.fingerprint,
         second.computeChecksum());
   }
@@ -480,14 +495,14 @@ public final class BuildOptions implements Cloneable, Serializable {
       extraSecondFragments.add(options);
     }
 
-    /** Return the extra fragments classes from the first configuration. */
-    public Set<Class<? extends FragmentOptions>> getExtraFirstFragmentClasses() {
+    @VisibleForTesting
+    Set<Class<? extends FragmentOptions>> getExtraFirstFragmentClassesForTesting() {
       return extraFirstFragments;
     }
 
-    /** Return the extra fragments classes from the second configuration. */
-    public Set<Class<?>> getExtraSecondFragmentClasses() {
-      return extraSecondFragments.stream().map(Object::getClass).collect(Collectors.toSet());
+    @VisibleForTesting
+    Set<FragmentOptions> getExtraSecondFragmentsForTesting() {
+      return extraSecondFragments;
     }
 
     public Map<OptionDefinition, Object> getFirst() {
@@ -551,7 +566,6 @@ public final class BuildOptions implements Cloneable, Serializable {
     private final byte[] baseFingerprint;
     private final String checksum;
 
-    @AutoCodec.VisibleForSerialization
     OptionsDiffForReconstruction(
         Map<Class<? extends FragmentOptions>, Map<String, Object>> differingOptions,
         ImmutableSet<Class<? extends FragmentOptions>> extraFirstFragmentClasses,
@@ -611,9 +625,8 @@ public final class BuildOptions implements Cloneable, Serializable {
         return false;
       }
       OptionsDiffForReconstruction that = (OptionsDiffForReconstruction) o;
-      return differingOptions.equals(that.differingOptions)
-          && extraFirstFragmentClasses.equals(that.extraFirstFragmentClasses)
-          && this.extraSecondFragments.equals(that.extraSecondFragments);
+      return Arrays.equals(this.baseFingerprint, that.baseFingerprint)
+          && this.checksum.equals(that.checksum);
     }
 
     @Override
@@ -626,7 +639,7 @@ public final class BuildOptions implements Cloneable, Serializable {
 
     @Override
     public int hashCode() {
-      return Objects.hash(differingOptions, extraFirstFragmentClasses, extraSecondFragments);
+      return 31 * Arrays.hashCode(baseFingerprint) + checksum.hashCode();
     }
   }
 }

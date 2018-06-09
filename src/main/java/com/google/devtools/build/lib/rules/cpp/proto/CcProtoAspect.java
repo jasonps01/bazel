@@ -197,7 +197,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
           initializeLinkingHelper(featureConfiguration)
               .link(
                   compilationInfo.getCcCompilationOutputs(),
-                  compilationInfo.getCcCompilationContextInfo());
+                  compilationInfo.getCcCompilationContext());
 
       ccLibraryProviders =
           new TransitiveInfoProviderMapBuilder()
@@ -268,7 +268,6 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
                   ccToolchain(ruleContext),
                   CppHelper.getFdoSupportUsingDefaultCcToolchainAttribute(ruleContext),
                   ruleContext.getConfiguration())
-              .enableCcSpecificLinkParamsProvider()
               .enableCcNativeLibrariesProvider();
       TransitiveInfoCollection runtime = getProtoToolchainProvider().runtime();
       if (runtime != null) {

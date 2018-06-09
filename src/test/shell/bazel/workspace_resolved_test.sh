@@ -20,6 +20,7 @@ source "${CURRENT_DIR}/../integration_test_setup.sh" \
   || { echo "integration_test_setup.sh not found!" >&2; exit 1; }
 
 test_result_recorded() {
+  rm -rf fetchrepo
   mkdir fetchrepo
   cd fetchrepo
   cat > rule.bzl <<'EOF'
@@ -56,6 +57,7 @@ EOF
   # Verify that bazel can read the generated repo.bzl file and that it contains
   # the expected information
   cd ..
+  echo; cat repo.bzl; echo; echo
   mkdir analysisrepo
   mv repo.bzl analysisrepo
   cd analysisrepo
@@ -69,12 +71,71 @@ load("//:repo.bzl", "resolved")
     cmd = "echo %s > $@" % entry["repositories"][0]["attributes"]["extra_arg"],
   ) for entry in resolved if entry["original_rule_class"] == "//:rule.bzl%trivial_rule"
 ]
+
+[ genrule(
+    name = "origcount",
+    outs = ["origcount.txt"],
+    cmd = "echo %s > $@" % len(entry["original_attributes"])
+  ) for entry in resolved if entry["original_rule_class"] == "//:rule.bzl%trivial_rule"
+]
 EOF
-  cat BUILD
-  bazel build //:out || fail "Expected success"
+  bazel build :out :origcount || fail "Expected success"
   grep "foobar" `bazel info bazel-genfiles`/out.txt \
       || fail "Did not find the expected value"
+  [ $(cat `bazel info bazel-genfiles`/origcount.txt) -eq 2 ] \
+      || fail "Not the correct number of original attributes"
+}
 
+test_sync_calls_all() {
+  rm -rf fetchrepo
+  mkdir fetchrepo
+  rm -f repo.bzl
+  cd fetchrepo
+  cat > rule.bzl <<'EOF'
+def _rule_impl(ctx):
+  ctx.file("foo.bzl", """
+it = "foo"
+other = "bar"
+""")
+  ctx.file("BUILD", "")
+  return {"comment" : ctx.attr.comment }
+
+trivial_rule = repository_rule(
+  implementation = _rule_impl,
+  attrs = { "comment" : attr.string() },
+)
+EOF
+  touch BUILD
+  cat  > WORKSPACE <<'EOF'
+load("//:rule.bzl", "trivial_rule")
+trivial_rule(name = "a", comment = "bootstrap")
+load("@a//:foo.bzl", "it")
+trivial_rule(name = "b", comment = it)
+trivial_rule(name = "c", comment = it)
+load("@c//:foo.bzl", "other")
+trivial_rule(name = "d", comment = other)
+EOF
+
+  bazel clean --expunge
+  bazel sync --experimental_repository_resolved_file=../repo.bzl
+
+  cd ..
+  echo; cat repo.bzl; echo
+  touch WORKSPACE
+  cat > BUILD <<'EOF'
+load("//:repo.bzl", "resolved")
+
+names = [entry["original_attributes"]["name"] for entry in resolved]
+
+[
+  genrule(
+   name = name,
+   outs = [ "%s.txt" % (name,) ],
+   cmd = "echo %s > $@" % (name,),
+  ) for name in names
+]
+EOF
+  bazel build :a :b :c :d || fail "Expected all 4 repositories to be present"
 }
 
 run_suite "workspace_resolved_test tests"

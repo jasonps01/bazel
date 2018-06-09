@@ -36,7 +36,7 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ActionsProvider;
 import com.google.devtools.build.lib.analysis.BaseRuleClasses;
 import com.google.devtools.build.lib.analysis.DefaultInfo;
-import com.google.devtools.build.lib.analysis.OutputGroupInfo;
+import com.google.devtools.build.lib.analysis.TemplateVariableInfo;
 import com.google.devtools.build.lib.analysis.config.ConfigAwareRuleClassBuilder;
 import com.google.devtools.build.lib.analysis.config.HostTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
@@ -51,7 +51,6 @@ import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.AttributeValueSource;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SkylarkImplicitOutputsFunctionWithCallback;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SkylarkImplicitOutputsFunctionWithMap;
-import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.packages.Package.NameConflictException;
 import com.google.devtools.build.lib.packages.PackageFactory;
@@ -73,7 +72,6 @@ import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.packages.TestSize;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkbuildapi.SkylarkRuleFunctionsApi;
-import com.google.devtools.build.lib.skylarkinterface.Param;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkSignature;
 import com.google.devtools.build.lib.syntax.BaseFunction;
@@ -91,6 +89,7 @@ import com.google.devtools.build.lib.syntax.SkylarkType;
 import com.google.devtools.build.lib.syntax.SkylarkUtils;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.syntax.Type.ConversionException;
+import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.Pair;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -123,6 +122,11 @@ public class SkylarkRuleClassFunctions implements SkylarkRuleFunctionsApi<Artifa
               BaseRuleClasses.nameAttribute(
                       new RuleClass.Builder("$base_rule", RuleClassType.ABSTRACT, true))
                   .add(attr("expect_failure", STRING)))
+          // TODO(skylark-team): Allow Skylark rules to extend native rules and remove duplication.
+          .add(
+              attr("toolchains", LABEL_LIST)
+                  .allowedFileTypes(FileTypeSet.NO_FILE)
+                  .mandatoryProviders(ImmutableList.of(TemplateVariableInfo.PROVIDER.id())))
           .build();
 
   /** Parent rule class for executable non-test Skylark rules. */
@@ -179,14 +183,21 @@ public class SkylarkRuleClassFunctions implements SkylarkRuleFunctionsApi<Artifa
                 .value(labelCache.getUnchecked(toolsRepository + "//tools/test:collect_coverage")))
         // Input files for test actions collecting code coverage
         .add(
-            attr("$coverage_support", LABEL)
+            attr(":coverage_support", LABEL)
                 .cfg(HostTransition.INSTANCE)
-                .value(labelCache.getUnchecked("//tools/defaults:coverage_support")))
+                .value(
+                    BaseRuleClasses.coverageSupportAttribute(
+                        labelCache.getUnchecked(
+                            toolsRepository + BaseRuleClasses.DEFAULT_COVERAGE_SUPPORT_VALUE))))
         // Used in the one-per-build coverage report generation action.
         .add(
-            attr("$coverage_report_generator", LABEL)
+            attr(":coverage_report_generator", LABEL)
                 .cfg(HostTransition.INSTANCE)
-                .value(labelCache.getUnchecked("//tools/defaults:coverage_report_generator"))
+                .value(
+                    BaseRuleClasses.coverageReportGeneratorAttribute(
+                        labelCache.getUnchecked(
+                            toolsRepository
+                                + BaseRuleClasses.DEFAULT_COVERAGE_REPORT_GENERATOR_VALUE)))
                 .singleArtifact())
         .add(attr(":run_under", LABEL).cfg(lipoDataTransition).value(RUN_UNDER))
         .build();
@@ -209,19 +220,6 @@ public class SkylarkRuleClassFunctions implements SkylarkRuleFunctionsApi<Artifa
       };
 
   @SkylarkSignature(
-    name = "struct",
-    returnType = Info.class,
-    doc =
-        "Creates an immutable struct using the keyword arguments as attributes. It is used to "
-            + "group multiple values together. Example:<br>"
-            + "<pre class=\"language-python\">s = struct(x = 2, y = 3)\n"
-            + "return s.x + getattr(s, \"y\")  # returns 5</pre>",
-    extraKeywords = @Param(name = "kwargs", doc = "the struct attributes."),
-    useLocation = true
-  )
-  private static final NativeProvider<?> struct = NativeProvider.STRUCT;
-
-  @SkylarkSignature(
     name = "DefaultInfo",
     returnType = Provider.class,
     doc =
@@ -240,9 +238,12 @@ public class SkylarkRuleClassFunctions implements SkylarkRuleFunctionsApi<Artifa
             + "<a href='File.html'><code>File</code></a> objects representing the default outputs "
             + "to build when this target is specified on the blaze command line. By default it is "
             + "all predeclared outputs."
-            + "<li><code>runfiles</code>"
-            + "<li><code>data_runfiles</code>"
-            + "<li><code>default_runfiles</code>"
+            + "<li><code>runfiles</code>: set of files acting as both the "
+            + "<code>data_runfiles</code> and <code>default_runfiles</code>."
+            + "<li><code>data_runfiles</code>: are the files that are added to the runfiles of a "
+            + "target that depends on the rule via the <code>data</code> attribute."
+            + "<li><code>default_runfiles</code>: are the files that are added to the runfiles of "
+            + "a target that depends on the rule via anything but the <code>data</code> attribute."
             + "</ul>"
             + "Each <code>DefaultInfo</code> instance has the following fields: "
             + "<ul>"
@@ -254,19 +255,6 @@ public class SkylarkRuleClassFunctions implements SkylarkRuleFunctionsApi<Artifa
             + "See the <a href='../rules.$DOC_EXT'>rules</a> page for more information."
   )
   private static final NativeProvider<?> defaultInfo = DefaultInfo.PROVIDER;
-
-  @SkylarkSignature(
-    name = "OutputGroupInfo",
-    returnType = Provider.class,
-    doc =
-        "A provider that indicates what output groups a rule has.<br>"
-            + "Instantiate this provider with <br>"
-            + "<pre class=language-python>"
-            + "OutputGroupInfo(group1 = &lt;files&gt;, group2 = &lt;files&gt;...)</pre>"
-            + "See <a href=\"../rules.$DOC_EXT#requesting-output-files\">Requesting output files"
-            + "</a> for more information."
-  )
-  private static final NativeProvider<?> outputGroupInfo = OutputGroupInfo.SKYLARK_CONSTRUCTOR;
 
   // TODO(bazel-team): Move to a "testing" namespace module. Normally we'd pass an objectType
   // to @SkylarkSignature to do this, but that doesn't work here because we're exposing an already-

@@ -302,7 +302,7 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
               String source = sourcePool.get(sourceIndex);
               DataSource dataSource = DataSource.of(Paths.get(source));
 
-              Value resourceValue = resource.getConfigValue(0).getValue();
+              Value resourceValue = configValue.getValue();
 
               DataResource dataResource =
                   resourceValue.getItem().hasFile()
@@ -421,7 +421,7 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
       // The proto stores it in a BCP-47 format, but the parser requires a b+ and all the - as +.
       // It's a nice a little impedance mismatch.
       new LocaleQualifier()
-          .checkAndSet("b+" + protoConfig.getLocale().replaceAll("-", "+"), configuration);
+          .checkAndSet("b+" + protoConfig.getLocale().replace("-", "+"), configuration);
     }
 
     if (LAYOUT_DIRECTION_MAP.containsKey(protoConfig.getLayoutDirection())) {

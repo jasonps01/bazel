@@ -30,14 +30,13 @@ import com.google.devtools.build.lib.analysis.config.InvalidConfigurationExcepti
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.ActionConfig;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.ExpansionException;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.IntegerValue;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.LibraryToLinkValue;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.SequenceBuilder;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.StringSequenceBuilder;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.StructureBuilder;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.VariableValue;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables.VariableValueBuilder;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables.IntegerValue;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables.LibraryToLinkValue;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables.SequenceBuilder;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables.StringSequenceBuilder;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables.StructureBuilder;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables.VariableValue;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables.VariableValueBuilder;
 import com.google.devtools.build.lib.skyframe.serialization.AutoRegistry;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodecs;
 import com.google.devtools.build.lib.skyframe.serialization.testutils.SerializationTester;
@@ -66,7 +65,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
    * <p>If there are multiple entries with the same key, the variable will be treated as sequence
    * type.
    */
-  private Variables createVariables(String... entries) {
+  private CcToolchainVariables createVariables(String... entries) {
     if (entries.length % 2 != 0) {
       throw new IllegalArgumentException(
           "createVariables takes an even number of arguments (key/value pairs)");
@@ -75,7 +74,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     for (int i = 0; i < entries.length; i += 2) {
       entryMap.put(entries[i], entries[i + 1]);
     }
-    Variables.Builder variables = new Variables.Builder();
+    CcToolchainVariables.Builder variables = new CcToolchainVariables.Builder();
     for (String name : entryMap.keySet()) {
       Collection<String> value = entryMap.get(name);
       if (value.size() == 1) {
@@ -226,8 +225,8 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                 "  }",
                 "}")
             .getFeatureConfiguration(ImmutableSet.of("a", "b"));
-    List<String> commandLine = configuration.getCommandLine(
-        CppCompileAction.CPP_COMPILE, createVariables());
+    List<String> commandLine =
+        configuration.getCommandLine(CppActionNames.CPP_COMPILE, createVariables());
     assertThat(commandLine).containsExactly("-a-c++-compile", "-b-c++-compile").inOrder();
   }
 
@@ -286,8 +285,8 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                 "feature { name: 'f' }",
                 "feature { name: 'g' }")
             .getFeatureConfiguration(ImmutableSet.of("a", "b", "d", "f"));
-    Map<String, String> env = configuration.getEnvironmentVariables(
-        CppCompileAction.CPP_COMPILE, createVariables());
+    Map<String, String> env =
+        configuration.getEnvironmentVariables(CppActionNames.CPP_COMPILE, createVariables());
     assertThat(env)
         .containsExactly(
             "foo", "bar", "cat", "meow", "dog", "woof",
@@ -302,7 +301,11 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     return getExpansionOfFlag(value, createVariables());
   }
 
-  private List<String> getCommandLineForFlagGroups(String groups, Variables variables)
+  private String getExpansionOfFlag(String value, CcToolchainVariables variables) throws Exception {
+    return getCommandLineForFlag(value, variables).get(0);
+  }
+
+  private List<String> getCommandLineForFlagGroups(String groups, CcToolchainVariables variables)
       throws Exception {
     FeatureConfiguration configuration =
         buildFeatures(
@@ -314,15 +317,12 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                 "  }",
                 "}")
             .getFeatureConfiguration(ImmutableSet.of("a"));
-    return configuration.getCommandLine(CppCompileAction.CPP_COMPILE, variables);
+    return configuration.getCommandLine(CppActionNames.CPP_COMPILE, variables);
   }
 
-  private List<String> getCommandLineForFlag(String value, Variables variables) throws Exception {
+  private List<String> getCommandLineForFlag(String value, CcToolchainVariables variables)
+      throws Exception {
     return getCommandLineForFlagGroups("flag_group { flag: '" + value + "' }", variables);
-  }
-
-  private String getExpansionOfFlag(String value, Variables variables) throws Exception {
-    return getCommandLineForFlag(value, variables).get(0);
   }
 
   private String getFlagParsingError(String value) throws Exception {
@@ -335,7 +335,8 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     }
   }
 
-  private String getFlagExpansionError(String value, Variables variables) throws Exception {
+  private String getFlagExpansionError(String value, CcToolchainVariables variables)
+      throws Exception {
     try {
       getExpansionOfFlag(value, variables);
       fail("Expected ExpansionException");
@@ -345,7 +346,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     }
   }
 
-  private String getFlagGroupsExpansionError(String flagGroups, Variables variables)
+  private String getFlagGroupsExpansionError(String flagGroups, CcToolchainVariables variables)
       throws Exception {
     try {
       getCommandLineForFlagGroups(flagGroups, variables).get(0);
@@ -371,7 +372,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     assertThat(
             getCommandLineForFlagGroups(
                 "flag_group{ iterate_over: 'v' flag: '%{v}' }",
-                new Variables.Builder()
+                new CcToolchainVariables.Builder()
                     .addStringSequenceVariable("v", ImmutableList.<String>of())
                     .build()))
         .isEmpty();
@@ -384,23 +385,24 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     assertThat(
             getCommandLineForFlagGroups(
                 "flag_group { iterate_over: 'lazy' flag: '-lazy-%{lazy}' }",
-                new Variables.Builder()
+                new CcToolchainVariables.Builder()
                     .addLazyStringSequenceVariable("lazy", () -> ImmutableList.of("a", "b", "c"))
                     .build()))
         .containsExactly("-lazy-a", "-lazy-b", "-lazy-c")
         .inOrder();
   }
 
-  private Variables createStructureSequenceVariables(String name, StructureBuilder... values) {
+  private CcToolchainVariables createStructureSequenceVariables(
+      String name, StructureBuilder... values) {
     SequenceBuilder builder = new SequenceBuilder();
     for (StructureBuilder value : values) {
       builder.addValue(value.build());
     }
-    return new Variables.Builder().addCustomBuiltVariable(name, builder).build();
+    return new CcToolchainVariables.Builder().addCustomBuiltVariable(name, builder).build();
   }
 
-  private Variables createStructureVariables(String name, StructureBuilder value) {
-    return new Variables.Builder().addCustomBuiltVariable(name, value).build();
+  private CcToolchainVariables createStructureVariables(String name, StructureBuilder value) {
+    return new CcToolchainVariables.Builder().addCustomBuiltVariable(name, value).build();
   }
 
   @Test
@@ -521,7 +523,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                     + "    }"
                     + "  }"
                     + "}",
-                new Variables.Builder()
+                new CcToolchainVariables.Builder()
                     .addCustomBuiltVariable(
                         "struct",
                         new StructureBuilder()
@@ -542,7 +544,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                     + "}",
                 createStructureVariables(
                     "struct",
-                    new Variables.StructureBuilder()
+                    new CcToolchainVariables.StructureBuilder()
                         .addField("foo", "fooValue")
                         .addField("bar", "barValue"))))
         .containsExactly("-AfooValue", "-BbarValue");
@@ -559,7 +561,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                     + "}",
                 createStructureVariables(
                     "struct",
-                    new Variables.StructureBuilder()
+                    new CcToolchainVariables.StructureBuilder()
                         .addField("foo", "fooValue")
                         .addField("bar", "barValue"))))
         .isEmpty();
@@ -602,7 +604,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                     + "}",
                 createStructureVariables(
                     "struct",
-                    new Variables.StructureBuilder()
+                    new CcToolchainVariables.StructureBuilder()
                         .addField("foo", "fooValue")
                         .addField("bar", "barValue"))))
         .containsExactly("-AfooValue", "-BbarValue");
@@ -618,7 +620,8 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                     + "  flag: '-B%{struct.bar}'"
                     + "}",
                 createStructureVariables(
-                    "struct", new Variables.StructureBuilder().addField("bar", "barValue"))))
+                    "struct",
+                    new CcToolchainVariables.StructureBuilder().addField("bar", "barValue"))))
         .isEmpty();
   }
 
@@ -636,7 +639,8 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                     + "  }"
                     + "}",
                 createStructureVariables(
-                    "struct", new Variables.StructureBuilder().addField("bar", "barValue"))))
+                    "struct",
+                    new CcToolchainVariables.StructureBuilder().addField("bar", "barValue"))))
         .containsExactly("-BbarValue");
   }
 
@@ -705,7 +709,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                     + "}",
                 createStructureVariables(
                     "struct",
-                    new Variables.StructureBuilder()
+                    new CcToolchainVariables.StructureBuilder()
                         .addField("bool", new IntegerValue(1))
                         .addField("foo", "fooValue")
                         .addField("bar", "barValue"))))
@@ -728,7 +732,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                     + "}",
                 createStructureVariables(
                     "struct",
-                    new Variables.StructureBuilder()
+                    new CcToolchainVariables.StructureBuilder()
                         .addField("bool", new IntegerValue(0))
                         .addField("foo", "fooValue")
                         .addField("bar", "barValue"))))
@@ -841,8 +845,8 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     }
   }
 
-  private Variables createNestedVariables(String name, int depth, int count) {
-    return new Variables.Builder()
+  private CcToolchainVariables createNestedVariables(String name, int depth, int count) {
+    return new CcToolchainVariables.Builder()
         .addCustomBuiltVariable(name, createNestedSequence(depth, count, ""))
         .build();
   }
@@ -1077,7 +1081,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                 "}")
             .getFeatureConfiguration(ImmutableSet.of("a"));
 
-    assertThat(configuration.getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+    assertThat(configuration.getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .containsExactly("unconditional");
   }
 
@@ -1105,8 +1109,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                 "}")
             .getFeatureConfiguration(ImmutableSet.of("a"));
 
-    assertThat(
-            configuration.getCommandLine(CppCompileAction.CPP_COMPILE, createVariables("v", "1")))
+    assertThat(configuration.getCommandLine(CppActionNames.CPP_COMPILE, createVariables("v", "1")))
         .containsExactly("1", "unconditional");
   }
 
@@ -1136,7 +1139,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
 
     assertThat(
             configuration.getCommandLine(
-                CppCompileAction.CPP_COMPILE, createVariables("v", "1", "v", "2")))
+                CppActionNames.CPP_COMPILE, createVariables("v", "1", "v", "2")))
         .containsExactly("1", "2", "unconditional")
         .inOrder();
   }
@@ -1167,7 +1170,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
 
     assertThat(
             configuration.getCommandLine(
-                CppCompileAction.CPP_COMPILE, createVariables("v", "1", "v", "2", "w", "3")))
+                CppActionNames.CPP_COMPILE, createVariables("v", "1", "v", "2", "w", "3")))
         .containsExactly("1", "2", "13", "23", "unconditional")
         .inOrder();
   }
@@ -1190,7 +1193,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("b"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables("v", "1")))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables("v", "1")))
         .containsExactly("-f", "1");
     byte[] serialized = TestUtils.serializeObject(features);
     CcToolchainFeatures deserialized =
@@ -1199,7 +1202,7 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("b"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables("v", "1")))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables("v", "1")))
         .containsExactly("-f", "1");
   }
 
@@ -1236,12 +1239,12 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "b"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .containsExactly("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .doesNotContain("dummy_flag");
   }
 
@@ -1264,17 +1267,17 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "b", "c"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .containsExactly("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "b"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .doesNotContain("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .doesNotContain("dummy_flag");
   }
 
@@ -1300,17 +1303,17 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "b1", "c1", "b2", "c2"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .containsExactly("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "b1", "c1"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .containsExactly("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "b1", "b2"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .doesNotContain("dummy_flag");
   }
 
@@ -1336,27 +1339,27 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .containsExactly("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "q"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .doesNotContain("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "q", "z"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .containsExactly("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "q", "x", "z"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .doesNotContain("dummy_flag");
     assertThat(
             features
                 .getFeatureConfiguration(ImmutableSet.of("a", "q", "x", "y", "z"))
-                .getCommandLine(CppCompileAction.CPP_COMPILE, createVariables()))
+                .getCommandLine(CppActionNames.CPP_COMPILE, createVariables()))
         .doesNotContain("dummy_flag");
   }
 
@@ -1720,7 +1723,8 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
       buildFeatures(
           "artifact_name_pattern {",
           "category_name: 'NONEXISTENT_CATEGORY'",
-          "pattern: 'some_pattern'}");
+          "prefix: 'foo'",
+          "extension: 'bar'}");
       fail("Should throw InvalidConfigurationException.");
     } catch (InvalidConfigurationException e) {
       assertThat(e)
@@ -1736,7 +1740,8 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
           buildFeatures(
               "artifact_name_pattern {",
               "category_name: 'static_library'",
-              "pattern: 'some_pattern'}");
+              "prefix: 'foo'",
+              "extension: '.a'}");
       toolchainFeatures.getArtifactNameForCategory(ArtifactCategory.DYNAMIC_LIBRARY, "output_name");
       fail("Should throw InvalidConfigurationException.");
     } catch (InvalidConfigurationException e) {
@@ -1747,5 +1752,33 @@ public class CcToolchainFeaturesTest extends FoundationTestCase {
                   CcToolchainFeatures.MISSING_ARTIFACT_NAME_PATTERN_ERROR_TEMPLATE,
                   ArtifactCategory.DYNAMIC_LIBRARY.toString().toLowerCase()));
     }
+  }
+
+  @Test
+  public void testGetArtifactNameExtensionForCategory() throws Exception {
+    CcToolchainFeatures toolchainFeatures =
+        buildFeatures(
+            "artifact_name_pattern {",
+            "  category_name: 'object_file'",
+            "  prefix: ''",
+            "  extension: '.obj'",
+            "}",
+            "artifact_name_pattern {",
+            "  category_name: 'executable'",
+            "  prefix: ''",
+            "  extension: ''",
+            "}",
+            "artifact_name_pattern {",
+            "  category_name: 'static_library'",
+            "  prefix: ''",
+            "  extension: '.a'",
+            "}");
+    assertThat(toolchainFeatures.getArtifactNameExtensionForCategory(ArtifactCategory.OBJECT_FILE))
+        .isEqualTo(".obj");
+    assertThat(toolchainFeatures.getArtifactNameExtensionForCategory(ArtifactCategory.EXECUTABLE))
+        .isEmpty();
+    assertThat(
+        toolchainFeatures.getArtifactNameExtensionForCategory(ArtifactCategory.STATIC_LIBRARY))
+        .isEqualTo(".a");
   }
 }

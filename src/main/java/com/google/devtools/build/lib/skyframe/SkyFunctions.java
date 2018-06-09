@@ -27,14 +27,12 @@ public final class SkyFunctions {
       SkyFunctionName.create("CLIENT_ENVIRONMENT_VARIABLE");
   public static final SkyFunctionName ACTION_ENVIRONMENT_VARIABLE =
       SkyFunctionName.create("ACTION_ENVIRONMENT_VARIABLE");
-  public static final SkyFunctionName FILE_STATE = SkyFunctionName.create("FILE_STATE");
   public static final SkyFunctionName DIRECTORY_LISTING_STATE =
       SkyFunctionName.create("DIRECTORY_LISTING_STATE");
   public static final SkyFunctionName FILE_SYMLINK_CYCLE_UNIQUENESS =
       SkyFunctionName.create("FILE_SYMLINK_CYCLE_UNIQUENESS");
   public static final SkyFunctionName FILE_SYMLINK_INFINITE_EXPANSION_UNIQUENESS =
       SkyFunctionName.create("FILE_SYMLINK_INFINITE_EXPANSION_UNIQUENESS");
-  public static final SkyFunctionName FILE = SkyFunctionName.create("FILE");
   public static final SkyFunctionName DIRECTORY_LISTING =
       SkyFunctionName.create("DIRECTORY_LISTING");
   public static final SkyFunctionName PACKAGE_LOOKUP = SkyFunctionName.create("PACKAGE_LOOKUP");
@@ -88,7 +86,6 @@ public final class SkyFunctions {
       SkyFunctionName.create("BUILD_CONFIGURATION");
   public static final SkyFunctionName CONFIGURATION_FRAGMENT =
       SkyFunctionName.create("CONFIGURATION_FRAGMENT");
-  public static final SkyFunctionName ARTIFACT = SkyFunctionName.create("ARTIFACT");
   public static final SkyFunctionName ACTION_EXECUTION = ActionLookupData.NAME;
   public static final SkyFunctionName RECURSIVE_FILESYSTEM_TRAVERSAL =
       SkyFunctionName.create("RECURSIVE_DIRECTORY_TRAVERSAL");
@@ -114,6 +111,8 @@ public final class SkyFunctions {
       SkyFunctionName.create("REGISTERED_TOOLCHAINS");
   public static final SkyFunctionName TOOLCHAIN_RESOLUTION =
       SkyFunctionName.create("TOOLCHAIN_RESOLUTION");
+  public static final SkyFunctionName REPOSITORY_MAPPING =
+      SkyFunctionName.create("REPOSITORY_MAPPING");
 
   public static Predicate<SkyKey> isSkyFunction(final SkyFunctionName functionName) {
     return new Predicate<SkyKey>() {

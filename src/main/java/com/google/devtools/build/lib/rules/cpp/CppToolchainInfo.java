@@ -45,6 +45,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
@@ -76,7 +77,7 @@ public final class CppToolchainInfo {
 
   private final String targetLibc;
   private final String hostSystemName;
-  private final FlagList dynamicLibraryLinkFlags;
+  private final ImmutableList<String> dynamicLibraryLinkFlags;
   private final ImmutableList<String> legacyLinkOptions;
   private final ImmutableListMultimap<LinkingMode, String> legacyLinkOptionsFromLinkingMode;
   private final ImmutableListMultimap<LipoMode, String> legacyLinkOptionsFromLipoMode;
@@ -102,7 +103,7 @@ public final class CppToolchainInfo {
   private final ImmutableListMultimap<LipoMode, String> lipoCFlags;
   private final ImmutableListMultimap<LipoMode, String> lipoCxxFlags;
 
-  private final FlagList unfilteredCompilerFlags;
+  private final ImmutableList<String> unfilteredCompilerFlags;
 
   private final boolean supportsFission;
   private final boolean supportsStartEndLib;
@@ -181,9 +182,7 @@ public final class CppToolchainInfo {
           defaultSysroot,
           toolchain.getTargetLibc(),
           toolchain.getHostSystemName(),
-          new FlagList(
-              ImmutableList.copyOf(toolchain.getDynamicLibraryLinkerFlagList()),
-              ImmutableList.of()),
+          ImmutableList.copyOf(toolchain.getDynamicLibraryLinkerFlagList()),
           ImmutableList.copyOf(toolchain.getLinkerFlagList()),
           linkOptionsFromLinkingModeBuilder.build(),
           computeLinkOptionsFromLipoMode(toolchain),
@@ -210,8 +209,7 @@ public final class CppToolchainInfo {
           cxxFlagsBuilder.build(),
           lipoCFlagsBuilder.build(),
           lipoCxxFlagsBuilder.build(),
-          new FlagList(
-              ImmutableList.copyOf(toolchain.getUnfilteredCxxFlagList()), ImmutableList.of()),
+          ImmutableList.copyOf(toolchain.getUnfilteredCxxFlagList()),
           toolchain.getSupportsFission(),
           toolchain.getSupportsStartEndLib(),
           toolchain.getSupportsEmbeddedRuntimes(),
@@ -241,7 +239,7 @@ public final class CppToolchainInfo {
       PathFragment runtimeSysroot,
       String targetLibc,
       String hostSystemName,
-      FlagList dynamicLibraryLinkFlags,
+      ImmutableList<String> dynamicLibraryLinkFlags,
       ImmutableList<String> legacyLinkOptions,
       ImmutableListMultimap<LinkingMode, String> legacyLinkOptionsFromLinkingMode,
       ImmutableListMultimap<LipoMode, String> legacyLinkOptionsFromLipoMode,
@@ -262,7 +260,7 @@ public final class CppToolchainInfo {
       ImmutableListMultimap<CompilationMode, String> cxxFlagsByCompilationMode,
       ImmutableListMultimap<LipoMode, String> lipoCFlags,
       ImmutableListMultimap<LipoMode, String> lipoCxxFlags,
-      FlagList unfilteredCompilerFlags,
+      ImmutableList<String> unfilteredCompilerFlags,
       boolean supportsFission,
       boolean supportsStartEndLib,
       boolean supportsEmbeddedRuntimes,
@@ -335,7 +333,8 @@ public final class CppToolchainInfo {
     Set<ArtifactCategory> definedCategories = new HashSet<>();
     for (ArtifactNamePattern pattern : toolchainBuilder.getArtifactNamePatternList()) {
       try {
-        definedCategories.add(ArtifactCategory.valueOf(pattern.getCategoryName().toUpperCase()));
+        definedCategories.add(
+            ArtifactCategory.valueOf(pattern.getCategoryName().toUpperCase(Locale.ENGLISH)));
       } catch (IllegalArgumentException e) {
         // Invalid category name, will be detected later.
         continue;
@@ -343,11 +342,13 @@ public final class CppToolchainInfo {
     }
 
     for (ArtifactCategory category : ArtifactCategory.values()) {
-      if (!definedCategories.contains(category) && category.getDefaultPattern() != null) {
+      if (!definedCategories.contains(category) && category.getDefaultPrefix() != null
+          && category.getDefaultExtension() != null) {
         toolchainBuilder.addArtifactNamePattern(
             ArtifactNamePattern.newBuilder()
                 .setCategoryName(category.toString().toLowerCase())
-                .setPattern(category.getDefaultPattern())
+                .setPrefix(category.getDefaultPrefix())
+                .setExtension(category.getDefaultExtension())
                 .build());
       }
     }
@@ -638,11 +639,8 @@ public final class CppToolchainInfo {
    * Returns link options for the specified flag list, combined with universal options for all
    * shared libraries (regardless of link staticness).
    */
-  ImmutableList<String> getSharedLibraryLinkOptions(FlagList flags) {
-    return ImmutableList.<String>builder()
-        .addAll(flags.evaluate())
-        .addAll(dynamicLibraryLinkFlags.evaluate())
-        .build();
+  ImmutableList<String> getSharedLibraryLinkOptions(ImmutableList<String> flags) {
+    return ImmutableList.<String>builder().addAll(flags).addAll(dynamicLibraryLinkFlags).build();
   }
 
   /**
@@ -751,11 +749,11 @@ public final class CppToolchainInfo {
   /** Returns unfiltered compiler options for C++ from this toolchain. */
   public ImmutableList<String> getUnfilteredCompilerOptions(@Nullable PathFragment sysroot) {
     if (sysroot == null) {
-      return unfilteredCompilerFlags.evaluate();
+      return unfilteredCompilerFlags;
     }
     return ImmutableList.<String>builder()
         .add("--sysroot=" + sysroot)
-        .addAll(unfilteredCompilerFlags.evaluate())
+        .addAll(unfilteredCompilerFlags)
         .build();
   }
 

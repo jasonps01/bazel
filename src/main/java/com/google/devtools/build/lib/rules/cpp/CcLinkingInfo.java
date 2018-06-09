@@ -15,86 +15,109 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.NativeInfo;
 import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.skylarkbuildapi.cpp.CcLinkingInfoApi;
+import com.google.devtools.build.lib.syntax.Environment;
+import com.google.devtools.build.lib.syntax.EvalException;
+import com.google.devtools.build.lib.syntax.FunctionSignature;
+import com.google.devtools.build.lib.syntax.SkylarkType;
 
 /** Wrapper for every C++ linking provider. */
 @Immutable
 @AutoCodec
-@SkylarkModule(
-  name = "cc_linking_info",
-  documented = false,
-  category = SkylarkModuleCategory.PROVIDER,
-  doc = "Wrapper for every C++ linking provider"
-)
-public final class CcLinkingInfo extends NativeInfo {
-  public static final NativeProvider<CcLinkingInfo> PROVIDER =
-      new NativeProvider<CcLinkingInfo>(CcLinkingInfo.class, "CcLinkingInfo") {};
+public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi {
 
-  private final CcLinkParamsInfo ccLinkParamsInfo;
-  private final CcRunfilesInfo ccRunfilesInfo;
-  private final CcExecutionDynamicLibrariesInfo ccExecutionDynamicLibrariesInfo;
+  private static final FunctionSignature.WithValues<Object, SkylarkType> SIGNATURE =
+      FunctionSignature.WithValues.create(
+          FunctionSignature.of(
+              /* numMandatoryPositionals= */ 0,
+              /* numOptionalPositionals= */ 0,
+              /* numMandatoryNamedOnly= */ 1,
+              /* starArg= */ false,
+              /* kwArg= */ false,
+              "cc_runfiles"),
+          /* defaultValues= */ ImmutableList.of(),
+          /* types= */ ImmutableList.of(SkylarkType.of(CcRunfiles.class)));
+
+  public static final NativeProvider<CcLinkingInfo> PROVIDER =
+      new NativeProvider<CcLinkingInfo>(CcLinkingInfo.class, "CcLinkingInfo", SIGNATURE) {
+        @Override
+        @SuppressWarnings("unchecked")
+        protected CcLinkingInfo createInstanceFromSkylark(
+            Object[] args, Environment env, Location loc) throws EvalException {
+          CcCommon.checkLocationWhitelisted(loc);
+          CcLinkingInfo.Builder ccLinkingInfoBuilder = CcLinkingInfo.Builder.create();
+          ccLinkingInfoBuilder.setCcRunfiles((CcRunfiles) args[0]);
+          return ccLinkingInfoBuilder.build();
+        }
+      };
+
+  private final CcLinkParamsStore ccLinkParamsStore;
+  private final CcRunfiles ccRunfiles;
+  private final CcExecutionDynamicLibraries ccExecutionDynamicLibraries;
 
   @AutoCodec.Instantiator
   @VisibleForSerialization
   CcLinkingInfo(
-      CcLinkParamsInfo ccLinkParamsInfo,
-      CcRunfilesInfo ccRunfilesInfo,
-      CcExecutionDynamicLibrariesInfo ccExecutionDynamicLibrariesInfo) {
+      CcLinkParamsStore ccLinkParamsStore,
+      CcRunfiles ccRunfiles,
+      CcExecutionDynamicLibraries ccExecutionDynamicLibraries) {
     super(PROVIDER);
-    this.ccLinkParamsInfo = ccLinkParamsInfo;
-    this.ccRunfilesInfo = ccRunfilesInfo;
-    this.ccExecutionDynamicLibrariesInfo = ccExecutionDynamicLibrariesInfo;
+    this.ccLinkParamsStore = ccLinkParamsStore;
+    this.ccRunfiles = ccRunfiles;
+    this.ccExecutionDynamicLibraries = ccExecutionDynamicLibraries;
   }
 
-  public CcLinkParamsInfo getCcLinkParamsInfo() {
-    return ccLinkParamsInfo;
+  public CcLinkParamsStore getCcLinkParamsStore() {
+    return ccLinkParamsStore;
   }
 
-  public CcRunfilesInfo getCcRunfilesInfo() {
-    return ccRunfilesInfo;
+  @Override
+  public CcRunfiles getCcRunfiles() {
+    return ccRunfiles;
   }
 
-  public CcExecutionDynamicLibrariesInfo getCcExecutionDynamicLibrariesInfo() {
-    return ccExecutionDynamicLibrariesInfo;
+  public CcExecutionDynamicLibraries getCcExecutionDynamicLibraries() {
+    return ccExecutionDynamicLibraries;
   }
 
   /** A Builder for {@link CcLinkingInfo}. */
   public static class Builder {
-    CcLinkParamsInfo ccLinkParamsInfo;
-    CcRunfilesInfo ccRunfilesInfo;
-    CcExecutionDynamicLibrariesInfo ccExecutionDynamicLibrariesInfo;
+    CcLinkParamsStore ccLinkParamsStore;
+    CcRunfiles ccRunfiles;
+    CcExecutionDynamicLibraries ccExecutionDynamicLibraries;
 
     public static CcLinkingInfo.Builder create() {
       return new CcLinkingInfo.Builder();
     }
 
-    public Builder setCcLinkParamsInfo(CcLinkParamsInfo ccLinkParamsInfo) {
-      Preconditions.checkState(this.ccLinkParamsInfo == null);
-      this.ccLinkParamsInfo = ccLinkParamsInfo;
+    public Builder setCcLinkParamsStore(CcLinkParamsStore ccLinkParamsStore) {
+      Preconditions.checkState(this.ccLinkParamsStore == null);
+      this.ccLinkParamsStore = ccLinkParamsStore;
       return this;
     }
 
-    public Builder setCcRunfilesInfo(CcRunfilesInfo ccRunfilesInfo) {
-      Preconditions.checkState(this.ccRunfilesInfo == null);
-      this.ccRunfilesInfo = ccRunfilesInfo;
+    public Builder setCcRunfiles(CcRunfiles ccRunfiles) {
+      Preconditions.checkState(this.ccRunfiles == null);
+      this.ccRunfiles = ccRunfiles;
       return this;
     }
 
-    public Builder setCcExecutionDynamicLibrariesInfo(
-        CcExecutionDynamicLibrariesInfo ccExecutionDynamicLibrariesInfo) {
-      Preconditions.checkState(this.ccExecutionDynamicLibrariesInfo == null);
-      this.ccExecutionDynamicLibrariesInfo = ccExecutionDynamicLibrariesInfo;
+    public Builder setCcExecutionDynamicLibraries(
+        CcExecutionDynamicLibraries ccExecutionDynamicLibraries) {
+      Preconditions.checkState(this.ccExecutionDynamicLibraries == null);
+      this.ccExecutionDynamicLibraries = ccExecutionDynamicLibraries;
       return this;
     }
 
     public CcLinkingInfo build() {
-      return new CcLinkingInfo(ccLinkParamsInfo, ccRunfilesInfo, ccExecutionDynamicLibrariesInfo);
+      return new CcLinkingInfo(ccLinkParamsStore, ccRunfiles, ccExecutionDynamicLibraries);
     }
   }
 }

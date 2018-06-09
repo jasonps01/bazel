@@ -30,7 +30,7 @@ LIBRARY_JARS="${LIBRARY_JARS} ${GRPC_LIBRARY_JARS} ${GUAVA_JARS}"
 #
 # Please read the comment in third_party/BUILD for more details.
 LIBRARY_JARS_ARRAY=($LIBRARY_JARS)
-for i in $(seq 0 $((${#LIBRARY_JARS_ARRAY[@]} - 1)))
+for i in $(eval echo {0..$((${#LIBRARY_JARS_ARRAY[@]} - 1))})
 do
   [[ "${LIBRARY_JARS_ARRAY[$i]}" =~ ^"third_party/error_prone/error_prone_core-".*\.jar$ ]] && ERROR_PRONE_INDEX=$i
   [[ "${LIBRARY_JARS_ARRAY[$i]}" =~ ^"third_party/guava/guava-".*\.jar$ ]] && GUAVA_INDEX=$i
@@ -349,6 +349,7 @@ function run_bazel_jar() {
       --output_base=${OUTPUT_DIR}/out \
       --output_user_root=${OUTPUT_DIR}/user_root \
       --install_md5= \
+      --default_system_javabase="${JAVA_HOME}" \
       --workspace_directory="$(get_cwd)" \
       --nofatal_event_bus_exceptions \
       ${BAZEL_DIR_STARTUP_OPTIONS} \

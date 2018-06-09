@@ -20,78 +20,92 @@ import com.google.devtools.build.lib.analysis.AnalysisUtils;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.NativeInfo;
 import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec.VisibleForSerialization;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.skylarkbuildapi.cpp.CcCompilationInfoApi;
+import com.google.devtools.build.lib.syntax.Environment;
+import com.google.devtools.build.lib.syntax.EvalException;
+import com.google.devtools.build.lib.syntax.FunctionSignature;
+import com.google.devtools.build.lib.syntax.SkylarkType;
 
 /** Wrapper for every C++ compilation provider. */
 @Immutable
 @AutoCodec
-@SkylarkModule(
-  name = "cc_compilation_info",
-  documented = false,
-  category = SkylarkModuleCategory.PROVIDER,
-  doc = "Wrapper for every C++ compilation provider"
-)
-public final class CcCompilationInfo extends NativeInfo {
-  public static final NativeProvider<CcCompilationInfo> PROVIDER =
-      new NativeProvider<CcCompilationInfo>(CcCompilationInfo.class, "CcCompilationInfo") {};
+public final class CcCompilationInfo extends NativeInfo implements CcCompilationInfoApi {
+  private static final FunctionSignature.WithValues<Object, SkylarkType> SIGNATURE =
+      FunctionSignature.WithValues.create(
+          FunctionSignature.of(
+              /* numMandatoryPositionals= */ 0,
+              /* numOptionalPositionals= */ 0,
+              /* numMandatoryNamedOnly= */ 1,
+              /* starArg= */ false,
+              /* kwArg= */ false,
+              "cc_compilation_info"),
+          /* defaultValues= */ ImmutableList.of(),
+          /* types= */ ImmutableList.of(SkylarkType.of(CcCompilationContext.class)));
 
-  private final CcCompilationContextInfo ccCompilationContextInfo;
+  public static final NativeProvider<CcCompilationInfo> PROVIDER =
+      new NativeProvider<CcCompilationInfo>(
+          CcCompilationInfo.class, "CcCompilationInfo", SIGNATURE) {
+        @Override
+        @SuppressWarnings("unchecked")
+        protected CcCompilationInfo createInstanceFromSkylark(
+            Object[] args, Environment env, Location loc) throws EvalException {
+          CcCommon.checkLocationWhitelisted(loc);
+          CcCompilationInfo.Builder ccCompilationInfoBuilder = CcCompilationInfo.Builder.create();
+          ccCompilationInfoBuilder.setCcCompilationContext(
+              ((CcCompilationInfo) args[0]).getCcCompilationContext());
+          return ccCompilationInfoBuilder.build();
+        }
+      };
+
+  private final CcCompilationContext ccCompilationContext;
 
   @AutoCodec.Instantiator
   @VisibleForSerialization
-  CcCompilationInfo(CcCompilationContextInfo ccCompilationContextInfo) {
+  CcCompilationInfo(CcCompilationContext ccCompilationContext) {
     super(PROVIDER);
-    this.ccCompilationContextInfo = ccCompilationContextInfo;
+    this.ccCompilationContext = ccCompilationContext;
   }
 
-  @SkylarkCallable(
-    name = "cc_compilation_context_info",
-    structField = true,
-    allowReturnNones = true,
-    doc = "Returns compilation information for this C++ target."
-  )
-  public CcCompilationContextInfo getCcCompilationContextInfo() {
-    return ccCompilationContextInfo;
+  public CcCompilationContext getCcCompilationContext() {
+    return ccCompilationContext;
   }
 
   /** A Builder for {@link CcCompilationInfo}. */
   public static class Builder {
-    CcCompilationContextInfo ccCompilationContextInfo;
+    CcCompilationContext ccCompilationContext;
 
     public static CcCompilationInfo.Builder create() {
       return new CcCompilationInfo.Builder();
     }
 
-    public <P extends TransitiveInfoProvider> Builder setCcCompilationContextInfo(
-        CcCompilationContextInfo ccCompilationContextInfo) {
-      Preconditions.checkState(this.ccCompilationContextInfo == null);
-      this.ccCompilationContextInfo = ccCompilationContextInfo;
+    public <P extends TransitiveInfoProvider> Builder setCcCompilationContext(
+        CcCompilationContext ccCompilationContext) {
+      Preconditions.checkState(this.ccCompilationContext == null);
+      this.ccCompilationContext = ccCompilationContext;
       return this;
     }
 
     public CcCompilationInfo build() {
-      return new CcCompilationInfo(ccCompilationContextInfo);
+      return new CcCompilationInfo(ccCompilationContext);
     }
   }
 
-  public static ImmutableList<CcCompilationContextInfo> getCcCompilationContextInfos(
+  public static ImmutableList<CcCompilationContext> getCcCompilationContexts(
       Iterable<? extends TransitiveInfoCollection> deps) {
-    ImmutableList.Builder<CcCompilationContextInfo> ccCompilationContextInfosBuilder =
+    ImmutableList.Builder<CcCompilationContext> ccCompilationContextsBuilder =
         ImmutableList.builder();
     for (CcCompilationInfo ccCompilationInfo :
         AnalysisUtils.getProviders(deps, CcCompilationInfo.PROVIDER)) {
-      CcCompilationContextInfo ccCompilationContextInfo =
-          ccCompilationInfo.getCcCompilationContextInfo();
-      if (ccCompilationContextInfo != null) {
-        ccCompilationContextInfosBuilder.add(ccCompilationContextInfo);
+      CcCompilationContext ccCompilationContext = ccCompilationInfo.getCcCompilationContext();
+      if (ccCompilationContext != null) {
+        ccCompilationContextsBuilder.add(ccCompilationContext);
       }
     }
-    return ccCompilationContextInfosBuilder.build();
+    return ccCompilationContextsBuilder.build();
   }
 }

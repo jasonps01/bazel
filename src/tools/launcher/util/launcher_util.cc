@@ -23,7 +23,7 @@
 #include <sstream>
 #include <string>
 
-#include "src/main/cpp/util/file_platform.h"
+#include "src/main/cpp/util/path_platform.h"
 #include "src/tools/launcher/util/launcher_util.h"
 
 namespace bazel {
@@ -98,6 +98,10 @@ bool DoesDirectoryPathExist(const char* path) {
 
 bool DeleteFileByPath(const char* path) {
   return DeleteFileW(AsAbsoluteWindowsPath(path).c_str());
+}
+
+bool DeleteDirectoryByPath(const char* path) {
+  return RemoveDirectoryW(AsAbsoluteWindowsPath(path).c_str());
 }
 
 string GetBinaryPathWithoutExtension(const string& binary) {
@@ -182,6 +186,14 @@ bool NormalizePath(const string& path, string* result) {
   }
   std::transform(result->begin(), result->end(), result->begin(), ::tolower);
   return true;
+}
+
+string GetBaseNameFromPath(const string& path) {
+  return path.substr(path.find_last_of("\\/") + 1);
+}
+
+string GetParentDirFromPath(const string& path) {
+  return path.substr(0, path.find_last_of("\\/"));
 }
 
 bool RelativeTo(const string& path, const string& base, string* result) {

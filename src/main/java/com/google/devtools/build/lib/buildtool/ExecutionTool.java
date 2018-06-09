@@ -25,7 +25,6 @@ import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionCacheChecker;
 import com.google.devtools.build.lib.actions.ActionGraph;
-import com.google.devtools.build.lib.actions.ActionInputFileCache;
 import com.google.devtools.build.lib.actions.ActionInputPrefetcher;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactFactory;
@@ -34,6 +33,7 @@ import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.ExecutorInitException;
 import com.google.devtools.build.lib.actions.LocalHostCapacity;
+import com.google.devtools.build.lib.actions.MetadataProvider;
 import com.google.devtools.build.lib.actions.PackageRoots;
 import com.google.devtools.build.lib.actions.ResourceManager;
 import com.google.devtools.build.lib.actions.ResourceSet;
@@ -74,6 +74,7 @@ import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.skyframe.AspectValue;
 import com.google.devtools.build.lib.skyframe.AspectValue.AspectKey;
 import com.google.devtools.build.lib.skyframe.Builder;
+import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.OutputService;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.util.AbruptExitException;
@@ -116,7 +117,7 @@ public class ExecutionTool {
   private final BlazeRuntime runtime;
   private final BuildRequest request;
   private BlazeExecutor executor;
-  private final ActionInputFileCache fileCache;
+  private final MetadataProvider fileCache;
   private final ActionInputPrefetcher prefetcher;
   private final ImmutableList<ActionContextProvider> actionContextProviders;
   private SpawnActionContextMaps spawnActionContextMaps;
@@ -289,7 +290,7 @@ public class ExecutionTool {
         installExplanationHandler(request.getBuildOptions().explanationPath,
                                   request.getOptionsDescription());
 
-    Set<ConfiguredTarget> builtTargets = new HashSet<>();
+    Set<ConfiguredTargetKey> builtTargets = new HashSet<>();
     Set<AspectKey> builtAspects = new HashSet<>();
     Collection<AspectValue> aspects = analysisResult.getAspects();
 
@@ -536,12 +537,12 @@ public class ExecutionTool {
    * @param configuredTargets The configured targets whose artifacts are to be built.
    */
   private Collection<ConfiguredTarget> determineSuccessfulTargets(
-      Collection<ConfiguredTarget> configuredTargets, Set<ConfiguredTarget> builtTargets) {
+      Collection<ConfiguredTarget> configuredTargets, Set<ConfiguredTargetKey> builtTargets) {
     // Maintain the ordering by copying builtTargets into a LinkedHashSet in the same iteration
     // order as configuredTargets.
     Collection<ConfiguredTarget> successfulTargets = new LinkedHashSet<>();
     for (ConfiguredTarget target : configuredTargets) {
-      if (builtTargets.contains(target)) {
+      if (builtTargets.contains(ConfiguredTargetKey.inTargetConfig(target))) {
         successfulTargets.add(target);
       }
     }

@@ -27,13 +27,13 @@ import com.google.common.collect.Iterables;
 import com.google.common.io.ByteSource;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
+import com.google.devtools.build.lib.actions.FileValue;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
-import com.google.devtools.build.lib.skyframe.FileValue;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
@@ -116,12 +116,12 @@ import java.util.zip.ZipFile;
  *       .gcda files are added, too.
  * </ul>
  *
- * <p>If we do LIPO, the actual {@code CcCompilationContextInfo} for LIPO compilation actions is
- * pieced together from the {@code CcCompilationContextInfo} in LipoContextProvider and that of the
- * rule being compiled. (see {@link CcCompilationContextInfo#mergeForLipo}) This is so that the
- * include files for the extra LIPO sources are found and is, strictly speaking, incorrect, since it
- * also changes the declared include directories of the main source file, which in theory can result
- * in the compilation passing even though it should fail with undeclared inclusion errors.
+ * <p>If we do LIPO, the actual {@code CcCompilationContext} for LIPO compilation actions is pieced
+ * together from the {@code CcCompilationContext} in LipoContextProvider and that of the rule being
+ * compiled. (see {@link CcCompilationContext#mergeForLipo}) This is so that the include files for
+ * the extra LIPO sources are found and is, strictly speaking, incorrect, since it also changes the
+ * declared include directories of the main source file, which in theory can result in the
+ * compilation passing even though it should fail with undeclared inclusion errors.
  *
  * <p>During the actual execution of the C++ compile action, the extra sources also need to be
  * include scanned, which is the reason why they are {@link IncludeScannable} objects and not simple
@@ -151,6 +151,9 @@ public class FdoSupport {
 
     /** FDO based on automatically collected data. */
     AUTO_FDO,
+
+    /** FDO based on cross binary collected data. */
+    XBINARY_FDO,
 
     /** Instrumentation-based FDO implemented on LLVM. */
     LLVM_FDO,
@@ -371,7 +374,7 @@ public class FdoSupport {
       FileSystemUtils.deleteTreesBelow(fdoDirPath);
       FileSystemUtils.createDirectoryAndParents(fdoDirPath);
 
-      if (fdoMode == FdoMode.AUTO_FDO) {
+      if (fdoMode == FdoMode.AUTO_FDO || fdoMode == FdoMode.XBINARY_FDO) {
         if (lipoMode != LipoMode.OFF) {
           imports = readAutoFdoImports(getAutoFdoImportsPath(fdoProfile));
         }
@@ -605,12 +608,19 @@ public class FdoSupport {
       FeatureConfiguration featureConfiguration,
       FdoSupportProvider fdoSupportProvider) {
 
+    ImmutableMap.Builder<String, String> variablesBuilder = ImmutableMap.builder();
+
+    if ((fdoSupportProvider != null)
+        && (fdoSupportProvider.getPrefetchHintsArtifact() != null)) {
+      variablesBuilder.put(
+          CompileBuildVariables.FDO_PREFETCH_HINTS_PATH.getVariableName(),
+          fdoSupportProvider.getPrefetchHintsArtifact().getExecPathString());
+    }
+
     // FDO is disabled -> do nothing.
     if ((fdoInstrument == null) && (fdoRoot == null)) {
       return ImmutableMap.of();
     }
-
-    ImmutableMap.Builder<String, String> variablesBuilder = ImmutableMap.builder();
 
     if (featureConfiguration.isEnabled(CppRuleClasses.FDO_INSTRUMENT)) {
       variablesBuilder.put(
@@ -629,7 +639,8 @@ public class FdoSupport {
               ruleContext, sourceName, sourceExecPath, outputName, usePic, fdoSupportProvider);
       builder.addMandatoryInputs(auxiliaryInputs);
       if (!Iterables.isEmpty(auxiliaryInputs)) {
-        if (featureConfiguration.isEnabled(CppRuleClasses.AUTOFDO)) {
+        if (featureConfiguration.isEnabled(CppRuleClasses.AUTOFDO)
+            || featureConfiguration.isEnabled(CppRuleClasses.XBINARYFDO)) {
           variablesBuilder.put(
               CompileBuildVariables.FDO_PROFILE_PATH.getVariableName(),
               getAutoProfilePath(fdoProfile, fdoRootExecPath).getPathString());
@@ -663,19 +674,23 @@ public class FdoSupport {
     LipoContextProvider lipoContextProvider =
         toolchain.isLLVMCompiler() ? null : CppHelper.getLipoContextProvider(ruleContext);
 
+    ImmutableSet.Builder<Artifact> auxiliaryInputs = ImmutableSet.builder();
+
+    if (fdoSupportProvider.getPrefetchHintsArtifact() != null) {
+      auxiliaryInputs.add(fdoSupportProvider.getPrefetchHintsArtifact());
+    }
     // If --fdo_optimize was not specified, we don't have any additional inputs.
     if (fdoProfile == null) {
-      return ImmutableSet.of();
-    } else if (fdoMode == FdoMode.LLVM_FDO || fdoMode == FdoMode.AUTO_FDO) {
-      ImmutableSet.Builder<Artifact> auxiliaryInputs = ImmutableSet.builder();
+      return auxiliaryInputs.build();
+    } else if (fdoMode == FdoMode.LLVM_FDO
+        || fdoMode == FdoMode.AUTO_FDO
+        || fdoMode == FdoMode.XBINARY_FDO) {
       auxiliaryInputs.add(fdoSupportProvider.getProfileArtifact());
       if (lipoContextProvider != null) {
         auxiliaryInputs.addAll(getAutoFdoImports(ruleContext, sourceExecPath, lipoContextProvider));
       }
       return auxiliaryInputs.build();
     } else {
-      ImmutableSet.Builder<Artifact> auxiliaryInputs = ImmutableSet.builder();
-
       PathFragment objectName =
           FileSystemUtils.appendExtension(outputName, usePic ? ".pic.o" : ".o");
 
@@ -786,34 +801,46 @@ public class FdoSupport {
     return fdoMode == FdoMode.AUTO_FDO;
   }
 
+  /** Returns whether crossbinary FDO is enabled. */
+  @ThreadSafe
+  public boolean isXBinaryFdoEnabled() {
+    return fdoMode == FdoMode.XBINARY_FDO;
+  }
+
   /**
-   * Adds the FDO profile output path to the variable builder.
-   * If FDO is disabled, no build variable is added.
+   * Adds the FDO profile output path to the variable builder. If FDO is disabled, no build variable
+   * is added.
    */
   @ThreadSafe
-  public void getLinkOptions(FeatureConfiguration featureConfiguration,
-      CcToolchainFeatures.Variables.Builder buildVariables
-      ) {
+  public void getLinkOptions(
+      FeatureConfiguration featureConfiguration, CcToolchainVariables.Builder buildVariables) {
     if (featureConfiguration.isEnabled(CppRuleClasses.FDO_INSTRUMENT)) {
       buildVariables.addStringVariable("fdo_instrument_path", fdoInstrument);
     }
   }
 
   /**
-   * Adds the AutoFDO profile path to the variable builder and returns the profile artifact.
-   * If AutoFDO is disabled, no build variable is added and returns null.
+   * Adds the AutoFDO profile path to the variable builder and returns the profile artifact. If
+   * AutoFDO is disabled, no build variable is added and returns null.
    */
   @ThreadSafe
-  public Artifact buildProfileForLtoBackend(FdoSupportProvider fdoSupportProvider,
+  public ProfileArtifacts buildProfileForLtoBackend(
+      FdoSupportProvider fdoSupportProvider,
       FeatureConfiguration featureConfiguration,
-      CcToolchainFeatures.Variables.Builder buildVariables, RuleContext ruleContext) {
-    if (!featureConfiguration.isEnabled(CppRuleClasses.AUTOFDO)) {
-      return null;
+      CcToolchainVariables.Builder buildVariables,
+      RuleContext ruleContext) {
+    Artifact prefetch = fdoSupportProvider.getPrefetchHintsArtifact();
+    if (prefetch != null) {
+      buildVariables.addStringVariable("fdo_prefetch_hints_path", prefetch.getExecPathString());
+    }
+    if (!featureConfiguration.isEnabled(CppRuleClasses.AUTOFDO)
+        && !featureConfiguration.isEnabled(CppRuleClasses.XBINARYFDO)) {
+      return new ProfileArtifacts(null, prefetch);
     }
 
     Artifact profile = fdoSupportProvider.getProfileArtifact();
     buildVariables.addStringVariable("fdo_profile_path", profile.getExecPathString());
-    return profile;
+    return new ProfileArtifacts(profile, prefetch);
   }
 
   /**
@@ -826,20 +853,20 @@ public class FdoSupport {
   }
 
   public FdoSupportProvider createFdoSupportProvider(
-      RuleContext ruleContext, Artifact profileArtifact) {
+      RuleContext ruleContext, ProfileArtifacts profiles) {
     if (fdoRoot == null) {
-      return new FdoSupportProvider(this, null, null);
+      return new FdoSupportProvider(this, profiles, null);
     }
 
     if (fdoMode == FdoMode.LLVM_FDO) {
-      Preconditions.checkState(profileArtifact != null);
-      return new FdoSupportProvider(this, profileArtifact, null);
+      Preconditions.checkState(profiles != null && profiles.getProfileArtifact() != null);
+      return new FdoSupportProvider(this, profiles, null);
     }
 
     Preconditions.checkState(fdoPath != null);
     PathFragment profileRootRelativePath = getAutoProfileRootRelativePath(fdoProfile);
 
-    profileArtifact =
+    Artifact profileArtifact =
         ruleContext
             .getAnalysisEnvironment()
             .getDerivedArtifact(fdoPath.getRelative(profileRootRelativePath), fdoRoot);
@@ -853,7 +880,11 @@ public class FdoSupport {
       gcdaArtifacts.put(path, gcdaArtifact);
     }
 
-    return new FdoSupportProvider(this, profileArtifact, gcdaArtifacts.build());
+    return new FdoSupportProvider(
+        this,
+        new ProfileArtifacts(
+            profileArtifact, profiles == null ? null : profiles.getPrefetchHintsArtifact()),
+        gcdaArtifacts.build());
   }
 
   /**

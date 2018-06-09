@@ -23,12 +23,9 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.Info;
-import com.google.devtools.build.lib.packages.NativeProvider;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.packages.StructProvider;
+import com.google.devtools.build.lib.skylarkbuildapi.SkylarkAttributesCollectionApi;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.Environment;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.Runtime;
@@ -41,12 +38,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-@SkylarkModule(
-  name = "rule_attributes",
-  category = SkylarkModuleCategory.NONE,
-  doc = "Information about attributes of a rule an aspect is applied to."
-)
-class SkylarkAttributesCollection implements SkylarkValue {
+/** Information about attributes of a rule an aspect is applied to. */
+class SkylarkAttributesCollection implements SkylarkAttributesCollectionApi {
   private final SkylarkRuleContext skylarkRuleContext;
   private final Info attrObject;
   private final Info executableObject;
@@ -66,21 +59,21 @@ class SkylarkAttributesCollection implements SkylarkValue {
     this.skylarkRuleContext = skylarkRuleContext;
     this.ruleClassName = ruleClassName;
     attrObject =
-        NativeProvider.STRUCT.create(
+        StructProvider.STRUCT.create(
             attrs,
             "No attribute '%s' in attr. Make sure you declared a rule attribute with this name.");
     executableObject =
-        NativeProvider.STRUCT.create(
+        StructProvider.STRUCT.create(
             executables,
             "No attribute '%s' in executable. Make sure there is a label type attribute marked "
                 + "as 'executable' with this name");
     fileObject =
-        NativeProvider.STRUCT.create(
+        StructProvider.STRUCT.create(
             singleFiles,
             "No attribute '%s' in file. Make sure there is a label type attribute marked "
                 + "as 'single_file' with this name");
     filesObject =
-        NativeProvider.STRUCT.create(
+        StructProvider.STRUCT.create(
             files,
             "No attribute '%s' in files. Make sure there is a label or label_list type attribute "
                 + "with this name");
@@ -91,35 +84,31 @@ class SkylarkAttributesCollection implements SkylarkValue {
     skylarkRuleContext.checkMutable("rule." + attrName);
   }
 
-  @SkylarkCallable(name = "attr", structField = true, doc = SkylarkRuleContext.ATTR_DOC)
+  @Override
   public Info getAttr() throws EvalException {
     checkMutable("attr");
     return attrObject;
   }
 
-  @SkylarkCallable(name = "executable", structField = true, doc = SkylarkRuleContext.EXECUTABLE_DOC)
+  @Override
   public Info getExecutable() throws EvalException {
     checkMutable("executable");
     return executableObject;
   }
 
-  @SkylarkCallable(name = "file", structField = true, doc = SkylarkRuleContext.FILE_DOC)
+  @Override
   public Info getFile() throws EvalException {
     checkMutable("file");
     return fileObject;
   }
 
-  @SkylarkCallable(name = "files", structField = true, doc = SkylarkRuleContext.FILES_DOC)
+  @Override
   public Info getFiles() throws EvalException {
     checkMutable("files");
     return filesObject;
   }
 
-  @SkylarkCallable(
-    name = "kind",
-    structField = true,
-    doc = "The kind of a rule, such as 'cc_library'"
-  )
+  @Override
   public String getRuleClassName() throws EvalException {
     checkMutable("kind");
     return ruleClassName;

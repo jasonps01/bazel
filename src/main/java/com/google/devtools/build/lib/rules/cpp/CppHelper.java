@@ -60,7 +60,6 @@ import com.google.devtools.build.lib.packages.RuleErrorConsumer;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams.Linkstamp;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Tool;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.shell.ShellUtils;
@@ -106,35 +105,6 @@ public class CppHelper {
 
   private CppHelper() {
     // prevents construction
-  }
-
-  /**
-   * Merges the STL and toolchain contexts into context builder. The STL is automatically determined
-   * using the ":stl" attribute.
-   */
-  public static void mergeToolchainDependentCcCompilationContextInfo(
-      RuleContext ruleContext,
-      CcToolchainProvider toolchain,
-      CcCompilationContextInfo.Builder ccCompilationContextInfoBuilder) {
-    if (ruleContext.getRule().getAttributeDefinition(":stl") != null) {
-      TransitiveInfoCollection stl = ruleContext.getPrerequisite(":stl", Mode.TARGET);
-      if (stl != null) {
-        CcCompilationInfo ccCompilationInfo = stl.get(CcCompilationInfo.PROVIDER);
-        CcCompilationContextInfo ccCompilationContextInfo =
-            ccCompilationInfo != null ? ccCompilationInfo.getCcCompilationContextInfo() : null;
-        if (ccCompilationContextInfo == null) {
-          ruleContext.ruleError(
-              "Unable to merge the STL '" + stl.getLabel() + "' and toolchain contexts");
-          return;
-        }
-        ccCompilationContextInfoBuilder.mergeDependentCcCompilationContextInfo(
-            ccCompilationContextInfo);
-      }
-    }
-    if (toolchain != null) {
-      ccCompilationContextInfoBuilder.mergeDependentCcCompilationContextInfo(
-          toolchain.getCcCompilationContextInfo());
-    }
   }
 
   /**
@@ -230,7 +200,8 @@ public class CppHelper {
     List<String> result = new ArrayList<>();
     Expander expander = ruleContext.getExpander().withDataExecLocations();
     for (String value : values) {
-      if (isLinkoptLabel(value)) {
+      if (ruleContext.getFragment(CppConfiguration.class).getExpandLinkoptsLabels()
+          && isLinkoptLabel(value)) {
         if (!expandLabel(ruleContext, result, value)) {
           ruleContext.attributeError(attrName, "could not resolve label '" + value + "'");
         }
@@ -254,17 +225,14 @@ public class CppHelper {
    * @param sharedLib true if the output is a shared lib, false if it's an executable
    */
   public static ImmutableList<String> getFullyStaticLinkOptions(
-      CppConfiguration config,
-      CcToolchainProvider toolchain,
-      Boolean sharedLib) {
+      CppConfiguration config, CcToolchainProvider toolchain, boolean sharedLib) {
     if (sharedLib) {
       return toolchain.getSharedLibraryLinkOptions(
           toolchain.getLegacyMostlyStaticLinkFlags(
               config.getCompilationMode(), config.getLipoMode()));
     } else {
-      return toolchain
-          .getLegacyFullyStaticLinkFlags(config.getCompilationMode(), config.getLipoMode())
-          .evaluate();
+      return toolchain.getLegacyFullyStaticLinkFlags(
+          config.getCompilationMode(), config.getLipoMode());
     }
   }
 
@@ -289,9 +257,8 @@ public class CppHelper {
               : toolchain.getLegacyDynamicLinkFlags(
                   config.getCompilationMode(), config.getLipoMode()));
     } else {
-      return toolchain
-          .getLegacyMostlyStaticLinkFlags(config.getCompilationMode(), config.getLipoMode())
-          .evaluate();
+      return toolchain.getLegacyMostlyStaticLinkFlags(
+          config.getCompilationMode(), config.getLipoMode());
     }
   }
 
@@ -311,9 +278,7 @@ public class CppHelper {
       return toolchain.getSharedLibraryLinkOptions(
           toolchain.getLegacyDynamicLinkFlags(config.getCompilationMode(), config.getLipoMode()));
     } else {
-      return toolchain
-          .getLegacyDynamicLinkFlags(config.getCompilationMode(), config.getLipoMode())
-          .evaluate();
+      return toolchain.getLegacyDynamicLinkFlags(config.getCompilationMode(), config.getLipoMode());
     }
   }
 
@@ -625,18 +590,49 @@ public class CppHelper {
   }
 
   /**
-   * Returns the linked artifact for linux.
+   * Returns the linked artifact.
    *
    * @param ruleContext the ruleContext to be used to scope the artifact
    * @param config the configuration to be used to scope the artifact
    * @param linkType the type of artifact, used to determine extension
    */
-  public static Artifact getLinuxLinkedArtifact(
-      RuleContext ruleContext, BuildConfiguration config, LinkTargetType linkType) {
-    return getLinuxLinkedArtifact(ruleContext, config, linkType, "");
+  public static Artifact getLinkedArtifact(
+      RuleContext ruleContext,
+      CcToolchainProvider ccToolchain,
+      BuildConfiguration config,
+      LinkTargetType linkType)
+      throws RuleErrorException {
+    return getLinkedArtifact(
+      ruleContext, ccToolchain, config, linkType, /* linkedArtifactNameSuffix= */ "");
   }
 
-  /** Returns the linked artifact with the given suffix for linux. */
+  /** Returns the linked artifact with the given suffix. */
+  public static Artifact getLinkedArtifact(
+      RuleContext ruleContext,
+      CcToolchainProvider ccToolchain,
+      BuildConfiguration config,
+      LinkTargetType linkType,
+      String linkedArtifactNameSuffix)
+      throws RuleErrorException {
+    PathFragment name = PathFragment.create(ruleContext.getLabel().getName());
+    try {
+      name =
+          name.replaceName(
+              getArtifactNameForCategory(
+                  ruleContext,
+                  ccToolchain,
+                  linkType.getLinkerOutput(),
+                  name.getBaseName()
+                      + linkedArtifactNameSuffix
+                      + linkType.getPicExtensionWhenApplicable()));
+    } catch (RuleErrorException e) {
+      ruleContext.throwWithRuleError("Cannot get linked artifact name: " + e.getMessage());
+    }
+
+    return ruleContext.getPackageRelativeArtifact(
+        name, config.getBinDirectory(ruleContext.getRule().getRepository()));
+  }
+
   public static Artifact getLinuxLinkedArtifact(
       RuleContext ruleContext,
       BuildConfiguration config,
@@ -645,7 +641,10 @@ public class CppHelper {
     PathFragment name = PathFragment.create(ruleContext.getLabel().getName());
     if (linkType != LinkTargetType.EXECUTABLE) {
       name = name.replaceName(
-          "lib" + name.getBaseName() + linkedArtifactNameSuffix  + linkType.getExtension());
+          "lib" + name.getBaseName()
+              + linkedArtifactNameSuffix
+              + linkType.getPicExtensionWhenApplicable()
+              + linkType.getDefaultExtension());
     }
 
     return ruleContext.getPackageRelativeArtifact(
@@ -654,7 +653,7 @@ public class CppHelper {
 
   /**
    * Emits a warning on the rule if there are identical linkstamp artifacts with different {@code
-   * CcCompilationContextInfo}s.
+   * CcCompilationContext}s.
    */
   public static void checkLinkstampsUnique(RuleErrorConsumer listener, CcLinkParams linkParams) {
     Map<Artifact, NestedSet<Artifact>> result = new LinkedHashMap<>();
@@ -862,6 +861,9 @@ public class CppHelper {
     if (cppConfiguration.isFdo()) {
       return (cppConfiguration.getLipoMode() == LipoMode.BINARY) ? "LIPO" : "FDO";
     }
+    if (fdoSupport.isXBinaryFdoEnabled()) {
+      return "XFDO";
+    }
     return null;
   }
 
@@ -901,16 +903,15 @@ public class CppHelper {
       return;
     }
 
-    if (!featureConfiguration.actionIsConfigured(CppCompileAction.STRIP_ACTION_NAME)) {
+    if (!featureConfiguration.actionIsConfigured(CppActionNames.STRIP)) {
       context.ruleError("Expected action_config for 'strip' to be configured.");
       return;
     }
 
     Tool stripTool =
-        Preconditions.checkNotNull(
-            featureConfiguration.getToolForAction(CppCompileAction.STRIP_ACTION_NAME));
-    Variables variables =
-        new Variables.Builder(toolchain.getBuildVariables())
+        Preconditions.checkNotNull(featureConfiguration.getToolForAction(CppActionNames.STRIP));
+    CcToolchainVariables variables =
+        new CcToolchainVariables.Builder(toolchain.getBuildVariables())
             .addStringVariable(
                 StripBuildVariables.OUTPUT_FILE.getVariableName(), output.getExecPathString())
             .addStringSequenceVariable(
@@ -918,8 +919,7 @@ public class CppHelper {
             .addStringVariable(CcCommon.INPUT_FILE_VARIABLE_NAME, input.getExecPathString())
             .build();
     ImmutableList<String> commandLine =
-        ImmutableList.copyOf(
-            featureConfiguration.getCommandLine(CppCompileAction.STRIP_ACTION_NAME, variables));
+        ImmutableList.copyOf(featureConfiguration.getCommandLine(CppActionNames.STRIP, variables));
     ImmutableMap.Builder<String, String> executionInfoBuilder = ImmutableMap.builder();
     for (String executionRequirement : stripTool.getExecutionRequirements()) {
       executionInfoBuilder.put(executionRequirement, "");
@@ -973,7 +973,7 @@ public class CppHelper {
         objectDir.getRelative(outputName), sourceTreeArtifact.getRoot());
   }
 
-  static String getArtifactNameForCategory(
+  public static String getArtifactNameForCategory(
       RuleContext ruleContext,
       CcToolchainProvider toolchain,
       ArtifactCategory category,

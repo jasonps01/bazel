@@ -16,18 +16,33 @@ package com.google.devtools.build.lib.skyframe;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
 import com.google.common.base.Preconditions;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Streams;
+import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
 import com.google.devtools.build.lib.actions.ActionInput;
-import com.google.devtools.build.lib.actions.ActionInputFileCache;
+import com.google.devtools.build.lib.actions.ActionInputMap;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.FileArtifactValue;
+import com.google.devtools.build.lib.actions.FileArtifactValue.InlineFileArtifactValue;
+import com.google.devtools.build.lib.actions.FileArtifactValue.RemoteFileArtifactValue;
+import com.google.devtools.build.lib.actions.FileArtifactValue.SourceFileArtifactValue;
 import com.google.devtools.build.lib.actions.FileStateType;
-import com.google.devtools.build.lib.vfs.AbstractFileSystem;
+import com.google.devtools.build.lib.actions.MetadataProvider;
+import com.google.devtools.build.lib.profiler.Profiler;
+import com.google.devtools.build.lib.profiler.ProfilerTask;
+import com.google.devtools.build.lib.vfs.FileStatus;
+import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
+import com.google.devtools.build.lib.vfs.Root;
 import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.protobuf.ByteString;
+import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,11 +50,6 @@ import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
 
@@ -49,30 +59,28 @@ import javax.annotation.Nullable;
  * <p>This class is thread-safe except that
  *
  * <ul>
- *   <li>{@link updateContext} and {@link updateInputData} must be called exclusively of any other
- *       methods.
+ *   <li>{@link updateContext} must be called exclusively of any other methods.
  *   <li>This class relies on synchronized access to {@link env}. If there are other threads, that
  *       access {@link env}, they must also used synchronized access.
  * </ul>
  */
-final class ActionFileSystem extends AbstractFileSystem implements ActionInputFileCache {
+final class ActionFileSystem extends FileSystem implements MetadataProvider, InjectionListener {
   private static final Logger LOGGER = Logger.getLogger(ActionFileSystem.class.getName());
+  public static final BaseEncoding LOWER_CASE_HEX = BaseEncoding.base16().lowerCase();
 
-  /**
-   * Exec root and source roots.
-   *
-   * <p>First entry is exec root. Used to convert paths into exec paths.
-   */
-  private final LinkedHashSet<PathFragment> roots = new LinkedHashSet<>();
+  /** Actual underlying filesystem. */
+  private final FileSystem delegate;
+
+  private final PathFragment execRootFragment;
+  private final ImmutableList<PathFragment> sourceRoots;
+
+  private final ActionInputMap inputArtifactData;
 
   /** exec path → artifact and metadata */
-  private final Map<PathFragment, ArtifactAndMetadata> inputs;
+  private final HashMap<PathFragment, OptionalInputMetadata> optionalInputs;
 
   /** exec path → artifact and metadata */
-  private final ImmutableMap<PathFragment, ArtifactAndMutableMetadata> outputs;
-
-  /** digest → artifacts in {@link inputs} */
-  private final ConcurrentHashMap<ByteString, Artifact> reverseMap;
+  private final LoadingCache<PathFragment, OutputMetadata> outputs;
 
   /** Used to lookup metadata for optional inputs. */
   private SkyFunction.Environment env = null;
@@ -86,36 +94,48 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
   private MetadataConsumer metadataConsumer = null;
 
   ActionFileSystem(
-      Map<Artifact, FileArtifactValue> inputData,
+      FileSystem delegate,
+      Path execRoot,
+      ImmutableList<Root> sourceRoots,
+      ActionInputMap inputArtifactData,
       Iterable<Artifact> allowedInputs,
       Iterable<Artifact> outputArtifacts) {
-    roots.add(computeExecRoot(outputArtifacts));
+    try {
+      Profiler.instance().startTask(ProfilerTask.ACTION_FS_STAGING, "staging");
+      this.delegate = delegate;
 
-    // TODO(shahan): Underestimates because this doesn't account for discovered inputs. Improve
-    // this estimate using data.
-    this.reverseMap = new ConcurrentHashMap<>(inputData.size());
+      this.execRootFragment = execRoot.asFragment();
+      this.sourceRoots =
+          sourceRoots
+              .stream()
+              .map(root -> root.asPath().asFragment())
+              .collect(ImmutableList.toImmutableList());
 
-    HashMap<PathFragment, ArtifactAndMetadata> inputs = new HashMap<>();
-    for (Map.Entry<Artifact, FileArtifactValue> entry : inputData.entrySet()) {
-      Artifact input = entry.getKey();
-      updateRootsIfSource(input);
-      inputs.put(input.getExecPath(), new SimpleArtifactAndMetadata(input, entry.getValue()));
-      updateReverseMapIfDigestExists(entry.getValue(), entry.getKey());
+      validateRoots();
+
+      this.inputArtifactData = inputArtifactData;
+
+      this.optionalInputs = new HashMap<>();
+      for (Artifact input : allowedInputs) {
+        // Skips staging source artifacts as a performance optimization. We may want to stage them
+        // if we want stricter enforcement of source sandboxing.
+        //
+        // TODO(shahan): there are no currently known cases where metadata is requested for an
+        // optional source input. If there are any, we may want to stage those.
+        if (input.isSourceArtifact() || inputArtifactData.getMetadata(input) != null) {
+          continue;
+        }
+        optionalInputs.computeIfAbsent(
+            input.getExecPath(), unused -> new OptionalInputMetadata(input));
+      }
+
+      ImmutableMap<PathFragment, Artifact> outputsMapping = Streams.stream(outputArtifacts)
+          .collect(ImmutableMap.toImmutableMap(Artifact::getExecPath, a -> a));
+      this.outputs = CacheBuilder.newBuilder().build(
+          CacheLoader.from(path -> new OutputMetadata(outputsMapping.get(path))));
+    } finally {
+      Profiler.instance().completeTask(ProfilerTask.ACTION_FS_STAGING);
     }
-    for (Artifact input : allowedInputs) {
-      PathFragment execPath = input.getExecPath();
-      inputs.computeIfAbsent(execPath, unused -> new OptionalInputArtifactAndMetadata(input));
-      updateRootsIfSource(input);
-    }
-    this.inputs = inputs;
-
-    validateRoots();
-
-    this.outputs =
-        Streams.stream(outputArtifacts)
-            .collect(
-                ImmutableMap.toImmutableMap(
-                    a -> a.getExecPath(), a -> new ArtifactAndMutableMetadata(a)));
   }
 
   /**
@@ -130,68 +150,36 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
     this.metadataConsumer = metadataConsumer;
   }
 
-  /** Input discovery changes the values of the input data map so it must be updated accordingly. */
-  public void updateInputData(Map<Artifact, FileArtifactValue> inputData) {
-    boolean foundNewRoots = false;
-    for (Map.Entry<Artifact, FileArtifactValue> entry : inputData.entrySet()) {
-      ArtifactAndMetadata current = inputs.get(entry.getKey().getExecPath());
-      if (current == null || isUnsetOptional(current)) {
-        Artifact input = entry.getKey();
-        inputs.put(input.getExecPath(), new SimpleArtifactAndMetadata(input, entry.getValue()));
-        foundNewRoots = updateRootsIfSource(entry.getKey()) || foundNewRoots;
-        updateReverseMapIfDigestExists(entry.getValue(), entry.getKey());
-      }
-    }
-    if (foundNewRoots) {
-      validateRoots();
-    }
-  }
-
-  // -------------------- ActionInputFileCache implementation --------------------
+  // -------------------- MetadataProvider implementation --------------------
 
   @Override
   @Nullable
-  public FileArtifactValue getMetadata(ActionInput actionInput) {
-    return apply(
-        actionInput.getExecPath(),
-        input -> {
-          try {
-            return input.getMetadata();
-          } catch (IOException e) {
-            // TODO(shahan): improve the handling of this error by propagating it correctly
-            // through MetadataHandler.getMetadata().
-            throw new IllegalStateException(e);
-          }
-        },
-        output -> output.getMetadata(),
-        () -> null);
-  }
-
-  @Override
-  public boolean contentsAvailableLocally(ByteString digest) {
-    // TODO(shahan): we assume this is never true, though the digests might be present. Should
-    // this be relaxed for locally available source files?
-    return false;
+  public FileArtifactValue getMetadata(ActionInput actionInput) throws IOException {
+    return getMetadataChecked(actionInput.getExecPath());
   }
 
   @Override
   @Nullable
-  public Artifact getInputFromDigest(ByteString digest) {
-    return reverseMap.get(digest);
-  }
-
-  @Override
-  public Path getInputPath(ActionInput actionInput) {
-    ArtifactAndMetadata input = inputs.get(actionInput.getExecPath());
+  public ActionInput getInput(String execPath) {
+    ActionInput input = inputArtifactData.getInput(execPath);
     if (input != null) {
-      return getPath(input.getArtifact().getPath().getPathString());
+      return input;
     }
-    ArtifactAndMutableMetadata output = outputs.get(actionInput.getExecPath());
+    OptionalInputMetadata metadata =
+        optionalInputs.get(PathFragment.createAlreadyNormalized(execPath));
+    return metadata == null ? null : metadata.getArtifact();
+  }
+
+  // -------------------- InjectionListener Implementation --------------------
+
+  @Override
+  public void onInsert(ActionInput dest, byte[] digest, long size, int backendIndex)
+      throws IOException {
+    OutputMetadata output = outputs.getUnchecked(dest.getExecPath());
     if (output != null) {
-      return getPath(output.getArtifact().getPath().getPathString());
+      output.set(new RemoteFileArtifactValue(digest, size, backendIndex),
+          /*notifyConsumer=*/ false);
     }
-    // TODO(shahan): this might need to be relaxed
-    throw new IllegalStateException(actionInput + " not found");
   }
 
   // -------------------- FileSystem implementation --------------------
@@ -216,6 +204,52 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
     return true;
   }
 
+  @Override
+  protected FileStatus stat(Path path, boolean followSymlinks) throws IOException {
+    FileArtifactValue metadata = getMetadataOrThrowFileNotFound(path);
+    return new FileStatus() {
+      @Override
+      public boolean isFile() {
+        return metadata.getType() == FileStateType.REGULAR_FILE;
+      }
+
+      @Override
+      public boolean isDirectory() {
+        return false;
+      }
+
+      @Override
+      public boolean isSymbolicLink() {
+        return false;
+      }
+
+      @Override
+      public boolean isSpecialFile() {
+        return metadata.getType() == FileStateType.SPECIAL_FILE;
+      }
+
+      @Override
+      public long getSize() {
+        return metadata.getSize();
+      }
+
+      @Override
+      public long getLastModifiedTime() {
+        return metadata.getModifiedTime();
+      }
+
+      @Override
+      public long getLastChangeTime() {
+        return metadata.getModifiedTime();
+      }
+
+      @Override
+      public long getNodeId() {
+        throw new UnsupportedOperationException();
+      }
+    };
+  }
+
   /** ActionFileSystem currently doesn't track directories. */
   @Override
   public boolean createDirectory(Path path) throws IOException {
@@ -227,26 +261,41 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
 
   @Override
   protected long getFileSize(Path path, boolean followSymlinks) throws IOException {
-    Preconditions.checkArgument(
-        followSymlinks, "ActionFileSystem doesn't support no-follow: %s", path);
     return getMetadataOrThrowFileNotFound(path).getSize();
   }
 
   @Override
   public boolean delete(Path path) throws IOException {
-    throw new UnsupportedOperationException(path.getPathString());
+    // TODO(felly): Support file deletion.
+    return false;
   }
 
   @Override
   protected long getLastModifiedTime(Path path, boolean followSymlinks) throws IOException {
-    Preconditions.checkArgument(
-        followSymlinks, "ActionFileSystem doesn't support no-follow: %s", path);
     return getMetadataOrThrowFileNotFound(path).getModifiedTime();
   }
 
   @Override
   public void setLastModifiedTime(Path path, long newTime) throws IOException {
     throw new UnsupportedOperationException(path.getPathString());
+  }
+
+  @Override
+  public byte[] getxattr(Path path, String name) throws IOException {
+    FileArtifactValue metadata = getMetadataChecked(asExecPath(path));
+    if (metadata instanceof RemoteFileArtifactValue) {
+      RemoteFileArtifactValue remote = (RemoteFileArtifactValue) metadata;
+      // TODO(b/80244718): inject ActionFileSystem from elsewhere and replace with correct metadata
+      return ("/CENSORED_BY_LEAKR/"
+              + remote.getLocationIndex()
+              + "/"
+              + LOWER_CASE_HEX.encode(remote.getDigest()))
+          .getBytes(US_ASCII);
+    }
+    if (metadata instanceof SourceFileArtifactValue) {
+      return resolveSourcePath((SourceFileArtifactValue) metadata).getxattr(name);
+    }
+    return delegate.getPath(path.asFragment()).getxattr(name);
   }
 
   @Override
@@ -259,29 +308,32 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
 
   @Override
   protected boolean isSymbolicLink(Path path) {
-    throw new UnsupportedOperationException(path.getPathString());
+    // TODO(felly): We should have minimal support for symlink awareness when looking at
+    // output --> src and src --> src symlinks.
+    return false;
   }
 
   @Override
   protected boolean isDirectory(Path path, boolean followSymlinks) {
-    Preconditions.checkArgument(
-        followSymlinks, "ActionFileSystem doesn't support no-follow: %s", path);
-    FileArtifactValue metadata = getMetadataUnchecked(path);
-    return metadata == null ? false : metadata.getType() == FileStateType.DIRECTORY;
+    // TODO(felly): Support directory awareness.
+    return true;
+  }
+
+  @Override
+  protected Collection<String> getDirectoryEntries(Path path) throws IOException {
+    // TODO(felly): Support directory traversal.
+    return ImmutableList.of();
   }
 
   @Override
   protected boolean isFile(Path path, boolean followSymlinks) {
-    Preconditions.checkArgument(
-        followSymlinks, "ActionFileSystem doesn't support no-follow: %s", path);
+    // TODO(felly): Unify is* methods with the stat() operation.
     FileArtifactValue metadata = getMetadataUnchecked(path);
     return metadata == null ? false : metadata.getType() == FileStateType.REGULAR_FILE;
   }
 
   @Override
   protected boolean isSpecialFile(Path path, boolean followSymlinks) {
-    Preconditions.checkArgument(
-        followSymlinks, "ActionFileSystem doesn't support no-follow: %s", path);
     FileArtifactValue metadata = getMetadataUnchecked(path);
     return metadata == null ? false : metadata.getType() == FileStateType.SPECIAL_FILE;
   }
@@ -293,19 +345,63 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
 
   @Override
   protected void createSymbolicLink(Path linkPath, PathFragment targetFragment) throws IOException {
-    ArtifactAndMetadata input = inputs.get(asExecPath(targetFragment));
-    if (input == null) {
+    // TODO(shahan): this might need to be loosened, but will require more information
+    Preconditions.checkArgument(
+        targetFragment.isAbsolute(),
+        "ActionFileSystem requires symlink targets to be absolute: %s -> %s",
+        linkPath,
+        targetFragment);
+
+    // When creating symbolic links, it matters whether target is a source path or not because
+    // the metadata needs to be handled differently in that case.
+    PathFragment targetExecPath = null;
+    int sourceRootIndex = -1; // index into sourceRoots or -1 if not a source
+    if (targetFragment.startsWith(execRootFragment)) {
+      targetExecPath = targetFragment.relativeTo(execRootFragment);
+    } else {
+      for (int i = 0; i < sourceRoots.size(); ++i) {
+        if (targetFragment.startsWith(sourceRoots.get(i))) {
+          targetExecPath = targetFragment.relativeTo(sourceRoots.get(i));
+          sourceRootIndex = i;
+          break;
+        }
+      }
+      if (sourceRootIndex == -1) {
+        throw new IllegalArgumentException(
+            linkPath
+                + " was not found under any known root: "
+                + execRootFragment
+                + ", "
+                + sourceRoots);
+      }
+    }
+
+    FileArtifactValue inputMetadata = inputArtifactData.getMetadata(targetExecPath.getPathString());
+    if (inputMetadata == null) {
+      OptionalInputMetadata metadataHolder = optionalInputs.get(targetExecPath);
+      if (metadataHolder != null) {
+        inputMetadata = metadataHolder.get();
+      }
+    }
+    if (inputMetadata == null) {
       throw new FileNotFoundException(
           createSymbolicLinkErrorMessage(
               linkPath, targetFragment, targetFragment + " is not an input."));
     }
-    ArtifactAndMutableMetadata output = outputs.get(asExecPath(linkPath));
-    if (output == null) {
+    OutputMetadata outputHolder = outputs.getUnchecked(asExecPath(linkPath));
+    if (outputHolder == null) {
       throw new FileNotFoundException(
           createSymbolicLinkErrorMessage(
               linkPath, targetFragment, linkPath + " is not an output."));
     }
-    output.setMetadata(input.getMetadata());
+    if (sourceRootIndex >= 0) {
+      outputHolder.set(
+          new SourceFileArtifactValue(
+              targetExecPath, sourceRootIndex, inputMetadata.getDigest(), inputMetadata.getSize()),
+          true);
+    } else {
+      outputHolder.set(inputMetadata, /*notifyConsumer=*/ true);
+    }
   }
 
   @Override
@@ -317,13 +413,9 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
   protected boolean exists(Path path, boolean followSymlinks) {
     Preconditions.checkArgument(
         followSymlinks, "ActionFileSystem doesn't support no-follow: %s", path);
-    return apply(path, input -> true, output -> output.getMetadata() != null, () -> false);
+    return getMetadataUnchecked(path) != null;
   }
 
-  @Override
-  protected Collection<String> getDirectoryEntries(Path path) throws IOException {
-    throw new UnsupportedOperationException(path.getPathString());
-  }
 
   @Override
   protected boolean isReadable(Path path) throws IOException {
@@ -351,23 +443,35 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
 
   @Override
   protected InputStream getInputStream(Path path) throws IOException {
-    // TODO(shahan): cleanup callers of this method and disable or maybe figure out a reasonable
-    // implementation.
-    LOGGER.severe("Raw read of path: " + path);
-    return super.getInputStream(path);
+    FileArtifactValue metadata = getMetadataChecked(asExecPath(path));
+    if (metadata instanceof InlineFileArtifactValue) {
+      return ((InlineFileArtifactValue) metadata).getInputStream();
+    }
+    if (metadata instanceof SourceFileArtifactValue) {
+      return resolveSourcePath((SourceFileArtifactValue) metadata).getInputStream();
+    }
+    Preconditions.checkArgument(
+        !(metadata instanceof RemoteFileArtifactValue),
+        "getInputStream called for remote file: %s",
+        path);
+    return delegate.getPath(path.asFragment()).getInputStream();
   }
 
   @Override
-  protected OutputStream getOutputStream(Path path, boolean append) throws IOException {
-    // TODO(shahan): cleanup callers of this method and disable or maybe figure out a reasonable
-    // implementation.
-    LOGGER.severe("Raw write of path: " + path);
-    return super.getOutputStream(path, append);
+  protected OutputStream getOutputStream(Path path, boolean append) {
+    Preconditions.checkArgument(!append, "ActionFileSystem doesn't support append.");
+    return outputs.getUnchecked(asExecPath(path)).getOutputStream();
   }
 
   @Override
   public void renameTo(Path sourcePath, Path targetPath) throws IOException {
-    throw new UnsupportedOperationException("renameTo(" + sourcePath + ", " + targetPath + ")");
+    PathFragment sourceExecPath = asExecPath(sourcePath);
+    OutputMetadata sourceMetadata = outputs.getIfPresent(sourceExecPath);
+    if (sourceMetadata == null) {
+      throw new IOException("No output file at " + sourcePath + " to move to " + targetPath);
+    }
+    outputs.put(asExecPath(targetPath), sourceMetadata);
+    outputs.invalidate(sourceExecPath);
   }
 
   @Override
@@ -383,86 +487,70 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
   }
 
   private PathFragment asExecPath(PathFragment fragment) {
-    for (PathFragment root : roots) {
+    if (fragment.startsWith(execRootFragment)) {
+      return fragment.relativeTo(execRootFragment);
+    }
+    for (PathFragment root : sourceRoots) {
       if (fragment.startsWith(root)) {
         return fragment.relativeTo(root);
       }
     }
-    throw new IllegalArgumentException(fragment + " was not found under any known root: " + roots);
+    throw new IllegalArgumentException(
+        fragment + " was not found under any known root: " + execRootFragment + ", " + sourceRoots);
+  }
+
+  @Nullable
+  private FileArtifactValue getMetadataChecked(PathFragment execPath) throws IOException {
+    {
+      FileArtifactValue metadata = inputArtifactData.getMetadata(execPath.getPathString());
+      if (metadata != null) {
+        return metadata;
+      }
+    }
+    {
+      OptionalInputMetadata metadataHolder = optionalInputs.get(execPath);
+      if (metadataHolder != null) {
+        return metadataHolder.get();
+      }
+    }
+    {
+      OutputMetadata metadataHolder = outputs.getIfPresent(execPath);
+      if (metadataHolder != null) {
+        FileArtifactValue metadata = metadataHolder.get();
+        if (metadata != null) {
+          return metadata;
+        }
+      }
+    }
+    return null;
+  }
+
+  private FileArtifactValue getMetadataOrThrowFileNotFound(Path path) throws IOException {
+    FileArtifactValue metadata = getMetadataChecked(asExecPath(path));
+    if (metadata == null) {
+      throw new FileNotFoundException(path.getPathString() + " was not found");
+    }
+    return metadata;
+  }
+
+  @Nullable
+  private FileArtifactValue getMetadataUnchecked(Path path) {
+    try {
+      return getMetadataChecked(asExecPath(path));
+    } catch (IOException e) {
+      throw new IllegalStateException(
+          "Error getting metadata for " + path.getPathString() + ": " + e.getMessage(), e);
+    }
   }
 
   private boolean isOutput(Path path) {
-    return outputs.containsKey(asExecPath(path));
-  }
-
-  /**
-   * Lambda-based case implementation.
-   *
-   * <p>One of {@code inputOp} or {@code outputOp} will be called depending on whether {@code path}
-   * is an input or output.
-   */
-  private <T> T apply(Path path, InputFileOperator<T> inputOp, OutputFileOperator<T> outputOp)
-      throws IOException {
-    PathFragment execPath = asExecPath(path);
-    ArtifactAndMetadata input = inputs.get(execPath);
-    if (input != null) {
-      return inputOp.apply(input);
+    // TODO(felly): This method should instead just refer to potential output paths, which are
+    // anything under the output tree.
+    PathFragment fragment = path.asFragment();
+    if (!fragment.startsWith(execRootFragment)) {
+      return false;
     }
-    ArtifactAndMutableMetadata output = outputs.get(execPath);
-    if (output != null) {
-      return outputOp.apply(output);
-    }
-    throw new FileNotFoundException(path.getPathString());
-  }
-
-  /**
-   * Apply variant that doesn't throw exceptions.
-   *
-   * <p>Useful for implementing existence-type methods.
-   */
-  private <T> T apply(
-      Path path,
-      Function<ArtifactAndMetadata, T> inputOp,
-      Function<ArtifactAndMutableMetadata, T> outputOp,
-      Supplier<T> notFoundOp) {
-    return apply(asExecPath(path), inputOp, outputOp, notFoundOp);
-  }
-
-  private <T> T apply(
-      PathFragment execPath,
-      Function<ArtifactAndMetadata, T> inputOp,
-      Function<ArtifactAndMutableMetadata, T> outputOp,
-      Supplier<T> notFoundOp) {
-    ArtifactAndMetadata input = inputs.get(execPath);
-    if (input != null) {
-      return inputOp.apply(input);
-    }
-    ArtifactAndMutableMetadata output = outputs.get(execPath);
-    if (output != null) {
-      return outputOp.apply(output);
-    }
-    return notFoundOp.get();
-  }
-
-  private boolean updateRootsIfSource(Artifact input) {
-    if (input.isSourceArtifact()) {
-      return roots.add(input.getRoot().getRoot().asPath().asFragment());
-    }
-    return false;
-  }
-
-  /**
-   * The execution root is globally unique for a build so can be derived from any output.
-   *
-   * <p>Outputs must be nonempty.
-   */
-  private static PathFragment computeExecRoot(Iterable<Artifact> outputs) {
-    Artifact derived = outputs.iterator().next();
-    Preconditions.checkArgument(!derived.isSourceArtifact(), derived);
-    PathFragment rootFragment = derived.getRoot().getRoot().asPath().asFragment();
-    int rootSegments = rootFragment.segmentCount();
-    int execSegments = derived.getRoot().getExecPath().segmentCount();
-    return rootFragment.subFragment(0, rootSegments - execSegments);
+    return outputs.getIfPresent(fragment.relativeTo(execRootFragment)) != null;
   }
 
   /**
@@ -472,8 +560,12 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
    * relation between roots.
    */
   private void validateRoots() {
-    for (PathFragment root1 : roots) {
-      for (PathFragment root2 : roots) {
+    for (PathFragment root1 : sourceRoots) {
+      Preconditions.checkState(
+          !root1.startsWith(execRootFragment), "%s starts with %s", root1, execRootFragment);
+      Preconditions.checkState(
+          !execRootFragment.startsWith(root1), "%s starts with %s", execRootFragment, root1);
+      for (PathFragment root2 : sourceRoots) {
         if (root1 == root2) {
           continue;
         }
@@ -486,115 +578,31 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
     return ByteString.copyFrom(BaseEncoding.base16().lowerCase().encode(digest).getBytes(US_ASCII));
   }
 
-  private static boolean isUnsetOptional(ArtifactAndMetadata input) {
-    if (input instanceof OptionalInputArtifactAndMetadata) {
-      OptionalInputArtifactAndMetadata optional = (OptionalInputArtifactAndMetadata) input;
-      return !optional.hasMetadata();
-    }
-    return false;
-  }
-
-  private void updateReverseMapIfDigestExists(FileArtifactValue metadata, Artifact artifact) {
-    if (metadata.getDigest() != null) {
-      reverseMap.put(toByteString(metadata.getDigest()), artifact);
-    }
-  }
-
-  private FileArtifactValue getMetadataOrThrowFileNotFound(Path path) throws IOException {
-    return apply(
-        path,
-        input -> input.getMetadata(),
-        output -> {
-          if (output.getMetadata() == null) {
-            throw new FileNotFoundException(path.getPathString());
-          }
-          return output.getMetadata();
-        });
-  }
-
-  @Nullable
-  private FileArtifactValue getMetadataUnchecked(Path path) {
-    return apply(
-        path,
-        input -> {
-          try {
-            return input.getMetadata();
-          } catch (IOException e) {
-            // TODO(shahan): propagate this error correctly through higher level APIs.
-            throw new IllegalStateException(e);
-          }
-        },
-        output -> output.getMetadata(),
-        () -> null);
+  /** NB: resolves to the underlying filesytem instead of this one. */
+  private Path resolveSourcePath(SourceFileArtifactValue metadata) {
+    return delegate
+        .getPath(sourceRoots.get(metadata.getSourceRootIndex()))
+        .getRelative(metadata.getExecPath());
   }
 
   @FunctionalInterface
-  private static interface InputFileOperator<T> {
-    T apply(ArtifactAndMetadata entry) throws IOException;
-  }
-
-  @FunctionalInterface
-  private static interface OutputFileOperator<T> {
-    T apply(ArtifactAndMutableMetadata entry) throws IOException;
-  }
-
-  @FunctionalInterface
-  public static interface MetadataConsumer {
+  public interface MetadataConsumer {
     void accept(Artifact artifact, FileArtifactValue value) throws IOException;
   }
 
-  private abstract static class ArtifactAndMetadata {
-    public abstract Artifact getArtifact();
-
-    public abstract FileArtifactValue getMetadata() throws IOException;
-
-    @Override
-    public String toString() {
-      String metadataText = null;
-      try {
-        metadataText = "" + getMetadata();
-      } catch (IOException e) {
-        metadataText = "Error getting metadata(" + e.getMessage() + ")";
-      }
-      return getArtifact() + ": " + metadataText;
-    }
-  }
-
-  private static class SimpleArtifactAndMetadata extends ArtifactAndMetadata {
-    private final Artifact artifact;
-    private final FileArtifactValue metadata;
-
-    private SimpleArtifactAndMetadata(Artifact artifact, FileArtifactValue metadata) {
-      this.artifact = artifact;
-      this.metadata = metadata;
-    }
-
-    @Override
-    public Artifact getArtifact() {
-      return artifact;
-    }
-
-    @Override
-    public FileArtifactValue getMetadata() {
-      return metadata;
-    }
-  }
-
-  private class OptionalInputArtifactAndMetadata extends ArtifactAndMetadata {
+  private class OptionalInputMetadata {
     private final Artifact artifact;
     private volatile FileArtifactValue metadata = null;
 
-    private OptionalInputArtifactAndMetadata(Artifact artifact) {
+    private OptionalInputMetadata(Artifact artifact) {
       this.artifact = artifact;
     }
 
-    @Override
     public Artifact getArtifact() {
       return artifact;
     }
 
-    @Override
-    public FileArtifactValue getMetadata() throws IOException {
+    public FileArtifactValue get() throws IOException {
       if (metadata == null) {
         synchronized (this) {
           if (metadata == null) {
@@ -605,11 +613,7 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
               // caller unintentionally calling into the environment without locking.
               //
               // This is currently known to be reached from the distributor during remote include
-              // scanning. It might make sense to instead of bubbling this error out all the way
-              // from within the distributor, to ensure that this metadata value exists when
-              // creating the spawn from the include parser, which will require slightly fewer
-              // layers of error propagation and there is some batching opportunity (across the
-              // parallel expansion of the include scanner).
+              // scanning which we expect to propagate exceptions up for skyframe restarts.
               synchronized (env) {
                 metadata = (FileArtifactValue) env.getValue(ArtifactSkyKey.key(artifact, false));
               }
@@ -619,40 +623,53 @@ final class ActionFileSystem extends AbstractFileSystem implements ActionInputFi
             if (metadata == null) {
               throw new ActionExecutionFunction.MissingDepException();
             }
-            updateReverseMapIfDigestExists(metadata, artifact);
           }
         }
       }
       return metadata;
     }
-
-    public boolean hasMetadata() {
-      return metadata != null;
-    }
   }
 
-  private class ArtifactAndMutableMetadata extends ArtifactAndMetadata {
-    private final Artifact artifact;
+  private class OutputMetadata {
+    private final @Nullable Artifact artifact;
     @Nullable private volatile FileArtifactValue metadata = null;
 
-    @Override
-    public Artifact getArtifact() {
-      return artifact;
+    private OutputMetadata(Artifact artifact) {
+      this.artifact = artifact;
     }
 
-    @Override
     @Nullable
-    public FileArtifactValue getMetadata() {
+    public FileArtifactValue get() {
       return metadata;
     }
 
-    public void setMetadata(FileArtifactValue metadata) throws IOException {
-      metadataConsumer.accept(artifact, metadata);
+    /**
+     * Sets the output metadata, and maybe notify the metadataConsumer.
+     *
+     * @param metadata the metadata to write
+     * @param notifyConsumer whether to notify metadataConsumer. Callers should not notify the
+     * metadataConsumer if it will be notified separately at the Spawn level.
+     */
+    public void set(FileArtifactValue metadata, boolean notifyConsumer) throws IOException {
+      if (notifyConsumer && artifact != null) {
+        metadataConsumer.accept(artifact, metadata);
+      }
       this.metadata = metadata;
     }
 
-    private ArtifactAndMutableMetadata(Artifact artifact) {
-      this.artifact = artifact;
+    /** Callers are expected to close the returned stream. */
+    public ByteArrayOutputStream getOutputStream() {
+      Preconditions.checkState(metadata == null, "getOutputStream called twice for: %s", artifact);
+      return new ByteArrayOutputStream() {
+        @Override
+        public void close() throws IOException {
+          super.close();
+          byte[] data = toByteArray();
+          set(
+              new InlineFileArtifactValue(data, Hashing.md5().hashBytes(data).asBytes()),
+              /*notifyConsumer=*/ true);
+        }
+      };
     }
   }
 }

@@ -19,6 +19,9 @@ import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionLookupValue.ActionLookupKey;
+import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.FileStateValue;
+import com.google.devtools.build.lib.actions.FileValue;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ServerDirectories;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
@@ -43,8 +46,7 @@ import com.google.devtools.build.skyframe.SkyFunctionName;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.LinkedHashSet;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Before;
@@ -52,7 +54,7 @@ import org.junit.Before;
 abstract class ArtifactFunctionTestCase {
   static final ActionLookupKey ALL_OWNER = new SingletonActionLookupKey();
 
-  protected Set<ActionAnalysisMetadata> actions;
+  protected LinkedHashSet<ActionAnalysisMetadata> actions;
   protected boolean fastDigest = false;
   protected RecordingDifferencer differencer = new SequencedRecordingDifferencer();
   protected SequentialBuildDriver driver;
@@ -78,7 +80,10 @@ abstract class ArtifactFunctionTestCase {
                 BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY));
     BlazeDirectories directories =
         new BlazeDirectories(
-            new ServerDirectories(root, root, root), root, TestConstants.PRODUCT_NAME);
+            new ServerDirectories(root, root, root),
+            root,
+            /* defaultSystemJavabase= */ null,
+            TestConstants.PRODUCT_NAME);
     ExternalFilesHelper externalFilesHelper = ExternalFilesHelper.createForTesting(
         pkgLocator,
         ExternalFileAction.DEPEND_ON_EXTERNAL_PKG_FOR_EXTERNAL_REPO_PATHS,
@@ -88,11 +93,11 @@ abstract class ArtifactFunctionTestCase {
         new InMemoryMemoizingEvaluator(
             ImmutableMap.<SkyFunctionName, SkyFunction>builder()
                 .put(
-                    SkyFunctions.FILE_STATE,
+                    FileStateValue.FILE_STATE,
                     new FileStateFunction(
                         new AtomicReference<TimestampGranularityMonitor>(), externalFilesHelper))
-                .put(SkyFunctions.FILE, new FileFunction(pkgLocator))
-                .put(SkyFunctions.ARTIFACT, new ArtifactFunction())
+                .put(FileValue.FILE, new FileFunction(pkgLocator))
+                .put(Artifact.ARTIFACT, new ArtifactFunction())
                 .put(SkyFunctions.ACTION_EXECUTION, new SimpleActionExecutionFunction())
                 .put(
                     SkyFunctions.PACKAGE,
@@ -124,7 +129,7 @@ abstract class ArtifactFunctionTestCase {
     driver = new SequentialBuildDriver(evaluator);
     PrecomputedValue.BUILD_ID.set(differencer, UUID.randomUUID());
     PrecomputedValue.PATH_PACKAGE_LOCATOR.set(differencer, pkgLocator.get());
-    actions = new HashSet<>();
+    actions = new LinkedHashSet<>();
   }
 
   protected void setupRoot(CustomInMemoryFs fs) throws IOException {

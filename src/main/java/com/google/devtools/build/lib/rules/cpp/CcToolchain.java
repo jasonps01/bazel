@@ -53,7 +53,6 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.License;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
 import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoException;
 import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoMode;
@@ -181,6 +180,29 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
     }
     PathFragment path = PathFragment.create(pathString);
     return pathPrefix.getRelative(path);
+  }
+
+  private Artifact getPrefetchHintsArtifact(
+      FdoInputFile prefetchHintsFile, RuleContext ruleContext) {
+    Artifact prefetchHintsArtifact = null;
+    if (prefetchHintsFile != null) {
+      prefetchHintsArtifact = prefetchHintsFile.getArtifact();
+      if (prefetchHintsArtifact == null) {
+        prefetchHintsArtifact =
+            ruleContext.getUniqueDirectoryArtifact(
+                "fdo",
+                prefetchHintsFile.getAbsolutePath().getBaseName(),
+                ruleContext.getBinOrGenfilesDirectory());
+        ruleContext.registerAction(
+            new SymlinkAction(
+                ruleContext.getActionOwner(),
+                PathFragment.create(prefetchHintsFile.getAbsolutePath().getPathString()),
+                prefetchHintsArtifact,
+                "Symlinking LLVM Cache Prefetch Hints Profile "
+                    + prefetchHintsFile.getAbsolutePath().getPathString()));
+      }
+    }
+    return prefetchHintsArtifact;
   }
 
   /*
@@ -318,16 +340,25 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
     CppToolchainInfo toolchainInfo = getCppToolchainInfo(ruleContext, cppConfiguration);
 
     PathFragment fdoZip = null;
+    FdoInputFile prefetchHints = null;
     if (configuration.getCompilationMode() == CompilationMode.OPT) {
+      if (cppConfiguration.getFdoPrefetchHintsLabel() != null) {
+        FdoPrefetchHintsProvider provider =
+            ruleContext.getPrerequisite(
+                ":fdo_prefetch_hints", Mode.TARGET, FdoPrefetchHintsProvider.PROVIDER);
+        prefetchHints = provider.getInputFile();
+      }
       if (cppConfiguration.getFdoPath() != null) {
         fdoZip = cppConfiguration.getFdoPath();
       } else if (cppConfiguration.getFdoOptimizeLabel() != null) {
-        Artifact fdoArtifact = ruleContext.getPrerequisiteArtifact(":fdo_optimize", Mode.TARGET);
+        Artifact fdoArtifact =
+            ruleContext.getPrerequisiteArtifact(CcToolchainRule.FDO_OPTIMIZE_ATTR, Mode.TARGET);
         if (!fdoArtifact.isSourceArtifact()) {
           ruleContext.ruleError("--fdo_optimize points to a target that is not an input file");
           return null;
         }
-        Label fdoLabel = ruleContext.getPrerequisite(":fdo_optimize", Mode.TARGET).getLabel();
+        Label fdoLabel =
+            ruleContext.getPrerequisite(CcToolchainRule.FDO_OPTIMIZE_ATTR, Mode.TARGET).getLabel();
         if (!fdoLabel
             .getPackageIdentifier()
             .getPathUnderExecRoot()
@@ -339,22 +370,20 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
         fdoZip = fdoArtifact.getPath().asFragment();
       } else if (cppConfiguration.getFdoProfileLabel() != null) {
         FdoProfileProvider fdoProvider =
-            ruleContext.getPrerequisite(":fdo_profile", Mode.TARGET, FdoProfileProvider.PROVIDER);
+            ruleContext.getPrerequisite(
+                CcToolchainRule.FDO_PROFILE_ATTR, Mode.TARGET, FdoProfileProvider.PROVIDER);
+        FdoInputFile inputFile = fdoProvider.getInputFile();
         fdoZip =
-            fdoProvider.getFdoPath() != null
-                ? fdoProvider.getFdoPath()
-                : fdoProvider.getProfileArtifact().getPath().asFragment();
-        // Unlike --fdo_optimize, --fdo_profile should not allow .afdo profiles.
-        if (fdoZip != null && CppFileTypes.GCC_AUTO_PROFILE.matches(fdoZip.getPathString())) {
-          ruleContext.ruleError("Invalid extension for FDO profile file.");
-          return null;
-        }
+            inputFile.getAbsolutePath() != null
+                ? inputFile.getAbsolutePath()
+                : inputFile.getArtifact().getPath().asFragment();
       }
     }
 
     FileTypeSet validExtensions =
         FileTypeSet.of(
             CppFileTypes.GCC_AUTO_PROFILE,
+            CppFileTypes.XBINARY_PROFILE,
             CppFileTypes.LLVM_PROFILE,
             CppFileTypes.LLVM_PROFILE_RAW,
             FileType.of(".zip"));
@@ -370,13 +399,19 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
       fdoMode = FdoMode.AUTO_FDO;
     } else if (isLLVMOptimizedFdo(toolchainInfo.isLLVMCompiler(), fdoZip)) {
       fdoMode = FdoMode.LLVM_FDO;
+    } else if (CppFileTypes.XBINARY_PROFILE.matches(fdoZip.getBaseName())) {
+      fdoMode = FdoMode.XBINARY_FDO;
     } else {
       fdoMode = FdoMode.VANILLA;
     }
 
     SkyKey fdoKey =
         FdoSupportValue.key(
-            cppConfiguration.getLipoMode(), fdoZip, cppConfiguration.getFdoInstrument(), fdoMode);
+            cppConfiguration.getLipoMode(),
+            fdoZip,
+            prefetchHints,
+            cppConfiguration.getFdoInstrument(),
+            fdoMode);
 
     SkyFunction.Environment skyframeEnv = ruleContext.getAnalysisEnvironment().getSkyframeEnv();
     FdoSupportValue fdoSupport;
@@ -480,14 +515,13 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
     Preconditions.checkState(
         (dynamicRuntimeLinkMiddleman == null) == dynamicRuntimeLinkSymlinks.isEmpty());
 
-    CcCompilationContextInfo.Builder ccCompilationContextInfoBuilder =
-        new CcCompilationContextInfo.Builder(ruleContext);
+    CcCompilationContext.Builder ccCompilationContextBuilder =
+        new CcCompilationContext.Builder(ruleContext);
     CppModuleMap moduleMap = createCrosstoolModuleMap(ruleContext);
     if (moduleMap != null) {
-      ccCompilationContextInfoBuilder.setCppModuleMap(moduleMap);
+      ccCompilationContextBuilder.setCppModuleMap(moduleMap);
     }
-    final CcCompilationContextInfo ccCompilationContextInfo =
-        ccCompilationContextInfoBuilder.build();
+    final CcCompilationContext ccCompilationContext = ccCompilationContextBuilder.build();
     boolean supportsParamFiles = ruleContext.attributes().get("supports_param_files", BOOLEAN);
     boolean supportsHeaderParsing =
         ruleContext.attributes().get("supports_header_parsing", BOOLEAN);
@@ -531,6 +565,8 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
         return null;
       }
     }
+    Artifact hintsArtifact = getPrefetchHintsArtifact(prefetchHints, ruleContext);
+    ProfileArtifacts profileArtifacts = new ProfileArtifacts(profileArtifact, hintsArtifact);
 
     reportInvalidOptions(ruleContext, toolchainInfo);
 
@@ -557,7 +593,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
             dynamicRuntimeLinkSymlinks,
             dynamicRuntimeLinkMiddleman,
             runtimeSolibDir,
-            ccCompilationContextInfo,
+            ccCompilationContext,
             supportsParamFiles,
             supportsHeaderParsing,
             getBuildVariables(ruleContext, toolchainInfo.getDefaultSysroot()),
@@ -582,7 +618,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
             .addNativeDeclaredProvider(ccProvider)
             .addNativeDeclaredProvider(templateVariableInfo)
             .addProvider(
-                fdoSupport.getFdoSupport().createFdoSupportProvider(ruleContext, profileArtifact))
+                fdoSupport.getFdoSupport().createFdoSupportProvider(ruleContext, profileArtifacts))
             .setFilesToBuild(crosstool)
             .addProvider(RunfilesProvider.simple(Runfiles.EMPTY));
 
@@ -720,12 +756,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
     if (compiler.isEmpty()) {
       compiler = null;
     }
-    String libc = ruleContext.attributes().get("libc", Type.STRING);
-    if (libc.isEmpty()) {
-      libc = null;
-    }
-    CrosstoolConfigurationIdentifier config =
-        new CrosstoolConfigurationIdentifier(cpu, compiler, libc);
+    CrosstoolConfigurationIdentifier config = new CrosstoolConfigurationIdentifier(cpu, compiler);
 
     try {
       return CrosstoolConfigurationLoader.selectToolchain(
@@ -753,7 +784,8 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
   }
 
   private NestedSet<Artifact> inputsForLibc(RuleContext ruleContext) {
-    TransitiveInfoCollection libc = ruleContext.getPrerequisite(":libc_top", Mode.TARGET);
+    TransitiveInfoCollection libc =
+        ruleContext.getPrerequisite(CcToolchainRule.LIBC_TOP_ATTR, Mode.TARGET);
     return libc != null
         ? libc.getProvider(FileProvider.class).getFilesToBuild()
         : NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER);
@@ -763,7 +795,8 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
       NestedSet<Artifact> crosstoolMiddleman) {
     return NestedSetBuilder.<Artifact>stableOrder()
         .addTransitive(crosstoolMiddleman)
-        .addTransitive(AnalysisUtils.getMiddlemanFor(ruleContext, ":libc_top", Mode.TARGET))
+        .addTransitive(
+            AnalysisUtils.getMiddlemanFor(ruleContext, CcToolchainRule.LIBC_TOP_ATTR, Mode.TARGET))
         .build();
   }
 
@@ -775,7 +808,8 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
       RuleContext ruleContext, NestedSet<Artifact> link) {
     return NestedSetBuilder.<Artifact>stableOrder()
         .addTransitive(link)
-        .addTransitive(AnalysisUtils.getMiddlemanFor(ruleContext, ":libc_top", Mode.TARGET))
+        .addTransitive(
+            AnalysisUtils.getMiddlemanFor(ruleContext, CcToolchainRule.LIBC_TOP_ATTR, Mode.TARGET))
         .add(ruleContext.getPrerequisiteArtifact("$interface_library_builder", Mode.HOST))
         .add(ruleContext.getPrerequisiteArtifact("$link_dynamic_library_tool", Mode.HOST))
         .build();
@@ -845,16 +879,17 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
   }
 
   /**
-   * Returns {@link Variables} instance with build variables that only depend on the toolchain.
+   * Returns {@link com.google.devtools.build.lib.rules.cpp.CcToolchainVariables} instance with
+   * build variables that only depend on the toolchain.
    *
    * @param ruleContext the rule context
    * @param defaultSysroot the default sysroot
    * @throws RuleErrorException if there are configuration errors making it impossible to resolve
    *     certain build variables of this toolchain
    */
-  private final Variables getBuildVariables(RuleContext ruleContext, PathFragment defaultSysroot)
-      throws RuleErrorException {
-    Variables.Builder variables = new Variables.Builder();
+  private final CcToolchainVariables getBuildVariables(
+      RuleContext ruleContext, PathFragment defaultSysroot) throws RuleErrorException {
+    CcToolchainVariables.Builder variables = new CcToolchainVariables.Builder();
 
     PathFragment sysroot = calculateSysroot(ruleContext, defaultSysroot);
     if (sysroot != null) {
@@ -867,19 +902,21 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
   }
 
   /**
-   * Add local build variables from subclasses into {@link Variables} returned from {@link
+   * Add local build variables from subclasses into {@link
+   * com.google.devtools.build.lib.rules.cpp.CcToolchainVariables} returned from {@link
    * #getBuildVariables(RuleContext, PathFragment)}.
    *
    * <p>This method is meant to be overridden by subclasses of CcToolchain.
    */
-  protected void addBuildVariables(RuleContext ruleContext, Variables.Builder variables)
+  protected void addBuildVariables(RuleContext ruleContext, CcToolchainVariables.Builder variables)
       throws RuleErrorException {
     // To be overridden in subclasses.
   }
 
   private PathFragment calculateSysroot(RuleContext ruleContext, PathFragment defaultSysroot) {
 
-    TransitiveInfoCollection sysrootTarget = ruleContext.getPrerequisite(":libc_top", Mode.TARGET);
+    TransitiveInfoCollection sysrootTarget =
+        ruleContext.getPrerequisite(CcToolchainRule.LIBC_TOP_ATTR, Mode.TARGET);
     if (sysrootTarget == null) {
       return defaultSysroot;
     }

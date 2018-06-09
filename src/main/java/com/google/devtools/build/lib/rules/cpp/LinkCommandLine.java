@@ -24,7 +24,6 @@ import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.collect.CollectionUtils;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkerOrArchiver;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
@@ -44,14 +43,13 @@ import javax.annotation.Nullable;
 public final class LinkCommandLine extends CommandLine {
   private final String actionName;
   private final String forcedToolPath;
-  private final CcToolchainFeatures.Variables variables;
+  private final CcToolchainVariables variables;
   // The feature config can be null for tests.
   @Nullable private final FeatureConfiguration featureConfiguration;
   private final ImmutableList<Artifact> buildInfoHeaderArtifacts;
   private final Iterable<Artifact> linkerInputArtifacts;
   private final LinkTargetType linkTargetType;
   private final Link.LinkingMode linkingMode;
-  private final ImmutableList<String> linkopts;
   @Nullable private final PathFragment toolchainLibrariesSolibDir;
   private final boolean nativeDeps;
   private final boolean useTestOnlyFlags;
@@ -66,12 +64,11 @@ public final class LinkCommandLine extends CommandLine {
       Iterable<Artifact> linkerInputArtifacts,
       LinkTargetType linkTargetType,
       Link.LinkingMode linkingMode,
-      ImmutableList<String> linkopts,
       @Nullable PathFragment toolchainLibrariesSolibDir,
       boolean nativeDeps,
       boolean useTestOnlyFlags,
       @Nullable Artifact paramFile,
-      CcToolchainFeatures.Variables variables,
+      CcToolchainVariables variables,
       @Nullable FeatureConfiguration featureConfiguration) {
 
     this.actionName = actionName;
@@ -82,7 +79,6 @@ public final class LinkCommandLine extends CommandLine {
     this.linkerInputArtifacts = Preconditions.checkNotNull(linkerInputArtifacts);
     this.linkTargetType = Preconditions.checkNotNull(linkTargetType);
     this.linkingMode = Preconditions.checkNotNull(linkingMode);
-    this.linkopts = linkopts;
     this.toolchainLibrariesSolibDir = toolchainLibrariesSolibDir;
     this.nativeDeps = nativeDeps;
     this.useTestOnlyFlags = useTestOnlyFlags;
@@ -120,7 +116,12 @@ public final class LinkCommandLine extends CommandLine {
    * Returns the additional linker options for this link.
    */
   public ImmutableList<String> getLinkopts() {
-    return linkopts;
+    if (variables.isAvailable(LinkBuildVariables.USER_LINK_FLAGS.getVariableName())) {
+      return CcToolchainVariables.toStringList(
+          variables, LinkBuildVariables.USER_LINK_FLAGS.getVariableName());
+    } else {
+      return ImmutableList.of();
+    }
   }
 
   /** Returns the path to the linker. */
@@ -159,7 +160,7 @@ public final class LinkCommandLine extends CommandLine {
 
   /** Returns the build variables used to template the crosstool for this linker invocation. */
   @VisibleForTesting
-  public Variables getBuildVariables() {
+  public CcToolchainVariables getBuildVariables() {
     return this.variables;
   }
 
@@ -213,7 +214,7 @@ public final class LinkCommandLine extends CommandLine {
     private final String forcedToolPath;
     private final FeatureConfiguration featureConfiguration;
     private final String actionName;
-    private final Variables variables;
+    private final CcToolchainVariables variables;
 
     public ParamFileCommandLine(
         Artifact paramsFile,
@@ -221,7 +222,7 @@ public final class LinkCommandLine extends CommandLine {
         String forcedToolPath,
         FeatureConfiguration featureConfiguration,
         String actionName,
-        Variables variables) {
+        CcToolchainVariables variables) {
       this.paramsFile = paramsFile;
       this.linkTargetType = linkTargetType;
       this.forcedToolPath = forcedToolPath;
@@ -320,9 +321,15 @@ public final class LinkCommandLine extends CommandLine {
             commandlineArgs.add(args.get(++i));
           }
         }
-      } else if (arg.endsWith(".a") || arg.endsWith(".lo") || arg.endsWith(".so")
-          || arg.endsWith(".ifso") || arg.endsWith(".o")
-          || CppFileTypes.VERSIONED_SHARED_LIBRARY.matches(arg)) {
+      } else if (CppFileTypes.OBJECT_FILE.apply(arg)
+          || CppFileTypes.PIC_OBJECT_FILE.apply(arg)
+          || CppFileTypes.ARCHIVE.apply(arg)
+          || CppFileTypes.PIC_ARCHIVE.apply(arg)
+          || CppFileTypes.ALWAYS_LINK_LIBRARY.apply(arg)
+          || CppFileTypes.ALWAYS_LINK_PIC_LIBRARY.apply(arg)
+          || CppFileTypes.SHARED_LIBRARY.apply(arg)
+          || CppFileTypes.INTERFACE_SHARED_LIBRARY.apply(arg)
+          || CppFileTypes.VERSIONED_SHARED_LIBRARY.apply(arg)) {
         // All objects of any kind go into the linker parameters.
         paramFileArgs.add(arg);
       } else {
@@ -366,7 +373,7 @@ public final class LinkCommandLine extends CommandLine {
       FeatureConfiguration featureConfiguration,
       String actionName,
       LinkTargetType linkTargetType,
-      Variables variables) {
+      CcToolchainVariables variables) {
     List<String> argv = new ArrayList<>();
     if (forcedToolPath != null) {
       argv.add(forcedToolPath);
@@ -414,12 +421,11 @@ public final class LinkCommandLine extends CommandLine {
     private Iterable<Artifact> linkerInputArtifacts = ImmutableList.of();
     @Nullable private LinkTargetType linkTargetType;
     private Link.LinkingMode linkingMode = Link.LinkingMode.LEGACY_FULLY_STATIC;
-    private ImmutableList<String> linkopts = ImmutableList.of();
     @Nullable private PathFragment toolchainLibrariesSolibDir;
     private boolean nativeDeps;
     private boolean useTestOnlyFlags;
     @Nullable private Artifact paramFile;
-    private Variables variables;
+    private CcToolchainVariables variables;
     private FeatureConfiguration featureConfiguration;
 
     public Builder(RuleContext ruleContext) {
@@ -438,9 +444,9 @@ public final class LinkCommandLine extends CommandLine {
       if (ruleContext != null) {
         Preconditions.checkNotNull(featureConfiguration);
       }
-      
+
       if (variables == null) {
-        variables = Variables.EMPTY;
+        variables = CcToolchainVariables.EMPTY;
       }
 
       String actionName = linkTargetType.getActionName();
@@ -452,7 +458,6 @@ public final class LinkCommandLine extends CommandLine {
           linkerInputArtifacts,
           linkTargetType,
           linkingMode,
-          linkopts,
           toolchainLibrariesSolibDir,
           nativeDeps,
           useTestOnlyFlags,
@@ -492,17 +497,6 @@ public final class LinkCommandLine extends CommandLine {
      */
     public Builder setLinkerInputArtifacts(Iterable<Artifact> linkerInputArtifacts) {
       this.linkerInputArtifacts = CollectionUtils.makeImmutable(linkerInputArtifacts);
-      return this;
-    }
-
-    /**
-     * Sets the linker options. These are passed to the linker in addition to the other linker
-     * options like linker inputs, symbol count options, etc. The {@link #build} method throws an
-     * exception if the linker options are non-empty for a static link (see {@link
-     * LinkTargetType#linkerOrArchiver()}).
-     */
-    public Builder setLinkopts(ImmutableList<String> linkopts) {
-      this.linkopts = linkopts;
       return this;
     }
 
@@ -550,8 +544,8 @@ public final class LinkCommandLine extends CommandLine {
       this.paramFile = paramFile;
       return this;
     }
-    
-    public Builder setBuildVariables(Variables variables) {
+
+    public Builder setBuildVariables(CcToolchainVariables variables) {
       this.variables = variables;
       return this;
     }

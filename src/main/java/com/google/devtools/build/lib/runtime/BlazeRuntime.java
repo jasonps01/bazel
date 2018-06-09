@@ -32,7 +32,6 @@ import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.analysis.test.CoverageReportActionFactory;
 import com.google.devtools.build.lib.buildeventstream.PathConverter;
-import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
 import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.clock.Clock;
 import com.google.devtools.build.lib.events.Event;
@@ -264,8 +263,11 @@ public final class BlazeRuntime {
   /**
    * Conditionally enable profiling.
    */
-  private final boolean initProfiler(CommandEnvironment env, CommonCommandOptions options,
-      UUID buildID, long execStartTimeNanos) {
+  private final boolean initProfiler(
+      CommandEnvironment env,
+      CommonCommandOptions options,
+      UUID buildID,
+      long execStartTimeNanos) {
     OutputStream out = null;
     boolean recordFullProfilerData = false;
     ProfiledTaskKinds profiledTasks = ProfiledTaskKinds.NONE;
@@ -284,10 +286,14 @@ public final class BlazeRuntime {
         profiledTasks = ProfiledTaskKinds.SLOWEST;
       }
       if (profiledTasks != ProfiledTaskKinds.NONE) {
-        Profiler.instance().start(profiledTasks, out,
+        Profiler.instance().start(
+            profiledTasks,
+            out,
             getProductName() + " profile for " + env.getOutputBase() + " at " + new Date()
             + ", build ID: " + buildID,
-            recordFullProfilerData, clock, execStartTimeNanos);
+            recordFullProfilerData,
+            clock,
+            execStartTimeNanos);
         return true;
       }
     } catch (IOException e) {
@@ -473,12 +479,12 @@ public final class BlazeRuntime {
       module.afterCommand();
     }
 
-    // If the command just completed was or inherits from Build, wipe the dependency graph if
-    // requested. This is sufficient, as this method is always run at the end of commands unless
-    // the server crashes, in which case no inmemory state will linger for the next build anyway.
-    BuildRequestOptions buildRequestOptions =
-        env.getOptions().getOptions(BuildRequestOptions.class);
-    if (buildRequestOptions != null && !buildRequestOptions.keepStateAfterBuild) {
+    // Wipe the dependency graph if requested. Note that this method always runs at the end of
+    // a commands unless the server crashes, in which case no inmemory state will linger for the
+    // next build anyway.
+    CommonCommandOptions commonOptions =
+        Preconditions.checkNotNull(env.getOptions().getOptions(CommonCommandOptions.class));
+    if (!commonOptions.keepStateAfterBuild) {
       workspace.getSkyframeExecutor().resetEvaluator();
     }
 
@@ -961,11 +967,11 @@ public final class BlazeRuntime {
   /**
    * Parses the command line arguments into a {@link OptionsParser} object.
    *
-   *  <p>This function needs to parse the --option_sources option manually so that the real option
+   * <p>This function needs to parse the --option_sources option manually so that the real option
    * parser can set the source for every option correctly. If that cannot be parsed or is missing,
    * we just report an unknown source for every startup option.
    */
-  private static OptionsProvider parseOptions(
+  private static OptionsProvider parseStartupOptions(
       Iterable<BlazeModule> modules, List<String> args) throws OptionsParsingException {
     ImmutableList<Class<? extends OptionsBase>> optionClasses =
         BlazeCommandUtils.getStartupOptions(modules);
@@ -1007,7 +1013,7 @@ public final class BlazeRuntime {
   private static BlazeRuntime newRuntime(Iterable<BlazeModule> blazeModules, List<String> args,
       Runnable abruptShutdownHandler)
       throws AbruptExitException, OptionsParsingException {
-    OptionsProvider options = parseOptions(blazeModules, args);
+    OptionsProvider options = parseStartupOptions(blazeModules, args);
     for (BlazeModule module : blazeModules) {
       module.globalInit(options);
     }
@@ -1016,6 +1022,7 @@ public final class BlazeRuntime {
     String productName = startupOptions.productName.toLowerCase(Locale.US);
 
     PathFragment workspaceDirectory = startupOptions.workspaceDirectory;
+    PathFragment defaultSystemJavabase = startupOptions.defaultSystemJavabase;
     PathFragment outputUserRoot = startupOptions.outputUserRoot;
     PathFragment installBase = startupOptions.installBase;
     PathFragment outputBase = startupOptions.outputBase;
@@ -1060,6 +1067,10 @@ public final class BlazeRuntime {
     if (!workspaceDirectory.equals(PathFragment.EMPTY_FRAGMENT)) {
       workspaceDirectoryPath = fs.getPath(workspaceDirectory);
     }
+    Path defaultSystemJavabasePath = null;
+    if (!defaultSystemJavabase.equals(PathFragment.EMPTY_FRAGMENT)) {
+      defaultSystemJavabasePath = fs.getPath(defaultSystemJavabase);
+    }
 
     ServerDirectories serverDirectories =
         new ServerDirectories(
@@ -1097,7 +1108,8 @@ public final class BlazeRuntime {
     BlazeRuntime runtime = runtimeBuilder.build();
 
     BlazeDirectories directories =
-        new BlazeDirectories(serverDirectories, workspaceDirectoryPath, productName);
+        new BlazeDirectories(
+            serverDirectories, workspaceDirectoryPath, defaultSystemJavabasePath, productName);
     BinTools binTools;
     try {
       binTools = BinTools.forProduction(directories);

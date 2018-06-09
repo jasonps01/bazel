@@ -40,6 +40,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.google.devtools.build.lib.actions.FileStateValue;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.cmdline.TargetParsingException;
@@ -87,7 +88,6 @@ import com.google.devtools.build.lib.query2.engine.Uniquifier;
 import com.google.devtools.build.lib.query2.engine.VariableContext;
 import com.google.devtools.build.lib.skyframe.BlacklistedPackagePrefixesValue;
 import com.google.devtools.build.lib.skyframe.ContainingPackageLookupFunction;
-import com.google.devtools.build.lib.skyframe.FileStateValue;
 import com.google.devtools.build.lib.skyframe.GraphBackedRecursivePackageProvider;
 import com.google.devtools.build.lib.skyframe.PackageLookupValue;
 import com.google.devtools.build.lib.skyframe.PackageValue;
@@ -96,6 +96,7 @@ import com.google.devtools.build.lib.skyframe.RecursivePackageProviderBackedTarg
 import com.google.devtools.build.lib.skyframe.TargetPatternValue;
 import com.google.devtools.build.lib.skyframe.TargetPatternValue.TargetPatternKey;
 import com.google.devtools.build.lib.skyframe.TransitiveTraversalValue;
+import com.google.devtools.build.lib.skyframe.TraversalInfoRootPackageExtractor;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.RootedPath;
@@ -254,7 +255,8 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       graph = result.getWalkableGraph();
       blacklistPatternsSupplier = InterruptibleSupplier.Memoize.of(new BlacklistSupplier(graph));
       graphBackedRecursivePackageProvider =
-          new GraphBackedRecursivePackageProvider(graph, universeTargetPatternKeys, pkgPath);
+          new GraphBackedRecursivePackageProvider(
+              graph, universeTargetPatternKeys, pkgPath, new TraversalInfoRootPackageExtractor());
     }
 
     if (executor == null) {
@@ -508,7 +510,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
    * only when {@link SkyQueryEnvironment#dependencyFilter} is set to {@link
    * DependencyFilter#ALL_DEPS}.
    */
-  Multimap<SkyKey, SkyKey> getDirectDepsOfSkyKeys(Iterable<SkyKey> keys)
+  public Multimap<SkyKey, SkyKey> getDirectDepsOfSkyKeys(Iterable<SkyKey> keys)
       throws InterruptedException {
     Preconditions.checkState(dependencyFilter == DependencyFilter.ALL_DEPS, dependencyFilter);
     ImmutableMultimap.Builder<SkyKey, SkyKey> builder = ImmutableMultimap.builder();
@@ -668,7 +670,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   }
 
   @ThreadSafe
-  protected Uniquifier<SkyKey> createSkyKeyUniquifier() {
+  public Uniquifier<SkyKey> createSkyKeyUniquifier() {
     return new UniquifierImpl<>(SkyKeyKeyExtractor.INSTANCE, DEFAULT_THREAD_COUNT);
   }
 
@@ -906,11 +908,15 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     // so no preloading of target patterns is necessary.
   }
 
-  static final Predicate<SkyKey> IS_TTV = SkyFunctionName.functionIs(Label.TRANSITIVE_TRAVERSAL);
+  public ExtendedEventHandler getEventHandler() {
+    return eventHandler;
+  }
 
-  static final Function<SkyKey, Label> SKYKEY_TO_LABEL =
+  public static final Predicate<SkyKey> IS_TTV =
+      SkyFunctionName.functionIs(Label.TRANSITIVE_TRAVERSAL);
+
+  public static final Function<SkyKey, Label> SKYKEY_TO_LABEL =
       skyKey -> IS_TTV.apply(skyKey) ? (Label) skyKey.argument() : null;
-
 
   static final Function<SkyKey, PackageIdentifier> PACKAGE_SKYKEY_TO_PACKAGE_IDENTIFIER =
       skyKey -> (PackageIdentifier) skyKey.argument();
@@ -986,6 +992,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       PathFragment currentPathFragment) {
     if (originalFileFragment.equals(currentPathFragment)
         && originalFileFragment.equals(Label.WORKSPACE_FILE_NAME)) {
+      // TODO(mschaller): this should not be checked at runtime. These are constants!
       Preconditions.checkState(
           Label.WORKSPACE_FILE_NAME.getParentDirectory().equals(PathFragment.EMPTY_FRAGMENT),
           Label.WORKSPACE_FILE_NAME);
@@ -995,9 +1002,9 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     }
     PathFragment parentPathFragment = currentPathFragment.getParentDirectory();
     return parentPathFragment == null
-        ? ImmutableList.<SkyKey>of()
-        : ImmutableList.of(PackageLookupValue.key(
-            PackageIdentifier.createInMainRepo(parentPathFragment)));
+        ? ImmutableList.of()
+        : ImmutableList.of(
+            PackageLookupValue.key(PackageIdentifier.createInMainRepo(parentPathFragment)));
   }
 
   /**
@@ -1060,7 +1067,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     return result;
   }
 
-  void getBuildFileTargetsForPackageKeysAndProcessViaCallback(
+  protected void getBuildFileTargetsForPackageKeysAndProcessViaCallback(
       Iterable<SkyKey> packageKeys, Callback<Target> callback)
       throws QueryException, InterruptedException {
     Set<PackageIdentifier> pkgIds =
@@ -1069,22 +1076,14 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
               .collect(toImmutableSet());
     packageSemaphore.acquireAll(pkgIds);
     try {
-      Iterable<SkyValue> packageValues = graph.getSuccessfulValues(packageKeys).values();
-      Iterable<Target> buildFileTargets = getBuildFileTargetsFromPackageValues(packageValues);
+      Iterable<Target> buildFileTargets =
+          Iterables.transform(
+              graph.getSuccessfulValues(packageKeys).values(),
+              skyValue -> ((PackageValue) skyValue).getPackage().getBuildFile());
       callback.process(buildFileTargets);
     } finally {
       packageSemaphore.releaseAll(pkgIds);
     }
-  }
-
-  protected Iterable<Target> getBuildFileTargetsFromPackageValues(
-      Iterable<SkyValue> packageValues) {
-    // TODO(laurentlb): Use streams?
-    return Iterables.transform(
-        Iterables.filter(
-            Iterables.transform(packageValues, skyValue -> ((PackageValue) skyValue).getPackage()),
-            pkg -> !pkg.containsErrors()),
-        Package::getBuildFile);
   }
 
   /**
@@ -1260,6 +1259,22 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
         getUniverseDTCSkyKeyPredicateFuture(universe, context),
         universePredicate -> ParallelSkyQueryUtils.getRdepsInUniverseUnboundedParallel(
             this, expression, universePredicate, context, callback, packageSemaphore));
+  }
+
+  @Override
+  public QueryTaskFuture<Void> getDepsUnboundedParallel(
+      QueryExpression expression,
+      VariableContext<Target> context,
+      Callback<Target> callback,
+      Callback<Target> errorReporter) {
+    return ParallelSkyQueryUtils.getDepsUnboundedParallel(
+        SkyQueryEnvironment.this,
+        expression,
+        context,
+        callback,
+        packageSemaphore,
+        /*depsNeedFiltering=*/ !dependencyFilter.equals(DependencyFilter.ALL_DEPS),
+        errorReporter);
   }
 
   @ThreadSafe

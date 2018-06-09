@@ -30,6 +30,9 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.testing.EqualsTester;
+import com.google.devtools.build.lib.actions.FileStateValue;
+import com.google.devtools.build.lib.actions.FileValue;
+import com.google.devtools.build.lib.actions.InconsistentFilesystemException;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ServerDirectories;
 import com.google.devtools.build.lib.clock.BlazeClock;
@@ -131,6 +134,7 @@ public class FileFunctionTest {
         new BlazeDirectories(
             new ServerDirectories(pkgRoot.asPath(), outputBase, outputBase),
             pkgRoot.asPath(),
+            /* defaultSystemJavabase= */ null,
             TestConstants.PRODUCT_NAME);
     ExternalFilesHelper externalFilesHelper =
         ExternalFilesHelper.createForTesting(pkgLocatorRef, externalFileAction, directories);
@@ -139,7 +143,7 @@ public class FileFunctionTest {
         new InMemoryMemoizingEvaluator(
             ImmutableMap.<SkyFunctionName, SkyFunction>builder()
                 .put(
-                    SkyFunctions.FILE_STATE,
+                    FileStateValue.FILE_STATE,
                     new FileStateFunction(
                         new AtomicReference<TimestampGranularityMonitor>(), externalFilesHelper))
                 .put(
@@ -148,7 +152,7 @@ public class FileFunctionTest {
                 .put(
                     SkyFunctions.FILE_SYMLINK_INFINITE_EXPANSION_UNIQUENESS,
                     new FileSymlinkInfiniteExpansionUniquenessFunction())
-                .put(SkyFunctions.FILE, new FileFunction(pkgLocatorRef))
+                .put(FileValue.FILE, new FileFunction(pkgLocatorRef))
                 .put(
                     SkyFunctions.PACKAGE,
                     new PackageFunction(null, null, null, null, null, null, null))
@@ -764,7 +768,7 @@ public class FileFunctionTest {
                 Iterables.transform(
                     Iterables.filter(
                         graph.getValues().keySet(),
-                        SkyFunctionName.functionIs(SkyFunctions.FILE_STATE)),
+                        SkyFunctionName.functionIs(FileStateValue.FILE_STATE)),
                     new Function<SkyKey, Object>() {
                       @Override
                       public Object apply(SkyKey skyKey) {

@@ -61,6 +61,9 @@ class TestBase(unittest.TestCase):
     self._test_cwd = tempfile.mkdtemp(dir=self._tests_root)
     os.chdir(self._test_cwd)
 
+  def tearDown(self):
+    self.RunBazel(['shutdown'])
+
   def AssertExitCode(self,
                      actual_exit_code,
                      expected_exit_code,
@@ -354,10 +357,6 @@ class TestBase(unittest.TestCase):
           'BAZEL_SH':
               TestBase.GetEnv('BAZEL_SH',
                               'c:\\tools\\msys64\\usr\\bin\\bash.exe'),
-          # TODO(pcloudy): Remove this after no longer need to debug
-          # https://github.com/bazelbuild/bazel/issues/3273
-          'CC_CONFIGURE_DEBUG':
-              '1'
       }
     else:
       env = {'HOME': os.path.join(self._temp, 'home')}

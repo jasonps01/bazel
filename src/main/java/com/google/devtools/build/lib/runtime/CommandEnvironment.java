@@ -21,9 +21,11 @@ import com.google.common.eventbus.EventBus;
 import com.google.devtools.build.lib.actions.PackageRootResolver;
 import com.google.devtools.build.lib.actions.cache.ActionCache;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
+import com.google.devtools.build.lib.analysis.BuildView.Options;
 import com.google.devtools.build.lib.analysis.SkyframePackageRootResolver;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.DefaultsPackage;
+import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.packages.NoSuchThingException;
@@ -462,7 +464,7 @@ public final class CommandEnvironment {
   private ExitCode finalizeExitCode() {
     // Set the pending exception so that further calls to exit(AbruptExitException) don't lead to
     // unwanted thread interrupts.
-    if (pendingException.compareAndSet(null, new AbruptExitException(null))) {
+    if (pendingException.compareAndSet(null, new AbruptExitException("", null))) {
       return null;
     }
     if (Thread.currentThread() == commandThread) {
@@ -615,9 +617,13 @@ public final class CommandEnvironment {
     // Fail fast in the case where a Blaze command forgets to install the package path correctly.
     skyframeExecutor.setActive(false);
     // Let skyframe figure out how much incremental state it will be keeping.
+    Options viewOptions = options.getOptions(Options.class);
+    BuildRequestOptions requestOptions = options.getOptions(BuildRequestOptions.class);
     skyframeExecutor.decideKeepIncrementalState(
         runtime.getStartupOptionsProvider().getOptions(BlazeServerStartupOptions.class).batch,
-        options,
+        commonOptions.keepStateAfterBuild, commonOptions.trackIncrementalState,
+        viewOptions != null && viewOptions.discardAnalysisCache,
+        requestOptions != null && requestOptions.discardActionsAfterExecution,
         reporter);
 
     // Start the performance and memory profilers.

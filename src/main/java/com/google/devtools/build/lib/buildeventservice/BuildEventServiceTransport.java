@@ -18,7 +18,6 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.util.concurrent.MoreExecutors.listeningDecorator;
 import static com.google.devtools.build.lib.events.EventKind.ERROR;
 import static com.google.devtools.build.lib.events.EventKind.INFO;
-import static com.google.devtools.build.lib.events.EventKind.WARNING;
 import static com.google.devtools.build.v1.BuildEvent.EventCase.COMPONENT_STREAM_FINISHED;
 import static com.google.devtools.build.v1.BuildStatus.Result.COMMAND_FAILED;
 import static com.google.devtools.build.v1.BuildStatus.Result.COMMAND_SUCCEEDED;
@@ -29,13 +28,15 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.devtools.build.lib.buildeventservice.client.BuildEventServiceClient;
 import com.google.devtools.build.lib.buildeventstream.ArtifactGroupNamer;
 import com.google.devtools.build.lib.buildeventstream.BuildEvent;
-import com.google.devtools.build.lib.buildeventstream.BuildEventConverters;
+import com.google.devtools.build.lib.buildeventstream.BuildEventContext;
+import com.google.devtools.build.lib.buildeventstream.BuildEventProtocolOptions;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.BuildEvent.PayloadCase;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.BuildFinished;
@@ -86,14 +87,15 @@ public class BuildEventServiceTransport implements BuildEventTransport {
   /** Max wait time between isStreamActive checks of the PublishBuildToolEventStream RPC. */
   private static final int STREAMING_RPC_POLL_IN_SECS = 1;
 
+  private final String besResultsUrl;
   private final ListeningExecutorService uploaderExecutorService;
   private final Duration uploadTimeout;
   private final boolean publishLifecycleEvents;
-  private final boolean bestEffortUpload;
   private final BuildEventServiceClient besClient;
   private final BuildEventServiceProtoUtil besProtoUtil;
   private final ModuleEnvironment moduleEnvironment;
   private final EventHandler commandLineReporter;
+  private final BuildEventProtocolOptions protocolOptions;
   private final PathConverter pathConverter;
   private final Sleeper sleeper;
   /** Contains all pendingAck events that might be retried in case of failures. */
@@ -123,38 +125,53 @@ public class BuildEventServiceTransport implements BuildEventTransport {
   public BuildEventServiceTransport(
       BuildEventServiceClient besClient,
       Duration uploadTimeout,
-      boolean bestEffortUpload,
       boolean publishLifecycleEvents,
       String buildRequestId,
       String invocationId,
       String command,
       ModuleEnvironment moduleEnvironment,
       Clock clock,
+      BuildEventProtocolOptions protocolOptions,
       PathConverter pathConverter,
       EventHandler commandLineReporter,
       @Nullable String projectId,
-      Set<String> keywords) {
-    this(besClient, uploadTimeout, bestEffortUpload, publishLifecycleEvents, buildRequestId,
-        invocationId, command, moduleEnvironment, clock, pathConverter, commandLineReporter,
-        projectId, keywords, new JavaSleeper());
+      Set<String> keywords,
+      @Nullable String besResultsUrl) {
+    this(
+        besClient,
+        uploadTimeout,
+        publishLifecycleEvents,
+        buildRequestId,
+        invocationId,
+        command,
+        moduleEnvironment,
+        clock,
+        protocolOptions,
+        pathConverter,
+        commandLineReporter,
+        projectId,
+        keywords,
+        new JavaSleeper(),
+        besResultsUrl);
   }
 
   @VisibleForTesting
   public BuildEventServiceTransport(
       BuildEventServiceClient besClient,
       Duration uploadTimeout,
-      boolean bestEffortUpload,
       boolean publishLifecycleEvents,
       String buildRequestId,
       String invocationId,
       String command,
       ModuleEnvironment moduleEnvironment,
       Clock clock,
+      BuildEventProtocolOptions protocolOptions,
       PathConverter pathConverter,
       EventHandler commandLineReporter,
       @Nullable String projectId,
       Set<String> keywords,
-      Sleeper sleeper) {
+      Sleeper sleeper,
+      @Nullable String besResultsUrl) {
     this.besClient = besClient;
     this.besProtoUtil = new BuildEventServiceProtoUtil(
         buildRequestId, invocationId, projectId, command, clock, keywords);
@@ -169,11 +186,12 @@ public class BuildEventServiceTransport implements BuildEventTransport {
     // loop by publishEventStream re-submitting itself to the executor.
     // TODO(buchgr): Fix it.
     this.uploaderExecutorService = listeningDecorator(Executors.newFixedThreadPool(2));
+    this.protocolOptions = protocolOptions;
     this.pathConverter = pathConverter;
     this.invocationResult = UNKNOWN_STATUS;
     this.uploadTimeout = uploadTimeout;
-    this.bestEffortUpload = bestEffortUpload;
     this.sleeper = sleeper;
+    this.besResultsUrl = besResultsUrl;
   }
 
   public boolean isStreaming() {
@@ -224,32 +242,25 @@ public class BuildEventServiceTransport implements BuildEventTransport {
               return;
             }
 
-            if (bestEffortUpload) {
-              // TODO(buchgr): The code structure currently doesn't allow to enforce a timeout for
-              // best effort upload.
-              if (!uploadComplete.isDone()) {
-                report(INFO, "Asynchronous Build Event Protocol upload.");
+            report(INFO, "Waiting for Build Event Protocol upload to finish.");
+            try {
+              if (Duration.ZERO.equals(uploadTimeout)) {
+                uploadComplete.get();
               } else {
-                Throwable uploadError = fromFuture(uploadComplete);
-
-                if (uploadError != null) {
-                  report(WARNING, UPLOAD_FAILED_MESSAGE, uploadError.getMessage());
-                } else {
-                  report(INFO, UPLOAD_SUCCEEDED_MESSAGE);
-                }
+                uploadComplete.get(uploadTimeout.toMillis(), MILLISECONDS);
               }
-            } else {
-              report(INFO, "Waiting for Build Event Protocol upload to finish.");
-              try {
-                if (Duration.ZERO.equals(uploadTimeout)) {
-                  uploadComplete.get();
-                } else {
-                  uploadComplete.get(uploadTimeout.toMillis(), MILLISECONDS);
-                }
-                report(INFO, UPLOAD_SUCCEEDED_MESSAGE);
-              } catch (Exception e) {
-                uploadComplete.cancel(true);
-                reportErrorAndFailBuild(e);
+              report(INFO, UPLOAD_SUCCEEDED_MESSAGE);
+              if (!Strings.isNullOrEmpty(besResultsUrl)) {
+                report(INFO, "Build Event Protocol results available at " + besResultsUrl);
+              }
+
+            } catch (Exception e) {
+              uploadComplete.cancel(true);
+              reportErrorAndFailBuild(e);
+              if (!Strings.isNullOrEmpty(besResultsUrl)) {
+                report(
+                    INFO,
+                    "Partial Build Event Protocol results may be available at " + besResultsUrl);
               }
             }
           } finally {
@@ -287,14 +298,20 @@ public class BuildEventServiceTransport implements BuildEventTransport {
   @Override
   public synchronized void sendBuildEvent(BuildEvent event, final ArtifactGroupNamer namer) {
     BuildEventStreamProtos.BuildEvent eventProto = event.asStreamProto(
-        new BuildEventConverters() {
+        new BuildEventContext() {
           @Override
           public PathConverter pathConverter() {
             return pathConverter;
           }
+
           @Override
           public ArtifactGroupNamer artifactGroupNamer() {
             return namer;
+          }
+
+          @Override
+          public BuildEventProtocolOptions getOptions() {
+            return protocolOptions;
           }
         });
     if (PayloadCase.FINISHED.equals(eventProto.getPayloadCase())) {
@@ -336,12 +353,11 @@ public class BuildEventServiceTransport implements BuildEventTransport {
   }
 
   private void reportErrorAndFailBuild(Throwable t) {
-    checkState(!bestEffortUpload);
-
     String message = errorMessageFromException(t);
 
     report(ERROR, message);
-    moduleEnvironment.exit(new AbruptExitException(ExitCode.PUBLISH_ERROR));
+    moduleEnvironment.exit(new AbruptExitException(
+        "BuildEventServiceTransport internal error", ExitCode.PUBLISH_ERROR));
   }
 
   private void maybeReportUploadError() {
@@ -352,11 +368,7 @@ public class BuildEventServiceTransport implements BuildEventTransport {
     Throwable uploadError = fromFuture(uploadComplete);
     if (uploadError != null) {
       errorsReported = true;
-      if (bestEffortUpload) {
-        report(WARNING, UPLOAD_FAILED_MESSAGE, uploadError.getMessage());
-      } else {
-        reportErrorAndFailBuild(uploadError);
-      }
+      reportErrorAndFailBuild(uploadError);
     }
   }
 

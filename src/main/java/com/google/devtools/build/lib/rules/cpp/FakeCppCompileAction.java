@@ -20,6 +20,7 @@ import static java.util.stream.Collectors.joining;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionOwner;
@@ -59,22 +60,23 @@ public class FakeCppCompileAction extends CppCompileAction {
       ActionOwner owner,
       NestedSet<Artifact> allInputs,
       FeatureConfiguration featureConfiguration,
-      CcToolchainFeatures.Variables variables,
+      CcToolchainVariables variables,
       Artifact sourceFile,
       boolean shouldScanIncludes,
       boolean shouldPruneModules,
+      boolean pruneCppInputDiscovery,
       boolean usePic,
       boolean useHeaderModules,
       boolean isStrictSystemIncludes,
       NestedSet<Artifact> mandatoryInputs,
       Iterable<Artifact> inputsForInvalidation,
       ImmutableList<Artifact> builtinIncludeFiles,
-      NestedSet<Artifact> prunableInputs,
+      NestedSet<Artifact> prunableHeaders,
       Artifact outputFile,
       PathFragment tempOutputFile,
       DotdFile dotdFile,
-      ImmutableMap<String, String> localShellEnvironment,
-      CcCompilationContextInfo ccCompilationContextInfo,
+      ActionEnvironment env,
+      CcCompilationContext ccCompilationContext,
       CoptsFilter nocopts,
       Iterable<IncludeScannable> lipoScannables,
       CppSemantics cppSemantics,
@@ -89,20 +91,20 @@ public class FakeCppCompileAction extends CppCompileAction {
         sourceFile,
         shouldScanIncludes,
         shouldPruneModules,
+        pruneCppInputDiscovery,
         usePic,
         useHeaderModules,
         isStrictSystemIncludes,
         mandatoryInputs,
         inputsForInvalidation,
         builtinIncludeFiles,
-        prunableInputs,
+        prunableHeaders,
         outputFile,
         dotdFile,
         /* gcnoFile=*/ null,
         /* dwoFile=*/ null,
         /* ltoIndexingFile=*/ null,
-        /* optionalSourceFile=*/ null,
-        localShellEnvironment,
+        env,
         // We only allow inclusion of header files explicitly declared in
         // "srcs", so we only use declaredIncludeSrcs, not declaredIncludeDirs.
         // (Disallowing use of undeclared headers for cc_fake_binary is needed
@@ -110,13 +112,13 @@ public class FakeCppCompileAction extends CppCompileAction {
         // cc_fake_binary and for the negative compilation tests that depend on
         // the cc_fake_binary, and the runfiles must be determined at analysis
         // time, so they can't depend on the contents of the ".d" file.)
-        CcCompilationContextInfo.disallowUndeclaredHeaders(ccCompilationContextInfo),
+        CcCompilationContext.disallowUndeclaredHeaders(ccCompilationContext),
         nocopts,
         lipoScannables,
         /* additionalIncludeScanningRoots=*/ ImmutableList.of(),
         GUID,
         executionInfo,
-        CppCompileAction.CPP_COMPILE,
+        CppActionNames.CPP_COMPILE,
         cppSemantics,
         cppProvider,
         grepIncludes);
@@ -253,11 +255,6 @@ public class FakeCppCompileAction extends CppCompileAction {
           + getOwner().getLabel() + ": " + e.getMessage(), this, false);
     }
     return ActionResult.create(spawnResults);
-  }
-
-  @Override
-  protected PathFragment getInternalOutputFile() {
-    return tempOutputFile;
   }
 
   @Override

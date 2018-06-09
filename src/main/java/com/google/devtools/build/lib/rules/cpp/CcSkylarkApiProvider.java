@@ -20,54 +20,32 @@ import com.google.devtools.build.lib.analysis.skylark.SkylarkApiProvider;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.skylarkbuildapi.cpp.CcSkylarkApiProviderApi;
 import com.google.devtools.build.lib.vfs.PathFragment;
 
 /**
  * A class that exposes the C++ providers to Skylark. It is intended to provide a simple and stable
  * interface for Skylark users.
  */
-@SkylarkModule(
-  name = "CcSkylarkApiProvider",
-  category = SkylarkModuleCategory.PROVIDER,
-  doc =
-      "Provides access to information about C++ rules.  "
-          + "Every C++-related target provides this struct, accessible as a <code>cc</code> field "
-          + "on <a href=\"Target.html\">target</a>."
-)
 @AutoCodec
-public final class CcSkylarkApiProvider extends SkylarkApiProvider {
+public final class CcSkylarkApiProvider extends SkylarkApiProvider
+    implements CcSkylarkApiProviderApi<Artifact> {
   /** The name of the field in Skylark used to access this class. */
   public static final String NAME = "cc";
 
-  @SkylarkCallable(
-      name = "transitive_headers",
-      structField = true,
-      doc =
-          "Returns a <a href=\"depset.html\">depset</a> of headers that have been declared in the "
-              + " <code>src</code> or <code>headers</code> attribute"
-              + "(possibly empty but never <code>None</code>).")
+  @Override
   public NestedSet<Artifact> getTransitiveHeaders() {
-    CcCompilationContextInfo ccCompilationContextInfo =
-        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContextInfo();
-    return ccCompilationContextInfo.getDeclaredIncludeSrcs();
+    CcCompilationContext ccCompilationContext =
+        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContext();
+    return ccCompilationContext.getDeclaredIncludeSrcs();
   }
 
-  @SkylarkCallable(
-      name = "libs",
-      structField = true,
-      doc =
-          "Returns the <a href=\"depset.html\">depset</a> of libraries for either "
-              + "<code>FULLY STATIC</code> mode (<code>linkopts=[\"-static\"]</code>) or "
-              + "<code>MOSTLY STATIC</code> mode (<code>linkstatic=1</code>) "
-              + "(possibly empty but never <code>None</code>)")
+  @Override
   public NestedSet<Artifact> getLibraries() {
     NestedSetBuilder<Artifact> libs = NestedSetBuilder.linkOrder();
     CcLinkingInfo ccLinkingInfo = getInfo().get(CcLinkingInfo.PROVIDER);
-    CcLinkParamsInfo ccLinkParams =
-        ccLinkingInfo == null ? null : ccLinkingInfo.getCcLinkParamsInfo();
+    CcLinkParamsStore ccLinkParams =
+        ccLinkingInfo == null ? null : ccLinkingInfo.getCcLinkParamsStore();
     if (ccLinkParams == null) {
       return libs.build();
     }
@@ -77,116 +55,84 @@ public final class CcSkylarkApiProvider extends SkylarkApiProvider {
     return libs.build();
   }
 
-  @SkylarkCallable(
-      name = "link_flags",
-      structField = true,
-      doc =
-          "Returns the list of flags given to the C++ linker command for either "
-              + "<code>FULLY STATIC</code> mode (<code>linkopts=[\"-static\"]</code>) or "
-              + "<code>MOSTLY STATIC</code> mode (<code>linkstatic=1</code>) "
-              + "(possibly empty but never <code>None</code>)")
+  @Override
   public ImmutableList<String> getLinkopts() {
     CcLinkingInfo ccLinkingInfo = getInfo().get(CcLinkingInfo.PROVIDER);
-    CcLinkParamsInfo ccLinkParams =
-        ccLinkingInfo == null ? null : ccLinkingInfo.getCcLinkParamsInfo();
+    CcLinkParamsStore ccLinkParams =
+        ccLinkingInfo == null ? null : ccLinkingInfo.getCcLinkParamsStore();
     if (ccLinkParams == null) {
       return ImmutableList.of();
     }
     return ccLinkParams.getCcLinkParams(true, false).flattenedLinkopts();
   }
 
-  @SkylarkCallable(
-      name = "defines",
-      structField = true,
-      doc =
-          "Returns the list of defines used to compile this target "
-              + "(possibly empty but never <code>None</code>).")
+  @Override
   public ImmutableList<String> getDefines() {
-    CcCompilationContextInfo ccCompilationContextInfo =
-        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContextInfo();
-    return ccCompilationContextInfo == null
+    CcCompilationContext ccCompilationContext =
+        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContext();
+    return ccCompilationContext == null
         ? ImmutableList.<String>of()
-        : ccCompilationContextInfo.getDefines();
+        : ccCompilationContext.getDefines();
   }
 
-  @SkylarkCallable(
-      name = "system_include_directories",
-      structField = true,
-      doc =
-          "Returns the list of system include directories used to compile this target "
-              + "(possibly empty but never <code>None</code>).")
+  @Override
   public ImmutableList<String> getSystemIncludeDirs() {
-    CcCompilationContextInfo ccCompilationContextInfo =
-        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContextInfo();
-    if (ccCompilationContextInfo == null) {
+    CcCompilationContext ccCompilationContext =
+        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContext();
+    if (ccCompilationContext == null) {
       return ImmutableList.of();
     }
     ImmutableList.Builder<String> builder = ImmutableList.builder();
-    for (PathFragment path : ccCompilationContextInfo.getSystemIncludeDirs()) {
+    for (PathFragment path : ccCompilationContext.getSystemIncludeDirs()) {
       builder.add(path.getSafePathString());
     }
     return builder.build();
   }
 
-  @SkylarkCallable(
-      name = "include_directories",
-      structField = true,
-      doc =
-          "Returns the list of include directories used to compile this target "
-              + "(possibly empty but never <code>None</code>).")
+  @Override
   public ImmutableList<String> getIncludeDirs() {
-    CcCompilationContextInfo ccCompilationContextInfo =
-        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContextInfo();
-    if (ccCompilationContextInfo == null) {
+    CcCompilationContext ccCompilationContext =
+        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContext();
+    if (ccCompilationContext == null) {
       return ImmutableList.of();
     }
     ImmutableList.Builder<String> builder = ImmutableList.builder();
-    for (PathFragment path : ccCompilationContextInfo.getIncludeDirs()) {
+    for (PathFragment path : ccCompilationContext.getIncludeDirs()) {
       builder.add(path.getSafePathString());
     }
     return builder.build();
   }
 
-  @SkylarkCallable(
-      name = "quote_include_directories",
-      structField = true,
-      doc =
-          "Returns the list of quote include directories used to compile this target "
-              + "(possibly empty but never <code>None</code>).")
+  @Override
   public ImmutableList<String> getQuoteIncludeDirs() {
-    CcCompilationContextInfo ccCompilationContextInfo =
-        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContextInfo();
-    if (ccCompilationContextInfo == null) {
+    CcCompilationContext ccCompilationContext =
+        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContext();
+    if (ccCompilationContext == null) {
       return ImmutableList.of();
     }
     ImmutableList.Builder<String> builder = ImmutableList.builder();
-    for (PathFragment path : ccCompilationContextInfo.getQuoteIncludeDirs()) {
+    for (PathFragment path : ccCompilationContext.getQuoteIncludeDirs()) {
       builder.add(path.getSafePathString());
     }
     return builder.build();
   }
 
-  @SkylarkCallable(
-      name = "compile_flags",
-      structField = true,
-      doc =
-          "Returns the list of flags used to compile this target "
-              + "(possibly empty but never <code>None</code>).")
+  @Override
   public ImmutableList<String> getCcFlags() {
-    CcCompilationContextInfo ccCompilationContextInfo =
-        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContextInfo();
+    CcCompilationContext ccCompilationContext =
+        getInfo().get(CcCompilationInfo.PROVIDER).getCcCompilationContext();
 
     ImmutableList.Builder<String> options = ImmutableList.builder();
-    for (String define : ccCompilationContextInfo.getDefines()) {
+    for (String define : ccCompilationContext.getDefines()) {
       options.add("-D" + define);
     }
-    for (PathFragment path : ccCompilationContextInfo.getSystemIncludeDirs()) {
+    for (PathFragment path : ccCompilationContext.getSystemIncludeDirs()) {
       options.add("-isystem " + path.getSafePathString());
     }
-    for (PathFragment path : ccCompilationContextInfo.getIncludeDirs()) {
+    for (PathFragment path : ccCompilationContext.getIncludeDirs()) {
       options.add("-I " + path.getSafePathString());
     }
-    for (PathFragment path : ccCompilationContextInfo.getQuoteIncludeDirs()) {
+    for (PathFragment path : ccCompilationContext.getQuoteIncludeDirs()) {
       options.add("-iquote " + path.getSafePathString());
     }
 

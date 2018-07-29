@@ -38,12 +38,18 @@ public final class StructProvider extends BuiltinProvider<Info>
 
   @Override
   public Info createStruct(SkylarkDict<?, ?> kwargs, Location loc) throws EvalException {
-    return SkylarkInfo.createSchemaless(
-        this, kwargs.getContents(String.class, Object.class, "kwargs"), loc);
+    Map<String, Object> kwargsMap = kwargs.getContents(String.class, Object.class, "kwargs");
+    if (kwargsMap.containsKey("to_json")) {
+      throw new EvalException(loc, "cannot override built-in struct function 'to_json'");
+    }
+    if (kwargsMap.containsKey("to_proto")) {
+      throw new EvalException(loc, "cannot override built-in struct function 'to_proto'");
+    }
+    return SkylarkInfo.createSchemaless(this, kwargsMap, loc);
   }
 
   /**
-   * Creates a struct with the he given field values and message format for unknown fields.
+   * Creates a struct with the given field values and message format for unknown fields.
    *
    * <p>The custom message is useful for objects that have fields but aren't exactly used as
    * providers, such as the {@code native} object, and the struct fields of {@code ctx} like

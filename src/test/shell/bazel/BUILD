@@ -63,6 +63,7 @@ sh_test(
         "//src/test/shell/bazel/apple:objc-deps",
     ],
     shard_count = 3,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -81,6 +82,9 @@ sh_test(
     data = [
         ":test-deps",
     ],
+    tags = [
+        "no_windows",  # darwin-specific test
+    ],
 )
 
 sh_test(
@@ -91,6 +95,9 @@ sh_test(
         ":test-deps",
         "//:workspace-file",
     ],
+    tags = [
+        "no_windows",  # objc-specific test
+    ],
 )
 
 sh_test(
@@ -98,14 +105,19 @@ sh_test(
     size = "medium",
     srcs = ["bazel_embedded_skylark_test.sh"],
     data = [":test-deps"],
+    tags = [
+        "no_windows",  # TODO(laszlocsomor): make this run on Windows
+    ],
 )
 
 sh_test(
     name = "bazel_random_characters_test",
     size = "large",
     srcs = ["bazel_random_characters_test.sh"],
-    data = [":test-deps"],
-    tags = ["nowindows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -114,27 +126,43 @@ sh_test(
     timeout = "eternal",
     srcs = ["bazel_java_test.sh"],
     data = [":test-deps"],
+    tags = [
+        # TODO(laszlocsomor): make this run on Windows. Currently fails because
+        # the java_common provider doesn't work on Windows.
+        "no_windows",
+    ],
 )
 
 sh_test(
     name = "bazel_build_event_stream_test",
     size = "medium",
     srcs = ["bazel_build_event_stream_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    tags = ["no_windows"],
 )
 
 sh_test(
     name = "bazel_experimental_ui_test",
     size = "medium",
     srcs = ["bazel_experimental_ui_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
     name = "bazel_rules_test",
     size = "large",
     srcs = ["bazel_rules_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    shard_count = 3,
 )
 
 sh_test(
@@ -143,13 +171,17 @@ sh_test(
     srcs = ["bazel_test_test.sh"],
     data = [":test-deps"],
     shard_count = 3,
-    tags = ["local"],
+    tags = [
+        "local",
+        "no_windows",
+    ],
 )
 
 sh_test(
     name = "bazel_spawnstats_test",
     srcs = ["bazel_spawnstats_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -157,8 +189,8 @@ sh_test(
     srcs = ["bazel_coverage_test.sh"],
     data = [":test-deps"],
     tags = [
-        "jdk8",  # TODO(elenairina): Re-enable for JDK7 once https://github.com/bazelbuild/bazel/issues/2890 is fixed.
         "local",
+        "no_windows",
     ],
 )
 
@@ -166,13 +198,17 @@ sh_test(
     name = "bazel_localtest_test",
     srcs = ["bazel_localtest_test.sh"],
     data = [":test-deps"],
-    tags = ["local"],
+    tags = [
+        "local",
+        "no_windows",
+    ],
 )
 
 sh_test(
     name = "bazel_execute_testlog",
     srcs = ["bazel_execute_testlog.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -186,6 +222,7 @@ sh_test(
         "//conditions:default": ["//src/test/shell/bazel/testdata:bazel_toolchain_test_project_pkg"],
     }),
     tags = [
+        "no_windows",
         "requires-network",
     ],
 )
@@ -205,27 +242,7 @@ sh_test(
         ":test-deps",
         "//src/test/shell/bazel/testdata:embedded_tools_deps_test_data",
     ],
-)
-
-# TODO(bazel-team): zip is non-deterministic because of file timestamp,
-# we should use a custom zip version (SingleJar?).
-genrule(
-    name = "doc-srcs",
-    testonly = 1,
-    srcs = [
-        "//src/java_tools/singlejar:srcs",
-        "//src/main/java/com/google/devtools/build/lib/actions:srcs",
-        "//src/main/java/com/google/devtools/build/lib/rules/genquery:srcs",
-        "//src/main/java/com/google/devtools/build/lib/sandbox:srcs",
-        "//src/main/java/com/google/devtools/build/lib/standalone:srcs",
-        "//src/main/java/com/google/devtools/build/lib/worker:srcs",
-        "//src/main/java/com/google/devtools/build/lib:srcs",
-        "//src/main/protobuf:srcs",
-        "//src/tools/xcode-common:srcs",
-        "//third_party:srcs",
-    ],
-    outs = ["doc-srcs.zip"],
-    cmd = "echo $(SRCS) | tr ' ' '\n' | zip -q@ $@",
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -233,6 +250,7 @@ sh_test(
     size = "large",
     srcs = ["bazel_docgen_test.sh"],
     data = ["//src/main/java/com/google/devtools/build/lib:gen_buildencyclopedia"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -240,6 +258,7 @@ sh_test(
     size = "large",
     srcs = ["external_correctness_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -248,6 +267,7 @@ sh_test(
     srcs = ["external_integration_test.sh"],
     data = [":test-deps"],
     shard_count = 12,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -256,6 +276,7 @@ sh_test(
     srcs = ["external_patching_test.sh"],
     data = [":test-deps"],
     shard_count = 3,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -264,6 +285,7 @@ sh_test(
     srcs = ["external_path_test.sh"],
     data = [":test-deps"],
     shard_count = 6,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -274,6 +296,7 @@ sh_test(
         ":test-deps",
         "//src/test/shell/bazel/testdata:git-repos",
     ],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -284,6 +307,7 @@ sh_test(
         ":test-deps",
         "//src/test/shell/bazel/testdata:git-repos",
     ],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -292,14 +316,7 @@ sh_test(
     srcs = ["local_repository_test.sh"],
     data = [":test-deps"],
     shard_count = 3,
-)
-
-sh_test(
-    name = "local_repository_test_jdk8",
-    size = "medium",
-    srcs = ["local_repository_test_jdk8.sh"],
-    data = [":test-deps"],
-    tags = ["jdk8"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -307,12 +324,14 @@ sh_test(
     size = "large",
     srcs = ["cross_repository_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
     name = "skylark_prefetching_test",
     srcs = ["skylark_prefetching_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -321,6 +340,7 @@ sh_test(
     srcs = ["external_skylark_load_test.sh"],
     data = [":test-deps"],
     shard_count = 6,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -329,6 +349,7 @@ sh_test(
     srcs = ["skylark_repository_test.sh"],
     data = [":test-deps"],
     shard_count = 6,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -336,6 +357,7 @@ sh_test(
     size = "small",
     srcs = ["disk_cache_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -343,18 +365,21 @@ sh_test(
     size = "medium",
     srcs = ["runfiles_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
     name = "empty_package_test",
     srcs = ["empty_package.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
     name = "location_test",
     srcs = ["location_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -362,6 +387,7 @@ sh_test(
     size = "large",
     srcs = ["maven_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 # To run this test, ensure that maven_dependency_plugin() and
@@ -375,7 +401,10 @@ sh_test(
         "//external:android_sdk_for_testing",
         "@m2//:files",
     ],
-    tags = ["manual"],
+    tags = [
+        "manual",
+        "no_windows",
+    ],
 )
 
 sh_test(
@@ -383,6 +412,8 @@ sh_test(
     size = "large",
     srcs = ["workspace_test.sh"],
     data = [":test-deps"],
+    shard_count = 5,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -390,6 +421,8 @@ sh_test(
     size = "medium",
     srcs = ["workspace_resolved_test.sh"],
     data = [":test-deps"],
+    shard_count = 10,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -397,6 +430,7 @@ sh_test(
     size = "medium",
     srcs = ["cc_integration_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -411,6 +445,7 @@ sh_test(
     tags = [
         "local",
         "manual",
+        "no_windows",
     ],
 )
 
@@ -423,7 +458,10 @@ sh_test(
         "//src/test/shell:sandboxing_test_utils.sh",
         "@mount_path_toolchain//file",
     ],
-    tags = ["local"],
+    tags = [
+        "local",
+        "no_windows",
+    ],
 )
 
 sh_test(
@@ -433,7 +471,10 @@ sh_test(
         ":test-deps",
         "//src/test/shell:sandboxing_test_utils.sh",
     ],
-    tags = ["local"],
+    tags = [
+        "local",
+        "no_windows",
+    ],
 )
 
 sh_test(
@@ -441,6 +482,7 @@ sh_test(
     size = "large",
     srcs = ["bazel_workspace_status_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -452,6 +494,7 @@ sh_test(
         "//:workspace-file",
         "//src/test/shell/bazel/apple:objc-deps",
     ],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -459,6 +502,7 @@ sh_test(
     size = "medium",
     srcs = ["client_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -466,6 +510,7 @@ sh_test(
     size = "medium",
     srcs = ["execroot_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -474,6 +519,7 @@ sh_test(
     srcs = ["bazel_repository_cache_test.sh"],
     data = [":test-deps"],
     shard_count = 6,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -482,8 +528,9 @@ sh_test(
     srcs = ["bazel_with_jdk_test.sh"],
     data = [
         ":test-deps",
-        "//src:bazel_with_jdk",
+        "//src:bazel",
     ],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -491,18 +538,22 @@ sh_test(
     size = "medium",
     srcs = ["build_files_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
     name = "bazel_bootstrap_distfile_test",
     timeout = "eternal",
     srcs = ["bazel_bootstrap_distfile_test.sh"],
-    args = ["$(location //:bazel-distfile)"],
+    args = [
+        "$(location //:bazel-distfile)",
+        "$(location //src:embedded_jdk)",
+    ],
     data = [
         ":test-deps",
         "//:bazel-distfile",
+        "//src:embedded_jdk",
     ],
-    tags = ["jdk8"],
 )
 
 sh_test(
@@ -515,7 +566,7 @@ sh_test(
         "//:bazel-distfile",
     ],
     tags = [
-        "jdk8",
+        "no_windows",
         "slow",
     ],
 )
@@ -524,7 +575,10 @@ sh_test(
     name = "rule_test_test",
     size = "medium",
     srcs = ["rule_test_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
     shard_count = 2,
 )
 
@@ -532,7 +586,10 @@ sh_test(
     name = "help_test",
     size = "small",
     srcs = ["help_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -541,6 +598,7 @@ sh_test(
     srcs = ["toolchain_test.sh"],
     data = [":test-deps"],
     shard_count = 5,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -549,6 +607,7 @@ sh_test(
     srcs = ["java_launcher_test.sh"],
     args = ["$(JAVABASE)"],
     data = [":test-deps"],
+    tags = ["no_windows"],
     toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
@@ -575,10 +634,25 @@ test_suite(
 )
 
 test_suite(
+    name = "windows_tests",
+    tags = [
+        "-no_windows",
+        "-slow",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+test_suite(
     name = "all_windows_tests",
     tests = [
-        ":bazel_bootstrap_distfile_test",
-        ":bazel_windows_example_test",
+        ":windows_tests",
     ],
     visibility = ["//src/test/shell:__pkg__"],
+)
+
+sh_test(
+    name = "bazel_workspaces_test",
+    srcs = ["bazel_workspaces_test.sh"],
+    data = [":test-deps"],
+    tags = ["no_windows"],
 )

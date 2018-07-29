@@ -120,22 +120,35 @@ public class SkylarkEvaluationTest extends EvaluationTest {
       return "I'm a mock named " + myName;
     }
 
-    @SkylarkCallable(documented = false)
+    @SkylarkCallable(name = "value_of",
+        parameters = { @Param(name = "str", type = String.class) },
+        documented = false)
     public static Integer valueOf(String str) {
       return Integer.valueOf(str);
     }
-    @SkylarkCallable(documented = false)
+    @SkylarkCallable(name = "is_empty",
+        parameters = { @Param(name = "str", type = String.class) },
+        documented = false)
     public Boolean isEmpty(String str) {
       return str.isEmpty();
     }
     public void value() {}
-    @SkylarkCallable(documented = false)
+    @SkylarkCallable(name = "return_bad", documented = false)
     public Bad returnBad() {
       return new Bad();
     }
     @SkylarkCallable(name = "struct_field", documented = false, structField = true)
     public String structField() {
       return "a";
+    }
+    @SkylarkCallable(name = "struct_field_with_extra",
+        documented = false,
+        structField = true,
+        useSkylarkSemantics = true)
+    public String structFieldWithExtra(SkylarkSemantics sem) {
+      return "struct_field_with_extra("
+        + (sem != null)
+        + ")";
     }
     @SkylarkCallable(name = "struct_field_callable", documented = false, structField = true)
     public BuiltinFunction structFieldCallable() {
@@ -146,7 +159,12 @@ public class SkylarkEvaluationTest extends EvaluationTest {
       return "a";
     }
     @SuppressWarnings("unused")
-    @SkylarkCallable(name = "nullfunc_failing", documented = false, allowReturnNones = false)
+    @SkylarkCallable(name = "nullfunc_failing",
+        parameters = {
+          @Param(name = "p1", type = String.class),
+          @Param(name = "p2", type = Integer.class),
+        },
+        documented = false, allowReturnNones = false)
     public SkylarkValue nullfuncFailing(String p1, Integer p2) {
       return null;
     }
@@ -191,8 +209,8 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     @SkylarkCallable(
       name = "with_params",
       documented = false,
-      mandatoryPositionals = 1,
       parameters = {
+        @Param(name = "pos1"),
         @Param(name = "pos2", defaultValue = "False", type = Boolean.class),
         @Param(
           name = "posOrNamed",
@@ -288,8 +306,8 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     @SkylarkCallable(
       name = "with_params_and_extra",
       documented = false,
-      mandatoryPositionals = 1,
       parameters = {
+        @Param(name = "pos1"),
         @Param(name = "pos2", defaultValue = "False", type = Boolean.class),
         @Param(
           name = "posOrNamed",
@@ -473,7 +491,9 @@ public class SkylarkEvaluationTest extends EvaluationTest {
 
   @SkylarkModule(name = "MockInterface", doc = "")
   static interface MockInterface {
-    @SkylarkCallable(documented = false)
+    @SkylarkCallable(name = "is_empty_interface",
+        parameters = { @Param(name = "str", type = String.class) },
+        documented = false)
     public Boolean isEmptyInterface(String str);
   }
 
@@ -1249,6 +1269,14 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   }
 
   @Test
+  public void testStructFieldWithExtraInterpreterParams() throws Exception {
+    new SkylarkTest()
+        .update("mock", new Mock())
+        .setUp("v = mock.struct_field_with_extra")
+        .testLookup("v", "struct_field_with_extra(true)");
+  }
+
+  @Test
   public void testJavaFunctionWithParamsAndExtraInterpreterParams() throws Exception {
     new SkylarkTest()
         .update("mock", new Mock())
@@ -1851,6 +1879,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
             "string_list_dict",
             "struct_field",
             "struct_field_callable",
+            "struct_field_with_extra",
             "value_of",
             "voidfunc",
             "with_args_and_env",
@@ -2064,7 +2093,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     new SkylarkTest()
         .update("val", new SkylarkClassObjectWithSkylarkCallables())
         .setUp("v = val.collision_field")
-        .testLookup("v", "fromValues");
+        .testLookup("v", "fromSkylarkCallable");
   }
 
   @Test

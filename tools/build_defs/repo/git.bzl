@@ -16,15 +16,19 @@
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "patch", "workspace_and_buildfile")
 
 def _clone_or_update(ctx):
-    if ((not ctx.attr.tag and not ctx.attr.commit) or
-        (ctx.attr.tag and ctx.attr.commit)):
-        fail("Exactly one of commit and tag must be provided")
+    if ((not ctx.attr.tag and not ctx.attr.commit and not ctx.attr.branch) or
+        (ctx.attr.tag and ctx.attr.commit) or
+        (ctx.attr.tag and ctx.attr.branch) or
+        (ctx.attr.commit and ctx.attr.branch)):
+        fail("Exactly one of commit, tag, or branch must be provided")
     shallow = ""
     if ctx.attr.commit:
         ref = ctx.attr.commit
-    else:
+    elif ctx.attr.tag:
         ref = "tags/" + ctx.attr.tag
         shallow = "--depth=1"
+    else:
+        ref = ctx.attr.branch
     directory = str(ctx.path("."))
     if ctx.attr.strip_prefix:
         directory = directory + "-tmp"
@@ -80,44 +84,98 @@ set -ex
     if st.return_code:
         fail("error updating submodules %s:\n%s" % (ctx.name, st.stderr))
 
-def _new_git_repository_implementation(ctx):
-    if ((not ctx.attr.build_file and not ctx.attr.build_file_content) or
-        (ctx.attr.build_file and ctx.attr.build_file_content)):
-        fail("Exactly one of build_file and build_file_content must be provided.")
-    _clone_or_update(ctx)
-    workspace_and_buildfile(ctx)
-    patch(ctx)
+    # After the fact, determine the actual commit and its date
+    actual_commit = ctx.execute([
+        bash_exe,
+        "-c",
+        "(cd '{directory}' && git log -n 1 --pretty='format:%H')".format(
+            directory = ctx.path("."),
+        ),
+    ]).stdout
+    shallow_date = ctx.execute([
+        bash_exe,
+        "-c",
+        "(cd '{directory}' && git log -n 1 --pretty='format:%cd' --date='format:%Y-%d-%m')".format(
+            directory = ctx.path("."),
+        ),
+    ]).stdout
+    return {"commit": actual_commit, "shallow_since": shallow_date}
 
-def _git_repository_implementation(ctx):
-    _clone_or_update(ctx)
-    patch(ctx)
+def _remove_dot_git(ctx):
+    # Remove the .git directory, if present
+    bash_exe = ctx.os.environ["BAZEL_SH"] if "BAZEL_SH" in ctx.os.environ else "bash"
+    ctx.execute([
+        bash_exe,
+        "-c",
+        "rm -rf '{directory}'".format(directory = ctx.path(".git")),
+    ])
+
+def _update_commit(orig, keys, override):
+    # Merge the override information into the dict, resulting by taking the
+    # given keys, as well as the name, from orig (if present there).
+    result = {}
+    for key in keys:
+        if getattr(orig, key) != None:
+            result[key] = getattr(orig, key)
+    result["name"] = orig.name
+    result.update(override)
+
+    # if we found the actual commit, remove all other means of specifying it,
+    # like tag or branch.
+    if "commit" in result:
+        result.pop("tag", None)
+        result.pop("branch", None)
+    return result
 
 _common_attrs = {
     "remote": attr.string(mandatory = True),
     "commit": attr.string(default = ""),
     "shallow_since": attr.string(default = ""),
     "tag": attr.string(default = ""),
+    "branch": attr.string(default = ""),
     "init_submodules": attr.bool(default = False),
     "verbose": attr.bool(default = False),
     "strip_prefix": attr.string(default = ""),
     "patches": attr.label_list(default = []),
     "patch_tool": attr.string(default = "patch"),
+    "patch_args": attr.string_list(default = ["-p0"]),
     "patch_cmds": attr.string_list(default = []),
 }
 
+_new_git_repository_attrs = dict(_common_attrs.items() + {
+    "build_file": attr.label(allow_single_file = True),
+    "build_file_content": attr.string(),
+    "workspace_file": attr.label(),
+    "workspace_file_content": attr.string(),
+}.items())
+
+def _new_git_repository_implementation(ctx):
+    if ((not ctx.attr.build_file and not ctx.attr.build_file_content) or
+        (ctx.attr.build_file and ctx.attr.build_file_content)):
+        fail("Exactly one of build_file and build_file_content must be provided.")
+    update = _clone_or_update(ctx)
+    workspace_and_buildfile(ctx)
+    patch(ctx)
+    _remove_dot_git(ctx)
+    return _update_commit(ctx.attr, _new_git_repository_attrs.keys(), update)
+
+def _git_repository_implementation(ctx):
+    update = _clone_or_update(ctx)
+    patch(ctx)
+    _remove_dot_git(ctx)
+    return _update_commit(ctx.attr, _common_attrs.keys(), update)
+
 new_git_repository = repository_rule(
     implementation = _new_git_repository_implementation,
-    attrs = dict(_common_attrs.items() + {
-        "build_file": attr.label(allow_single_file = True),
-        "build_file_content": attr.string(),
-        "workspace_file": attr.label(),
-        "workspace_file_content": attr.string(),
-    }.items()),
+    attrs = _new_git_repository_attrs,
 )
 """Clone an external git repository.
 
 Clones a Git repository, checks out the specified tag, or commit, and
-makes its targets available for binding.
+makes its targets available for binding. Also determine the id of the
+commit actually checked out and its date, and return a dict with paramters
+that provide a reproducible version of this rule (which a tag not necessarily
+is).
 
 Args:
   name: A unique name for this rule.
@@ -141,10 +199,12 @@ Args:
 
     Either `workspace_file` or `workspace_file_content` can be specified, or
     neither, but not both.
+  branch: branch in the remote repository to checked out
+
   tag: tag in the remote repository to checked out
 
   commit: specific commit to be checked out
-    Either tag or commit must be specified.
+    Precisely one of branch, tag, or commit must be specified.
 
   shallow_since: an optional date, not after the specified commit; the
     argument is not allowed if a tag is specified (which allows cloning
@@ -161,6 +221,7 @@ Args:
   patches: A list of files that are to be applied as patches after extracting
     the archive.
   patch_tool: the patch(1) utility to use.
+  patch_args: arguments given to the patch tool, defaults to ["-p0"]
   patch_cmds: sequence of commands to be applied after patches are applied.
 """
 
@@ -171,7 +232,11 @@ git_repository = repository_rule(
 """Clone an external git repository.
 
 Clones a Git repository, checks out the specified tag, or commit, and
-makes its targets available for binding.
+makes its targets available for binding. Also determine the id of the
+commit actually checked out and its date, and return a dict with paramters
+that provide a reproducible version of this rule (which a tag not necessarily
+is).
+
 
 Args:
   name: A unique name for this rule.
@@ -180,10 +245,12 @@ Args:
 
   remote: The URI of the remote Git repository.
 
+  branch: branch in the remote repository to checked out
+
   tag: tag in the remote repository to checked out
 
   commit: specific commit to be checked out
-    Either tag or commit must be specified.
+    Precisely one of branch, tag, or commit must be specified.
 
   shallow_since: an optional date in the form YYYY-MM-DD, not after
     the specified commit; the argument is not allowed if a tag is specified
@@ -196,5 +263,6 @@ Args:
   patches: A list of files that are to be applied as patches after extracting
     the archive.
   patch_tool: the patch(1) utility to use.
+  patch_args: arguments given to the patch tool, defaults to ["-p0"]
   patch_cmds: sequence of commands to be applied after patches are applied.
 """

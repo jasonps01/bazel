@@ -35,15 +35,9 @@ load("@bazel_tools//tools/build_defs/repo:utils.bzl", "patch", "workspace_and_bu
 def _http_archive_impl(ctx):
     """Implementation of the http_archive rule."""
     if not ctx.attr.url and not ctx.attr.urls:
-        ctx.fail("At least of of url and urls must be provided")
+        ctx.fail("At least one of url and urls must be provided")
     if ctx.attr.build_file and ctx.attr.build_file_content:
         ctx.fail("Only one of build_file and build_file_content can be provided.")
-
-    if ctx.attr.build_file:
-        print("ctx.attr.build_file %s, path %s" %
-              (str(ctx.attr.build_file), ctx.path(ctx.attr.build_file)))
-    for patchfile in ctx.attr.patches:
-        print("patch file %s, path %s" % (patchfile, ctx.path(patchfile)))
 
     all_urls = []
     if ctx.attr.urls:
@@ -115,12 +109,13 @@ _http_archive_attrs = {
     "sha256": attr.string(),
     "strip_prefix": attr.string(),
     "type": attr.string(),
-    "build_file": attr.label(),
+    "build_file": attr.label(allow_single_file = True),
     "build_file_content": attr.string(),
     "patches": attr.label_list(default = []),
     "patch_tool": attr.string(default = "patch"),
+    "patch_args": attr.string_list(default = ["-p0"]),
     "patch_cmds": attr.string_list(default = []),
-    "workspace_file": attr.label(),
+    "workspace_file": attr.label(allow_single_file = True),
     "workspace_file_content": attr.string(),
 }
 
@@ -239,6 +234,7 @@ Args:
   patches: A list of files that are to be applied as patches after extracting
     the archive.
   patch_tool: the patch(1) utility to use.
+  patch_args: arguments given to the patch tool, defaults to ["-p0"]
   patch_cmds: sequence of commands to be applied after patches are applied.
 """
 
@@ -313,6 +309,11 @@ Examples:
   ```
 
   Targets would specify <code>@my_ssl//jar</code> as a dependency to depend on this jar.
+
+  You may also reference files on the current system (localhost) by using "file:///path/to/file"
+  if you are on Unix-based systems. If you're on Windows, use "file:///c:/path/to/file". In both
+  examples, note the three slashes (`/`) -- the first two slashes belong to `file://` and the third
+  one belongs to the absolute path to the file.
 
 
 Args:

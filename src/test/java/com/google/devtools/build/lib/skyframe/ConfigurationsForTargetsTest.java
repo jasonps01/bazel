@@ -24,6 +24,7 @@ import com.google.common.collect.Collections2;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Multimap;
@@ -94,7 +95,7 @@ public class ConfigurationsForTargetsTest extends AnalysisTestCase {
    */
   private static class ComputeDependenciesFunction implements SkyFunction {
     static final SkyFunctionName SKYFUNCTION_NAME =
-         SkyFunctionName.create("CONFIGURED_TARGET_FUNCTION_COMPUTE_DEPENDENCIES");
+        SkyFunctionName.createHermetic("CONFIGURED_TARGET_FUNCTION_COMPUTE_DEPENDENCIES");
 
     private final LateBoundStateProvider stateProvider;
     private final Supplier<BuildOptions> buildOptionsSupplier;
@@ -145,7 +146,7 @@ public class ConfigurationsForTargetsTest extends AnalysisTestCase {
                 (TargetAndConfiguration) skyKey.argument(),
                 ImmutableList.<Aspect>of(),
                 ImmutableMap.<Label, ConfigMatchingProvider>of(),
-                /*toolchainContext=*/ null,
+                /*toolchainLabels=*/ ImmutableSet.of(),
                 stateProvider.lateBoundRuleClassProvider(),
                 stateProvider.lateBoundHostConfig(),
                 NestedSetBuilder.<Package>stableOrder(),
@@ -289,13 +290,13 @@ public class ConfigurationsForTargetsTest extends AnalysisTestCase {
       ConfigurationResolver.putOnlyEntry(map, "foo", "baz");
       fail("Expected an exception when trying to add a new value to an existing key");
     } catch (VerifyException e) {
-      assertThat(e).hasMessage("couldn't insert baz: map already has key foo");
+      assertThat(e).hasMessage("couldn't insert baz: map already has values for key foo: [bar]");
     }
     try {
       ConfigurationResolver.putOnlyEntry(map, "foo", "bar");
       fail("Expected an exception when trying to add a pre-existing <key, value> pair");
     } catch (VerifyException e) {
-      assertThat(e).hasMessage("couldn't insert bar: map already has key foo");
+      assertThat(e).hasMessage("couldn't insert bar: map already has values for key foo: [bar]");
     }
   }
 

@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.actions.ActionExecutionMetadata;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.ActionStatusMessage;
 import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
+import com.google.devtools.build.lib.actions.ArtifactPathResolver;
 import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.MetadataProvider;
@@ -69,9 +70,9 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnActionConte
       ActionExecutionContext actionExecutionContext,
       AtomicReference<Class<? extends SpawnActionContext>> writeOutputFiles)
       throws ExecException, InterruptedException {
-    if (actionExecutionContext.reportsSubcommands()) {
-      actionExecutionContext.reportSubcommand(spawn);
-    }
+
+    actionExecutionContext.maybeReportSubcommand(spawn);
+
     final Duration timeout = Spawns.getTimeout(spawn);
     SpawnExecutionContext context =
         new SpawnExecutionContextImpl(spawn, actionExecutionContext, writeOutputFiles, timeout);
@@ -187,6 +188,11 @@ public abstract class AbstractSpawnStrategy implements SandboxedSpawnActionConte
     @Override
     public ArtifactExpander getArtifactExpander() {
       return actionExecutionContext.getArtifactExpander();
+    }
+
+    @Override
+    public ArtifactPathResolver getPathResolver() {
+      return actionExecutionContext.getPathResolver();
     }
 
     @Override

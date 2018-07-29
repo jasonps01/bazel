@@ -14,11 +14,13 @@
 
 package com.google.devtools.build.lib.runtime;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.EventReportingArtifacts;
 import com.google.devtools.build.lib.buildeventstream.ArtifactGroupNamer;
 import com.google.devtools.build.lib.buildeventstream.BuildEvent;
+import com.google.devtools.build.lib.buildeventstream.BuildEvent.LocalFile.LocalFileType;
 import com.google.devtools.build.lib.buildeventstream.BuildEventContext;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
@@ -48,7 +50,23 @@ class NamedArtifactGroup implements BuildEvent {
 
   @Override
   public Collection<BuildEventId> getChildrenEvents() {
-    return ImmutableSet.<BuildEventId>of();
+    return ImmutableSet.of();
+  }
+
+  @Override
+  public Collection<LocalFile> referencedLocalFiles() {
+    // This has to be consistent with the code below.
+    ImmutableList.Builder<LocalFile> artifacts = ImmutableList.builder();
+    for (Artifact artifact : view.directs()) {
+      if (artifact.isMiddlemanArtifact()) {
+        continue;
+      }
+      artifacts.add(
+          new LocalFile(
+              artifact.getPath(),
+              artifact.isSourceArtifact() ? LocalFileType.SOURCE : LocalFileType.OUTPUT));
+    }
+    return artifacts.build();
   }
 
   @Override
@@ -59,12 +77,15 @@ class NamedArtifactGroup implements BuildEvent {
     BuildEventStreamProtos.NamedSetOfFiles.Builder builder =
         BuildEventStreamProtos.NamedSetOfFiles.newBuilder();
     for (Artifact artifact : view.directs()) {
+      // We never want to report middleman artifacts. They are for internal use only.
       if (artifact.isMiddlemanArtifact()) {
         continue;
       }
       String name = artifact.getRootRelativePathString();
       String uri = pathConverter.apply(artifact.getPath());
-      builder.addFiles(BuildEventStreamProtos.File.newBuilder().setName(name).setUri(uri));
+      if (uri != null) {
+        builder.addFiles(BuildEventStreamProtos.File.newBuilder().setName(name).setUri(uri));
+      }
     }
     for (NestedSetView<Artifact> child : view.transitives()) {
       builder.addFileSets(namer.apply(child.identifier()));

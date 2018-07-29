@@ -123,15 +123,19 @@ public class SkylarkSemanticsConsistencyTest {
         "--incompatible_bzl_disallow_load_after_statement=" + rand.nextBoolean(),
         "--incompatible_depset_is_not_iterable=" + rand.nextBoolean(),
         "--incompatible_depset_union=" + rand.nextBoolean(),
+        "--incompatible_disable_deprecated_attr_params=" + rand.nextBoolean(),
         "--incompatible_disable_objc_provider_resources=" + rand.nextBoolean(),
+        "--incompatible_disallow_data_transition=" + rand.nextBoolean(),
         "--incompatible_disallow_dict_plus=" + rand.nextBoolean(),
         "--incompatible_disallow_filetype=" + rand.nextBoolean(),
         "--incompatible_disallow_legacy_javainfo=" + rand.nextBoolean(),
         "--incompatible_disallow_old_style_args_add=" + rand.nextBoolean(),
         "--incompatible_disallow_slash_operator=" + rand.nextBoolean(),
+        "--incompatible_generate_javacommon_source_jar=" + rand.nextBoolean(),
         "--incompatible_new_actions_api=" + rand.nextBoolean(),
         "--incompatible_no_support_tools_in_action_inputs=" + rand.nextBoolean(),
         "--incompatible_package_name_is_a_function=" + rand.nextBoolean(),
+        "--incompatible_range_type=" + rand.nextBoolean(),
         "--incompatible_remove_native_git_repository=" + rand.nextBoolean(),
         "--incompatible_remove_native_http_archive=" + rand.nextBoolean(),
         "--incompatible_string_is_not_iterable=" + rand.nextBoolean(),
@@ -149,15 +153,19 @@ public class SkylarkSemanticsConsistencyTest {
         .incompatibleBzlDisallowLoadAfterStatement(rand.nextBoolean())
         .incompatibleDepsetIsNotIterable(rand.nextBoolean())
         .incompatibleDepsetUnion(rand.nextBoolean())
+        .incompatibleDisableDeprecatedAttrParams(rand.nextBoolean())
         .incompatibleDisableObjcProviderResources(rand.nextBoolean())
+        .incompatibleDisallowDataTransition(rand.nextBoolean())
         .incompatibleDisallowDictPlus(rand.nextBoolean())
         .incompatibleDisallowFileType(rand.nextBoolean())
         .incompatibleDisallowLegacyJavaInfo(rand.nextBoolean())
         .incompatibleDisallowOldStyleArgsAdd(rand.nextBoolean())
         .incompatibleDisallowSlashOperator(rand.nextBoolean())
+        .incompatibleGenerateJavaCommonSourceJar(rand.nextBoolean())
         .incompatibleNewActionsApi(rand.nextBoolean())
         .incompatibleNoSupportToolsInActionInputs(rand.nextBoolean())
         .incompatiblePackageNameIsAFunction(rand.nextBoolean())
+        .incompatibleRangeType(rand.nextBoolean())
         .incompatibleRemoveNativeGitRepository(rand.nextBoolean())
         .incompatibleRemoveNativeHttpArchive(rand.nextBoolean())
         .incompatibleStringIsNotIterable(rand.nextBoolean())

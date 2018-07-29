@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredAspectFactory;
 import com.google.devtools.build.lib.analysis.OutputGroupInfo;
@@ -52,8 +53,6 @@ import com.google.devtools.build.lib.rules.cpp.CppConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppHelper;
 import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.cpp.CppSemantics;
-import com.google.devtools.build.lib.rules.cpp.TransitiveLipoInfoProvider;
-import com.google.devtools.build.lib.rules.cpp.transitions.LipoContextCollectorTransition;
 import com.google.devtools.build.lib.rules.proto.ProtoCommon;
 import com.google.devtools.build.lib.rules.proto.ProtoCompileActionBuilder;
 import com.google.devtools.build.lib.rules.proto.ProtoCompileActionBuilder.ToolchainInvocation;
@@ -92,7 +91,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
   @Override
   public ConfiguredAspect create(
       ConfiguredTargetAndData ctadBase, RuleContext ruleContext, AspectParameters parameters)
-      throws InterruptedException {
+      throws InterruptedException, ActionConflictException {
     // Get SupportData, which is provided by the proto_library rule we attach to.
     SupportData supportData =
         checkNotNull(ctadBase.getConfiguredTarget().getProvider(ProtoSupportDataProvider.class))
@@ -122,12 +121,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
                     .value(PROTO_TOOLCHAIN_LABEL))
             .add(
                 attr(CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME, LABEL)
-                    .value(ccToolchainAttrValue))
-            .add(
-                attr(TransitiveLipoInfoProvider.LIPO_CONTEXT_COLLECTOR, LABEL)
-                    .cfg(LipoContextCollectorTransition.INSTANCE)
-                    .value(CppRuleClasses.LIPO_CONTEXT_COLLECTOR)
-                    .skipPrereqValidatorCheck());
+                    .value(ccToolchainAttrValue));
 
     return result.build();
   }
@@ -256,6 +250,9 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
       }
 
       helper.addDeps(ruleContext.getPrerequisites("deps", TARGET));
+
+      // Don't instrument the generated C++ files even when --collect_code_coverage is set.
+      helper.setAllowCoverageInstrumentation(false);
       return helper;
     }
 
@@ -346,6 +343,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
           supportData.getTransitiveImports(),
           supportData.getProtosInDirectDeps(),
           supportData.getTransitiveProtoPathFlags(),
+          supportData.getDirectProtoSourceRoots(),
           ruleContext.getLabel(),
           outputs,
           "C++",

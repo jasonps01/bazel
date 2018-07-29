@@ -15,12 +15,9 @@
 package com.google.devtools.build.lib.skyframe;
 
 import com.google.common.base.Preconditions;
-import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.devtools.build.lib.actions.Actions;
-import com.google.devtools.build.lib.actions.Actions.GeneratingActions;
 import com.google.devtools.build.lib.actions.InconsistentFilesystemException;
 import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.AliasProvider;
@@ -68,7 +65,6 @@ import com.google.devtools.build.lib.skyframe.ConfiguredTargetFunction.Configure
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetFunction.DependencyEvaluationException;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor.BuildViewProvider;
 import com.google.devtools.build.lib.skyframe.SkylarkImportLookupFunction.SkylarkImportFailedException;
-import com.google.devtools.build.lib.skyframe.ToolchainUtil.ToolchainContextException;
 import com.google.devtools.build.lib.syntax.Type.ConversionException;
 import com.google.devtools.build.lib.util.OrderedSetMultimap;
 import com.google.devtools.build.skyframe.SkyFunction;
@@ -102,7 +98,6 @@ import javax.annotation.Nullable;
 public final class AspectFunction implements SkyFunction {
   private final BuildViewProvider buildViewProvider;
   private final RuleClassProvider ruleClassProvider;
-  private final Supplier<Boolean> removeActionsAfterEvaluation;
   private final BuildOptions defaultBuildOptions;
   @Nullable SkylarkImportLookupFunction skylarkImportLookupFunctionForInlining;
   /**
@@ -115,13 +110,11 @@ public final class AspectFunction implements SkyFunction {
   AspectFunction(
       BuildViewProvider buildViewProvider,
       RuleClassProvider ruleClassProvider,
-      Supplier<Boolean> removeActionsAfterEvaluation,
       @Nullable SkylarkImportLookupFunction skylarkImportLookupFunctionForInlining,
       boolean storeTransitivePackagesForPackageRootResolution,
       BuildOptions defaultBuildOptions) {
     this.buildViewProvider = buildViewProvider;
     this.ruleClassProvider = ruleClassProvider;
-    this.removeActionsAfterEvaluation = Preconditions.checkNotNull(removeActionsAfterEvaluation);
     this.skylarkImportLookupFunctionForInlining = skylarkImportLookupFunctionForInlining;
     this.storeTransitivePackagesForPackageRootResolution =
         storeTransitivePackagesForPackageRootResolution;
@@ -422,7 +415,7 @@ public final class AspectFunction implements SkyFunction {
                 requiredToolchains,
                 /* execConstraintLabels= */ ImmutableSet.of(),
                 key.getAspectConfigurationKey());
-      } catch (ToolchainContextException e) {
+      } catch (ToolchainException e) {
         // TODO(katre): better error handling
         throw new AspectCreationException(
             e.getMessage(), new LabelCause(key.getLabel(), e.getMessage()));
@@ -440,7 +433,9 @@ public final class AspectFunction implements SkyFunction {
                 originalTargetAndAspectConfiguration,
                 aspectPath,
                 configConditions,
-                toolchainContext,
+                toolchainContext == null
+                    ? ImmutableSet.of()
+                    : toolchainContext.resolvedToolchainLabels(),
                 ruleClassProvider,
                 view.getHostConfiguration(originalTargetAndAspectConfiguration.getConfiguration()),
                 transitivePackagesForPackageRootResolution,
@@ -455,6 +450,11 @@ public final class AspectFunction implements SkyFunction {
       if (!transitiveRootCauses.isEmpty()) {
         throw new AspectFunctionException(
             new AspectCreationException("Loading failed", transitiveRootCauses.build()));
+      }
+
+      // Load the requested toolchains into the ToolchainContext, now that we have dependencies.
+      if (toolchainContext != null) {
+        toolchainContext.resolveToolchains(depValueMap);
       }
 
       return createAspect(
@@ -577,9 +577,7 @@ public final class AspectFunction implements SkyFunction {
         originalTarget.getLabel(),
         originalTarget.getLocation(),
         ConfiguredAspect.forAlias(real.getConfiguredAspect()),
-        GeneratingActions.EMPTY,
-        transitivePackagesForPackageRootResolution,
-        removeActionsAfterEvaluation.get());
+        transitivePackagesForPackageRootResolution);
   }
 
   @Nullable
@@ -649,27 +647,15 @@ public final class AspectFunction implements SkyFunction {
     analysisEnvironment.disable(associatedTarget.getTarget());
     Preconditions.checkNotNull(configuredAspect);
 
-    GeneratingActions generatingActions;
-    // Check for conflicting actions within this aspect (indicates a bug in the implementation).
-    try {
-      generatingActions =
-          Actions.filterSharedActionsAndThrowActionConflict(
-              analysisEnvironment.getActionKeyContext(),
-              analysisEnvironment.getRegisteredActions());
-    } catch (ActionConflictException e) {
-      throw new AspectFunctionException(e);
-    }
     return new AspectValue(
         key,
         aspect,
         associatedTarget.getTarget().getLabel(),
         associatedTarget.getTarget().getLocation(),
         configuredAspect,
-        generatingActions,
         transitivePackagesForPackageRootResolution == null
             ? null
-            : transitivePackagesForPackageRootResolution.build(),
-        removeActionsAfterEvaluation.get());
+            : transitivePackagesForPackageRootResolution.build());
   }
 
   @Override
@@ -715,10 +701,8 @@ public final class AspectFunction implements SkyFunction {
     }
   }
 
-  /**
-   * Used to indicate errors during the computation of an {@link AspectValue}.
-   */
-  private static final class AspectFunctionException extends SkyFunctionException {
+  /** Used to indicate errors during the computation of an {@link AspectValue}. */
+  public static final class AspectFunctionException extends SkyFunctionException {
     public AspectFunctionException(NoSuchThingException e) {
       super(e, Transience.PERSISTENT);
     }

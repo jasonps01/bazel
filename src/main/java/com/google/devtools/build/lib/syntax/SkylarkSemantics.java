@@ -47,7 +47,11 @@ public abstract class SkylarkSemantics {
 
   public abstract boolean incompatibleDepsetUnion();
 
+  public abstract boolean incompatibleDisableDeprecatedAttrParams();
+
   public abstract boolean incompatibleDisableObjcProviderResources();
+
+  public abstract boolean incompatibleDisallowDataTransition();
 
   public abstract boolean incompatibleDisallowDictPlus();
 
@@ -59,11 +63,15 @@ public abstract class SkylarkSemantics {
 
   public abstract boolean incompatibleDisallowSlashOperator();
 
+  public abstract boolean incompatibleGenerateJavaCommonSourceJar();
+
   public abstract boolean incompatibleNewActionsApi();
 
   public abstract boolean incompatibleNoSupportToolsInActionInputs();
 
   public abstract boolean incompatiblePackageNameIsAFunction();
+
+  public abstract boolean incompatibleRangeType();
 
   public abstract boolean incompatibleRemoveNativeGitRepository();
 
@@ -92,15 +100,19 @@ public abstract class SkylarkSemantics {
           .incompatibleBzlDisallowLoadAfterStatement(false)
           .incompatibleDepsetIsNotIterable(false)
           .incompatibleDepsetUnion(false)
+          .incompatibleDisableDeprecatedAttrParams(false)
           .incompatibleDisableObjcProviderResources(false)
+          .incompatibleDisallowDataTransition(false)
           .incompatibleDisallowDictPlus(false)
           .incompatibleDisallowFileType(false)
           .incompatibleDisallowLegacyJavaInfo(false)
           .incompatibleDisallowOldStyleArgsAdd(false)
           .incompatibleDisallowSlashOperator(false)
+          .incompatibleGenerateJavaCommonSourceJar(false)
           .incompatibleNewActionsApi(false)
           .incompatibleNoSupportToolsInActionInputs(false)
           .incompatiblePackageNameIsAFunction(false)
+          .incompatibleRangeType(false)
           .incompatibleRemoveNativeGitRepository(false)
           .incompatibleRemoveNativeHttpArchive(false)
           .incompatibleStringIsNotIterable(false)
@@ -120,7 +132,11 @@ public abstract class SkylarkSemantics {
 
     public abstract Builder incompatibleDepsetUnion(boolean value);
 
+    public abstract Builder incompatibleDisableDeprecatedAttrParams(boolean value);
+
     public abstract Builder incompatibleDisableObjcProviderResources(boolean value);
+
+    public abstract Builder incompatibleDisallowDataTransition(boolean value);
 
     public abstract Builder incompatibleDisallowDictPlus(boolean value);
 
@@ -132,11 +148,15 @@ public abstract class SkylarkSemantics {
 
     public abstract Builder incompatibleDisallowSlashOperator(boolean value);
 
+    public abstract Builder incompatibleGenerateJavaCommonSourceJar(boolean value);
+
     public abstract Builder incompatibleNewActionsApi(boolean value);
 
     public abstract Builder incompatibleNoSupportToolsInActionInputs(boolean value);
 
     public abstract Builder incompatiblePackageNameIsAFunction(boolean value);
+
+    public abstract Builder incompatibleRangeType(boolean value);
 
     public abstract Builder incompatibleRemoveNativeGitRepository(boolean value);
 

@@ -31,10 +31,11 @@ import com.google.devtools.build.lib.analysis.ServerDirectories;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.analysis.test.CoverageReportActionFactory;
-import com.google.devtools.build.lib.buildeventstream.PathConverter;
+import com.google.devtools.build.lib.buildeventstream.BuildEventArtifactUploaderFactoryMap;
 import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.clock.Clock;
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.OutputFilter;
 import com.google.devtools.build.lib.exec.BinTools;
 import com.google.devtools.build.lib.packages.Package;
@@ -44,8 +45,10 @@ import com.google.devtools.build.lib.profiler.AutoProfiler;
 import com.google.devtools.build.lib.profiler.MemoryProfiler;
 import com.google.devtools.build.lib.profiler.ProfilePhase;
 import com.google.devtools.build.lib.profiler.Profiler;
+import com.google.devtools.build.lib.profiler.Profiler.Format;
 import com.google.devtools.build.lib.profiler.Profiler.ProfiledTaskKinds;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
+import com.google.devtools.build.lib.profiler.SilentCloseable;
 import com.google.devtools.build.lib.query2.AbstractBlazeQueryEnvironment;
 import com.google.devtools.build.lib.query2.QueryEnvironmentFactory;
 import com.google.devtools.build.lib.query2.engine.QueryEnvironment.QueryFunction;
@@ -86,7 +89,6 @@ import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.OptionsProvider;
 import com.google.devtools.common.options.TriState;
-import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -154,7 +156,7 @@ public final class BlazeRuntime {
   private final String defaultsPackageContent;
   private final SubscriberExceptionHandler eventBusExceptionHandler;
   private final String productName;
-  private final PathConverter pathToUriConverter;
+  private final BuildEventArtifactUploaderFactoryMap buildEventArtifactUploaderFactoryMap;
   private final ActionKeyContext actionKeyContext;
 
   // Workspace state (currently exactly one workspace per server)
@@ -179,7 +181,7 @@ public final class BlazeRuntime {
       InvocationPolicy moduleInvocationPolicy,
       Iterable<BlazeCommand> commands,
       String productName,
-      PathConverter pathToUriConverter) {
+      BuildEventArtifactUploaderFactoryMap buildEventArtifactUploaderFactoryMap) {
     // Server state
     this.fileSystem = fileSystem;
     this.blazeModules = blazeModules;
@@ -206,7 +208,7 @@ public final class BlazeRuntime {
     CommandNameCache.CommandNameCacheInstance.INSTANCE.setCommandNameCache(
         new CommandNameCacheImpl(getCommandMap()));
     this.productName = productName;
-    this.pathToUriConverter = pathToUriConverter;
+    this.buildEventArtifactUploaderFactoryMap = buildEventArtifactUploaderFactoryMap;
   }
 
   public BlazeWorkspace initWorkspace(BlazeDirectories directories, BinTools binTools)
@@ -227,8 +229,8 @@ public final class BlazeRuntime {
     for (BlazeModule module : blazeModules) {
       CoverageReportActionFactory factory = module.getCoverageReportFactory(commandOptions);
       if (factory != null) {
-        Preconditions.checkState(firstFactory == null,
-            "only one Blaze Module can have a Coverage Report Factory");
+        Preconditions.checkState(
+            firstFactory == null, "only one Bazel Module can have a Coverage Report Factory");
         firstFactory = factory;
       }
     }
@@ -260,25 +262,43 @@ public final class BlazeRuntime {
     return moduleInvocationPolicy;
   }
 
-  /**
-   * Conditionally enable profiling.
-   */
-  private final boolean initProfiler(
-      CommandEnvironment env,
+  /** Configure profiling based on the provided options. */
+  void initProfiler(
+      EventHandler eventHandler,
+      BlazeWorkspace workspace,
       CommonCommandOptions options,
       UUID buildID,
       long execStartTimeNanos) {
     OutputStream out = null;
     boolean recordFullProfilerData = false;
     ProfiledTaskKinds profiledTasks = ProfiledTaskKinds.NONE;
-
+    Profiler.Format format = Profiler.Format.BINARY_BAZEL_FORMAT;
     try {
-      if (options.profilePath != null) {
-        Path profilePath = env.getWorkspace().getRelative(options.profilePath);
+      if (options.enableTracer) {
+        format =
+            options.enableTracerCompression
+                ? Format.JSON_TRACE_FILE_COMPRESSED_FORMAT
+                : Profiler.Format.JSON_TRACE_FILE_FORMAT;
+        Path profilePath;
+        if (options.profilePath != null) {
+          profilePath = workspace.getWorkspace().getRelative(options.profilePath);
+        } else {
+          String profileName = "command.profile";
+          if (format == Format.JSON_TRACE_FILE_COMPRESSED_FORMAT) {
+            profileName = "command.profile.gz";
+          }
+          profilePath = workspace.getOutputBase().getRelative(profileName);
+        }
+        recordFullProfilerData = false;
+        out = profilePath.getOutputStream();
+        eventHandler.handle(Event.info("Writing tracer profile to '" + profilePath + "'"));
+        profiledTasks = ProfiledTaskKinds.ALL_FOR_TRACE;
+      } else if (options.profilePath != null) {
+        Path profilePath = workspace.getWorkspace().getRelative(options.profilePath);
 
         recordFullProfilerData = options.recordFullProfilerData;
-        out = new BufferedOutputStream(profilePath.getOutputStream(), 1024 * 1024);
-        env.getReporter().handle(Event.info("Writing profile data to '" + profilePath + "'"));
+        out = profilePath.getOutputStream();
+        eventHandler.handle(Event.info("Writing profile data to '" + profilePath + "'"));
         profiledTasks = ProfiledTaskKinds.ALL;
       } else if (options.alwaysProfileSlowOperations) {
         recordFullProfilerData = false;
@@ -286,20 +306,35 @@ public final class BlazeRuntime {
         profiledTasks = ProfiledTaskKinds.SLOWEST;
       }
       if (profiledTasks != ProfiledTaskKinds.NONE) {
-        Profiler.instance().start(
+        Profiler profiler = Profiler.instance();
+        profiler.start(
             profiledTasks,
             out,
-            getProductName() + " profile for " + env.getOutputBase() + " at " + new Date()
-            + ", build ID: " + buildID,
+            format,
+            String.format(
+                "%s profile for %s at %s, build ID: %s",
+                getProductName(),
+                workspace.getOutputBase(),
+                new Date(),
+                buildID),
             recordFullProfilerData,
             clock,
             execStartTimeNanos);
-        return true;
+        // Instead of logEvent() we're calling the low level function to pass the timings we took in
+        // the launcher. We're setting the INIT phase marker so that it follows immediately the
+        // LAUNCH phase.
+        long startupTimeNanos = options.startupTime * 1000000L;
+        profiler.logSimpleTaskDuration(
+            execStartTimeNanos - startupTimeNanos,
+            Duration.ZERO,
+            ProfilerTask.PHASE,
+            ProfilePhase.LAUNCH.description);
+        profiler.logSimpleTaskDuration(
+            execStartTimeNanos, Duration.ZERO, ProfilerTask.PHASE, ProfilePhase.INIT.description);
       }
     } catch (IOException e) {
-      env.getReporter().handle(Event.error("Error while creating profile file: " + e.getMessage()));
+      eventHandler.handle(Event.error("Error while creating profile file: " + e.getMessage()));
     }
-    return false;
   }
 
   public FileSystem getFileSystem() {
@@ -369,12 +404,12 @@ public final class BlazeRuntime {
           options = optionsFromModule;
         } else {
           throw new IllegalArgumentException(
-              "Two or more blaze modules contained default build options.");
+              "Two or more bazel modules contained default build options.");
         }
       }
     }
     if (options == null) {
-      throw new IllegalArgumentException("No default build options specified in any Blaze module");
+      throw new IllegalArgumentException("No default build options specified in any Bazel module");
     }
     return options;
   }
@@ -414,26 +449,8 @@ public final class BlazeRuntime {
    * @param options The CommonCommandOptions used by every command.
    * @throws AbruptExitException if this command is unsuitable to be run as specified
    */
-  void beforeCommand(CommandEnvironment env, CommonCommandOptions options, long execStartTimeNanos)
+  void beforeCommand(CommandEnvironment env, CommonCommandOptions options)
       throws AbruptExitException {
-    // Conditionally enable profiling
-    // We need to compensate for launchTimeNanos (measurements taken outside of the jvm).
-    long startupTimeNanos = options.startupTime * 1000000L;
-    if (initProfiler(env, options, env.getCommandId(), execStartTimeNanos - startupTimeNanos)) {
-      Profiler profiler = Profiler.instance();
-
-      // Instead of logEvent() we're calling the low level function to pass the timings we took in
-      // the launcher. We're setting the INIT phase marker so that it follows immediately the LAUNCH
-      // phase.
-      profiler.logSimpleTaskDuration(
-          execStartTimeNanos - startupTimeNanos,
-          Duration.ZERO,
-          ProfilerTask.PHASE,
-          ProfilePhase.LAUNCH.description);
-      profiler.logSimpleTaskDuration(
-          execStartTimeNanos, Duration.ZERO, ProfilerTask.PHASE, ProfilePhase.INIT.description);
-    }
-
     if (options.memoryProfilePath != null) {
       Path memoryProfilePath = env.getWorkingDirectory().getRelative(options.memoryProfilePath);
       MemoryProfiler.instance()
@@ -476,7 +493,9 @@ public final class BlazeRuntime {
     notifyCommandComplete(exitCode);
 
     for (BlazeModule module : blazeModules) {
-      module.afterCommand();
+      try (SilentCloseable c = Profiler.instance().profile(module + ".afterCommand")) {
+        module.afterCommand();
+      }
     }
 
     // Wipe the dependency graph if requested. Note that this method always runs at the end of
@@ -628,10 +647,7 @@ public final class BlazeRuntime {
       System.exit(batchMain(modules, args));
     }
     logger.info(
-        "Starting Blaze server with "
-            + maybeGetPidString()
-            + "args "
-            + Arrays.toString(args));
+        "Starting Bazel server with " + maybeGetPidString() + "args " + Arrays.toString(args));
     try {
       // Run Blaze in server mode.
       System.exit(serverMain(modules, OutErr.SYSTEM_OUT_ERR, args));
@@ -774,7 +790,7 @@ public final class BlazeRuntime {
       @Override
       public void run() {
         logger.info("User interrupt");
-        OutErr.SYSTEM_OUT_ERR.printErrLn("Blaze received an interrupt");
+        OutErr.SYSTEM_OUT_ERR.printErrLn("Bazel received an interrupt");
         mainThread.interrupt();
 
         int curNumInterrupts = numInterrupts.incrementAndGet();
@@ -798,7 +814,7 @@ public final class BlazeRuntime {
     InterruptSignalHandler signalHandler = captureSigint();
     CommandLineOptions commandLineOptions = splitStartupOptions(modules, args);
     logger.info(
-        "Running Blaze in batch mode with "
+        "Running Bazel in batch mode with "
             + maybeGetPidString()
             + "startup args "
             + commandLineOptions.getStartupArgs());
@@ -1248,8 +1264,8 @@ public final class BlazeRuntime {
     return productName;
   }
 
-  public PathConverter getPathToUriConverter() {
-    return pathToUriConverter;
+  public BuildEventArtifactUploaderFactoryMap getBuildEventArtifactUploaderFactoryMap() {
+    return buildEventArtifactUploaderFactoryMap;
   }
 
   /**
@@ -1356,7 +1372,7 @@ public final class BlazeRuntime {
           serverBuilder.getInvocationPolicy(),
           serverBuilder.getCommands(),
           productName,
-          serverBuilder.getPathToUriConverter());
+          serverBuilder.getBuildEventArtifactUploaderMap());
     }
 
     public Builder setProductName(String productName) {

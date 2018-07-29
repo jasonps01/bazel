@@ -19,13 +19,15 @@ import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider.RuleSe
 import com.google.devtools.build.lib.bazel.rules.cpp.BazelCcBinaryRule;
 import com.google.devtools.build.lib.bazel.rules.cpp.BazelCcImportRule;
 import com.google.devtools.build.lib.bazel.rules.cpp.BazelCcLibraryRule;
+import com.google.devtools.build.lib.bazel.rules.cpp.BazelCcModule;
 import com.google.devtools.build.lib.bazel.rules.cpp.BazelCcTestRule;
 import com.google.devtools.build.lib.bazel.rules.cpp.BazelCppRuleClasses;
 import com.google.devtools.build.lib.rules.core.CoreRules;
+import com.google.devtools.build.lib.rules.cpp.CcCompilationInfo;
 import com.google.devtools.build.lib.rules.cpp.CcHostToolchainAliasRule;
 import com.google.devtools.build.lib.rules.cpp.CcImportRule;
 import com.google.devtools.build.lib.rules.cpp.CcLibcTopAlias;
-import com.google.devtools.build.lib.rules.cpp.CcModule;
+import com.google.devtools.build.lib.rules.cpp.CcLinkingInfo;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainAliasRule;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainRule;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainSuiteRule;
@@ -37,6 +39,7 @@ import com.google.devtools.build.lib.rules.cpp.CpuTransformer;
 import com.google.devtools.build.lib.rules.cpp.FdoPrefetchHintsRule;
 import com.google.devtools.build.lib.rules.cpp.FdoProfileRule;
 import com.google.devtools.build.lib.rules.platform.PlatformRules;
+import com.google.devtools.build.lib.skylarkbuildapi.cpp.CcBootstrap;
 
 /**
  * Rules for C++ support in Bazel.
@@ -50,8 +53,6 @@ public class CcRules implements RuleSet {
 
   @Override
   public void init(ConfiguredRuleClassProvider.Builder builder) {
-    builder.addSkylarkAccessibleTopLevels("cc_common", CcModule.INSTANCE);
-
     builder.addConfig(CppOptions.class, new CppConfigurationLoader(CpuTransformer.IDENTITY));
     builder.addBuildInfoFactory(new CppBuildInfo());
 
@@ -75,6 +76,10 @@ public class CcRules implements RuleSet {
     builder.addRuleDefinition(new CcIncludeScanningRule());
     builder.addRuleDefinition(new FdoProfileRule());
     builder.addRuleDefinition(new FdoPrefetchHintsRule());
+
+    builder.addSkylarkBootstrap(new CcBootstrap(new BazelCcModule()));
+    builder.addSkylarkAccessibleTopLevels("CcCompilationInfo", CcCompilationInfo.PROVIDER);
+    builder.addSkylarkAccessibleTopLevels("CcLinkingInfo", CcLinkingInfo.PROVIDER);
   }
 
   @Override

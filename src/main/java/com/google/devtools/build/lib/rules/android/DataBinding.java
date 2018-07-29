@@ -156,16 +156,7 @@ public final class DataBinding {
             ruleContext.getPrerequisite(
                 DATABINDING_ANNOTATION_PROCESSOR_ATTR, RuleConfiguredTarget.Mode.HOST));
 
-    for (String name : plugin.getProcessorClasses()) {
-      // For header compilation (see JavaHeaderCompileAction):
-      attributes.addApiGeneratingProcessorName(name);
-      // For full compilation:
-      attributes.addProcessorName(name);
-    }
-    // For header compilation (see JavaHeaderCompileAction):
-    attributes.addApiGeneratingProcessorPath(plugin.getProcessorClasspath());
-    // For full compilation:
-    attributes.addProcessorPath(plugin.getProcessorClasspath());
+    attributes.addPlugin(plugin);
     attributes.addAdditionalOutputs(getMetadataOutputs(ruleContext));
   }
 
@@ -254,8 +245,7 @@ public final class DataBinding {
       dataBindingMetadataOutputs.addAll(getTransitiveMetadata(ruleContext, "deps"));
     }
     if (!dataBindingMetadataOutputs.isEmpty()) {
-      builder.addProvider(
-          UsesDataBindingProvider.class, new UsesDataBindingProvider(dataBindingMetadataOutputs));
+      builder.addNativeDeclaredProvider(new UsesDataBindingProvider(dataBindingMetadataOutputs));
     }
   }
 
@@ -265,7 +255,7 @@ public final class DataBinding {
     if (ruleContext.attributes().has(attr, BuildType.LABEL_LIST)) {
       for (UsesDataBindingProvider provider :
           ruleContext.getPrerequisites(
-              attr, RuleConfiguredTarget.Mode.TARGET, UsesDataBindingProvider.class)) {
+              attr, RuleConfiguredTarget.Mode.TARGET, UsesDataBindingProvider.PROVIDER)) {
         dataBindingMetadataOutputs.addAll(provider.getMetadataOutputs());
       }
     }

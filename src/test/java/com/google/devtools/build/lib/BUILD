@@ -40,9 +40,11 @@ filegroup(
         "//src/test/java/com/google/devtools/build/lib/analysis/skylark/annotations/processor:srcs",
         "//src/test/java/com/google/devtools/build/lib/analysis/whitelisting:srcs",
         "//src/test/java/com/google/devtools/build/lib/bazel/repository/cache:srcs",
+        "//src/test/java/com/google/devtools/build/lib/bazel/debug:srcs",
         "//src/test/java/com/google/devtools/build/lib/bazel/repository/downloader:srcs",
         "//src/test/java/com/google/devtools/build/lib/bazel/repository:srcs",
         "//src/test/java/com/google/devtools/build/lib/buildeventservice:srcs",
+        "//src/test/java/com/google/devtools/build/lib/buildeventstream:srcs",
         "//src/test/java/com/google/devtools/build/lib/buildeventstream/transports:srcs",
         "//src/test/java/com/google/devtools/build/lib/buildtool:srcs",
         "//src/test/java/com/google/devtools/build/lib/profiler/callcounts:srcs",
@@ -61,6 +63,7 @@ filegroup(
         "//src/test/java/com/google/devtools/build/lib/skylarkdebug/server:srcs",
         "//src/test/java/com/google/devtools/build/lib/skylarkinterface/processor:srcs",
         "//src/test/java/com/google/devtools/build/lib/unsafe:srcs",
+        "//src/test/java/com/google/devtools/build/lib/integration/blackbox/framework/junit:srcs",
     ],
     visibility = ["//src:__pkg__"],
 )
@@ -151,6 +154,7 @@ java_library(
     name = "test_runner",
     testonly = 1,
     srcs = ["AllTests.java"],
+    visibility = ["//src/test/java/com/google/devtools/build:__subpackages__"],
     deps = [
         ":testutil",
         "//third_party:junit4",
@@ -170,7 +174,7 @@ java_test(
         ":test_runner",
         ":testutil",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
-        "//src/main/java/com/google/devtools/build/lib/vfs",
+        "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
     ],
 )
 
@@ -605,6 +609,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib:util",
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform",
+        "//src/main/java/com/google/devtools/build/lib/causes",
         "//src/main/java/com/google/devtools/build/lib/clock",
         "//src/main/java/com/google/devtools/build/lib/collect",
         "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
@@ -797,6 +802,7 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib:skylarkinterface",
         "//src/main/java/com/google/devtools/build/lib:util",
         "//src/main/java/com/google/devtools/build/lib/actions",
+        "//src/main/java/com/google/devtools/build/lib/buildeventstream",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:build_event_stream_java_proto",
         "//src/main/java/com/google/devtools/build/lib/causes",
         "//src/main/java/com/google/devtools/build/lib/collect",
@@ -1247,6 +1253,7 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib:util",
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/authandtls",
+        "//src/main/java/com/google/devtools/build/lib/buildeventstream",
         "//src/main/java/com/google/devtools/build/lib/clock",
         "//src/main/java/com/google/devtools/build/lib/remote",
         "//src/main/java/com/google/devtools/build/lib/remote/blobstore",
@@ -1538,6 +1545,25 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib/vfs/inmemoryfs",
         "//src/main/java/com/google/devtools/build/lib/worker",
         "//src/main/protobuf:worker_protocol_java_proto",
+    ],
+)
+
+java_test(
+    name = "java-integration-tests",
+    srcs = glob(["integration/blackbox/**/*.java"]),
+    test_class = "com.google.devtools.build.lib.AllTests",
+    deps = [
+        ":guava_junit_truth",
+        ":test_runner",
+        ":testutil",
+        "//src/main/java/com/google/devtools/build/lib:io",
+        "//src/main/java/com/google/devtools/build/lib:os_util",
+        "//src/main/java/com/google/devtools/build/lib:util",
+        "//third_party:auto_value",
+        "//third_party:guava",
+        "//third_party:jsr305",
+        "//third_party:junit4",
+        "//third_party:truth",
     ],
 )
 

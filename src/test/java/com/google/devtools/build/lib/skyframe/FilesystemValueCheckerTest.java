@@ -745,22 +745,26 @@ public class FilesystemValueCheckerTest {
         throw new IllegalStateException(e);
       }
     }
-    return new ActionExecutionValue(
+    return ActionExecutionValue.create(
         artifactData,
         ImmutableMap.<Artifact, TreeArtifactValue>of(),
         ImmutableMap.<Artifact, FileArtifactValue>of(),
-        /*outputSymlinks=*/ null);
+        /*outputSymlinks=*/ null,
+        /*discoveredModules=*/ null,
+        /*notifyOnActionCacheHitAction=*/ false);
   }
 
   private ActionExecutionValue actionValueWithEmptyDirectory(Artifact emptyDir) {
     TreeArtifactValue emptyValue = TreeArtifactValue.create
         (ImmutableMap.<TreeFileArtifact, FileArtifactValue>of());
 
-    return new ActionExecutionValue(
+    return ActionExecutionValue.create(
         ImmutableMap.<Artifact, FileValue>of(),
         ImmutableMap.of(emptyDir, emptyValue),
         ImmutableMap.<Artifact, FileArtifactValue>of(),
-        /*outputSymlinks=*/ null);
+        /*outputSymlinks=*/ null,
+        /*discoveredModules=*/ null,
+        /*notifyOnActionCacheHitAction=*/ false);
   }
 
   private ActionExecutionValue actionValueWithTreeArtifacts(List<TreeFileArtifact> contents) {
@@ -789,11 +793,13 @@ public class FilesystemValueCheckerTest {
       treeArtifactData.put(dirDatum.getKey(), TreeArtifactValue.create(dirDatum.getValue()));
     }
 
-    return new ActionExecutionValue(
+    return ActionExecutionValue.create(
         fileData,
         treeArtifactData,
         ImmutableMap.<Artifact, FileArtifactValue>of(),
-        /*outputSymlinks=*/ null);
+        /*outputSymlinks=*/ null,
+        /*discoveredModules=*/ null,
+        /*notifyOnActionCacheHitAction=*/ false);
   }
 
   @Test

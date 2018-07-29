@@ -21,6 +21,7 @@ import static org.junit.Assert.fail;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
@@ -36,8 +37,8 @@ import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
+import com.google.devtools.build.lib.analysis.actions.Substitution;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction;
-import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Substitution;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
 import com.google.devtools.build.lib.analysis.skylark.SkylarkActionFactory;
 import com.google.devtools.build.lib.analysis.skylark.SkylarkCustomCommandLine;
@@ -1289,7 +1290,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
       getConfiguredTarget("//test:my_rule");
       fail();
     } catch (AssertionError expected) {
-      assertThat(expected).hasMessageThat().contains("Invalid field for default provider: foo");
+      assertThat(expected).hasMessageThat()
+          .contains("unexpected keyword 'foo' in call to DefaultInfo");
     }
   }
 
@@ -1335,7 +1337,9 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     Object provider = configuredTarget.get("proxy");
     assertThat(provider).isInstanceOf(Info.class);
     assertThat(((Info) provider).getProvider().getKey())
-        .isEqualTo(new SkylarkKey(Label.parseAbsolute("//test:foo.bzl"), "foo_provider"));
+        .isEqualTo(
+            new SkylarkKey(
+                Label.parseAbsolute("//test:foo.bzl", ImmutableMap.of()), "foo_provider"));
   }
 
   @Test
@@ -1375,7 +1379,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     Object provider = configuredTarget.get("proxy");
     assertThat(provider).isInstanceOf(Info.class);
     assertThat(((Info) provider).getProvider().getKey())
-        .isEqualTo(new SkylarkKey(Label.parseAbsolute("//test:foo.bzl"), "FooInfo"));
+        .isEqualTo(
+            new SkylarkKey(Label.parseAbsolute("//test:foo.bzl", ImmutableMap.of()), "FooInfo"));
   }
 
   @Test
@@ -1492,7 +1497,9 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     Object provider = configuredTarget.get("proxy");
     assertThat(provider).isInstanceOf(Info.class);
     assertThat(((Info) provider).getProvider().getKey())
-        .isEqualTo(new SkylarkKey(Label.parseAbsolute("//test:foo.bzl"), "foo_provider"));
+        .isEqualTo(
+            new SkylarkKey(
+                Label.parseAbsolute("//test:foo.bzl", ImmutableMap.of()), "foo_provider"));
     assertThat(((Info) provider).getValue("a")).isEqualTo(123);
   }
 
@@ -1539,7 +1546,9 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     Object provider = configuredTarget.get("proxy");
     assertThat(provider).isInstanceOf(Info.class);
     assertThat(((Info) provider).getProvider().getKey())
-        .isEqualTo(new SkylarkKey(Label.parseAbsolute("//test:foo.bzl"), "foo_provider"));
+        .isEqualTo(
+            new SkylarkKey(
+                Label.parseAbsolute("//test:foo.bzl", ImmutableMap.of()), "foo_provider"));
   }
 
   @Test
@@ -2370,6 +2379,10 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         ruleContext,
         "Invalid value for parameter \"param_file_arg\": Expected string with a single \"%s\"",
         "args = ruleContext.actions.args()\n" + "args.use_param_file('--file=')");
+    checkError(
+        ruleContext,
+        "Invalid value for parameter \"param_file_arg\": Expected string with a single \"%s\"",
+        "args = ruleContext.actions.args()\n" + "args.use_param_file('--file=%s%s')");
   }
 
   @Test

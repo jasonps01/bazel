@@ -14,7 +14,7 @@
 
 package com.google.devtools.build.lib.rules.cpp;
 
-
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.analysis.RedirectChaser;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.packages.NoSuchThingException;
 import com.google.devtools.build.lib.packages.NonconfigurableAttributeMapper;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.Target;
+import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig;
@@ -77,7 +78,6 @@ public class CppConfigurationLoader implements ConfigurationFragmentFactory {
    * Value class for all the data needed to create a {@link CppConfiguration}.
    */
   public static class CppConfigurationParameters {
-    protected final CrosstoolConfig.CToolchain toolchain;
     protected final CrosstoolConfigurationLoader.CrosstoolFile crosstoolFile;
     protected final String cacheKeySuffix;
     protected final BuildConfiguration.Options commonOptions;
@@ -89,9 +89,9 @@ public class CppConfigurationLoader implements ConfigurationFragmentFactory {
     protected final Label fdoOptimizeLabel;
     protected final Label sysrootLabel;
     protected final CpuTransformer cpuTransformer;
+    protected final CcToolchainConfigInfo ccToolchainConfigInfo;
 
     CppConfigurationParameters(
-        CrosstoolConfig.CToolchain toolchain,
         CrosstoolConfigurationLoader.CrosstoolFile crosstoolFile,
         String cacheKeySuffix,
         BuildOptions buildOptions,
@@ -101,8 +101,8 @@ public class CppConfigurationLoader implements ConfigurationFragmentFactory {
         Label ccToolchainLabel,
         Label stlLabel,
         Label sysrootLabel,
-        CpuTransformer cpuTransformer) {
-      this.toolchain = toolchain;
+        CpuTransformer cpuTransformer,
+        CcToolchainConfigInfo ccToolchainConfigInfo) {
       this.crosstoolFile = crosstoolFile;
       this.cacheKeySuffix = cacheKeySuffix;
       this.commonOptions = buildOptions.get(BuildConfiguration.Options.class);
@@ -114,6 +114,7 @@ public class CppConfigurationLoader implements ConfigurationFragmentFactory {
       this.stlLabel = stlLabel;
       this.sysrootLabel = sysrootLabel;
       this.cpuTransformer = cpuTransformer;
+      this.ccToolchainConfigInfo = ccToolchainConfigInfo;
     }
   }
 
@@ -142,16 +143,13 @@ public class CppConfigurationLoader implements ConfigurationFragmentFactory {
     if (file == null) {
       return null;
     }
-    CrosstoolConfig.CToolchain toolchain =
-        CrosstoolConfigurationLoader.selectToolchain(
-            file.getProto(), options, cpuTransformer.getTransformer());
 
     PathFragment fdoPath = null;
     Label fdoProfileLabel = null;
     if (cppOptions.getFdoOptimize() != null) {
       if (cppOptions.getFdoOptimize().startsWith("//")) {
         try {
-          fdoProfileLabel = Label.parseAbsolute(cppOptions.getFdoOptimize());
+          fdoProfileLabel = Label.parseAbsolute(cppOptions.getFdoOptimize(), ImmutableMap.of());
         } catch (LabelSyntaxException e) {
           throw new InvalidConfigurationException(e);
         }
@@ -168,35 +166,52 @@ public class CppConfigurationLoader implements ConfigurationFragmentFactory {
 
     Label ccToolchainLabel;
     Target crosstoolTop;
-
+    CrosstoolConfig.CToolchain toolchain = null;
     try {
       crosstoolTop = env.getTarget(crosstoolTopLabel);
     } catch (NoSuchThingException e) {
       throw new IllegalStateException(e);  // Should have been found out during redirect chasing
     }
 
+    String desiredCpu = cpuTransformer.getTransformer().apply(options.get(Options.class).cpu);
     if (crosstoolTop instanceof Rule
         && ((Rule) crosstoolTop).getRuleClass().equals("cc_toolchain_suite")) {
       Rule ccToolchainSuite = (Rule) crosstoolTop;
-
-      String desiredCpu = cpuTransformer.getTransformer().apply(options.get(Options.class).cpu);
       String key =
           desiredCpu + (cppOptions.cppCompiler == null ? "" : ("|" + cppOptions.cppCompiler));
       Map<String, Label> toolchains =
           NonconfigurableAttributeMapper.of(ccToolchainSuite)
               .get("toolchains", BuildType.LABEL_DICT_UNARY);
       ccToolchainLabel = toolchains.get(key);
-      if (ccToolchainLabel == null) {
-        ccToolchainLabel = toolchains.get(toolchain.getTargetCpu() + "|" + toolchain.getCompiler());
+      String errorMessage =
+          String.format(
+              "cc_toolchain_suite '%s' does not contain a toolchain for CPU '%s'",
+              crosstoolTopLabel, desiredCpu);
+      if (cppOptions.cppCompiler != null) {
+        errorMessage = errorMessage + " and compiler " + cppOptions.cppCompiler;
       }
       if (ccToolchainLabel == null) {
-        String errorMessage =
-            String.format(
-                "cc_toolchain_suite '%s' does not contain a toolchain for CPU '%s'",
-                crosstoolTopLabel, toolchain.getTargetCpu());
-        if (cppOptions.cppCompiler != null) {
-          errorMessage = errorMessage + " and compiler " + cppOptions.cppCompiler;
+        // If the cc_toolchain_suite does not contain entry for --cpu|--compiler (or only --cpu if
+        // --compiler is not present) we select the toolchain by looping through all the toolchains
+        // in the CROSSTOOL file and selecting the one that matches --cpu (and --compiler, if
+        // present). Then we use the toolchain.target_cpu|toolchain.compiler key to get the
+        // cc_toolchain label.
+        toolchain =
+            CrosstoolConfigurationLoader.selectToolchain(
+                file.getProto(), options, cpuTransformer.getTransformer());
+        ccToolchainLabel = toolchains.get(toolchain.getTargetCpu() + "|" + toolchain.getCompiler());
+        if (!cppOptions.enableCcToolchainFromCrosstool) {
+          throw new InvalidConfigurationException(
+              errorMessage
+                  + String.format(
+                      ", you may want to add an entry for '%s|%s' into toolchains and "
+                          + "toolchain_identifier '%s' into the corresponding cc_toolchain rule.",
+                      toolchain.getTargetCpu(),
+                      toolchain.getCompiler(),
+                      toolchain.getToolchainIdentifier()));
         }
+      }
+      if (ccToolchainLabel == null) {
         throw new InvalidConfigurationException(errorMessage);
       }
     } else {
@@ -221,10 +236,34 @@ public class CppConfigurationLoader implements ConfigurationFragmentFactory {
           "The label '%s' is not a cc_toolchain rule", ccToolchainLabel));
     }
 
+    if (toolchain == null) {
+      // If cc_toolchain_suite contains an entry for the given --cpu and --compiler options, we
+      // select the toolchain by its identifier if "toolchain_identifier" attribute is present.
+      // Otherwise, we fall back to going through the CROSSTOOL file to select the toolchain using
+      // the legacy selection mechanism.
+      String identifier =
+          NonconfigurableAttributeMapper.of((Rule) ccToolchain)
+              .get("toolchain_identifier", Type.STRING);
+      toolchain =
+          identifier.isEmpty()
+              ? CrosstoolConfigurationLoader.selectToolchain(
+                  file.getProto(), options, cpuTransformer.getTransformer())
+              : CrosstoolConfigurationLoader.getToolchainByIdentifier(
+                  file.getProto(), identifier, desiredCpu, cppOptions.cppCompiler);
+    }
+    toolchain =
+        CppToolchainInfo.addLegacyFeatures(
+            toolchain, crosstoolTopLabel.getPackageIdentifier().getPathUnderExecRoot());
+
+    CcToolchainConfigInfo ccToolchainConfigInfo =
+        CcToolchainConfigInfo.fromToolchain(
+            file.getProto(),
+            toolchain,
+            crosstoolTopLabel.getPackageIdentifier().getPathUnderExecRoot());
+
     Label sysrootLabel = getSysrootLabel(toolchain, cppOptions.libcTopLabel);
 
     return new CppConfigurationParameters(
-        toolchain,
         file,
         file.getMd5(),
         options,
@@ -234,13 +273,15 @@ public class CppConfigurationLoader implements ConfigurationFragmentFactory {
         ccToolchainLabel,
         stlLabel,
         sysrootLabel,
-        cpuTransformer);
+        cpuTransformer,
+        ccToolchainConfigInfo);
   }
 
   @Nullable
   public static Label getSysrootLabel(CrosstoolConfig.CToolchain toolchain, Label libcTopLabel)
       throws InvalidConfigurationException {
-    PathFragment defaultSysroot = CppConfiguration.computeDefaultSysroot(toolchain);
+    PathFragment defaultSysroot =
+        CppConfiguration.computeDefaultSysroot(toolchain.getBuiltinSysroot());
 
     if ((libcTopLabel != null) && (defaultSysroot == null)) {
       throw new InvalidConfigurationException(

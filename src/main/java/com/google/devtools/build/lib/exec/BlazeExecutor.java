@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.exec;
 import com.google.common.base.Preconditions;
 import com.google.common.eventbus.EventBus;
 import com.google.devtools.build.lib.actions.ActionContext;
+import com.google.devtools.build.lib.actions.ActionExecutionContext.ShowSubcommands;
 import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.ExecutorInitException;
 import com.google.devtools.build.lib.clock.Clock;
@@ -24,8 +25,6 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.events.Reporter;
-import com.google.devtools.build.lib.profiler.Profiler;
-import com.google.devtools.build.lib.profiler.ProfilerTask;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.common.options.OptionsClassProvider;
@@ -46,7 +45,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class BlazeExecutor implements Executor {
 
   private final boolean verboseFailures;
-  private final boolean showSubcommands;
+  private final ShowSubcommands showSubcommands;
   private final FileSystem fileSystem;
   private final Path execRoot;
   private final Reporter reporter;
@@ -125,7 +124,7 @@ public final class BlazeExecutor implements Executor {
   }
 
   @Override
-  public boolean reportsSubcommands() {
+  public ShowSubcommands reportsSubcommands() {
     return showSubcommands;
   }
 
@@ -135,8 +134,6 @@ public final class BlazeExecutor implements Executor {
    */
   public void executionPhaseStarting() {
     Preconditions.checkState(!inExecutionPhase.getAndSet(true));
-    Profiler.instance().startTask(ProfilerTask.INFO, "Initializing executors");
-    Profiler.instance().completeTask(ProfilerTask.INFO);
   }
 
   /**
@@ -147,9 +144,6 @@ public final class BlazeExecutor implements Executor {
     if (!inExecutionPhase.get()) {
       return;
     }
-
-    Profiler.instance().startTask(ProfilerTask.INFO, "Shutting down executors");
-    Profiler.instance().completeTask(ProfilerTask.INFO);
     inExecutionPhase.set(false);
   }
 

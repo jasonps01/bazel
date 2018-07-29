@@ -284,7 +284,8 @@ print(create("topological").to_list())  # ["d", "b", "c", "a"]
 Due to how traversals are implemented, the order must be specified at the time
 the depset is created with the constructor’s `order` keyword argument. If this
 argument is omitted, the depset has the special `default` order, in which case
-there are no guarantees about the order of any of its elements.
+there are no guarantees about the order of any of its elements (except that it
+is deterministic).
 
 For safety, depsets with different orders cannot be merged with the `+` operator
 unless one of them uses the default order; the resulting depset’s order is the
@@ -313,16 +314,16 @@ will appear twice on the command line and twice in the contents of the output
 file.
 
 The next alternative is using a general set, which can be simulated by a
-dictionary where the keys are the elements and all the keys map to `None`.
+dictionary where the keys are the elements and all the keys map to `True`.
 
 ```python
 def get_transitive_srcs(srcs, deps):
   trans_srcs = {}
   for dep in deps:
     for file in dep[FooFiles].transitive_sources:
-      trans_srcs[file] = None
+      trans_srcs[file] = True
   for file in srcs:
-    trans_srcs[file] = None
+    trans_srcs[file] = True
   return trans_srcs
 ```
 

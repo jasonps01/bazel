@@ -34,7 +34,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -83,17 +82,14 @@ public class DebugServerTransportTest {
     }
   }
 
-  @Before
-  public void setup() {
-    events.setFailFast(true);
-  }
-
   @Test
   public void testConnectAndReceiveRequest() throws Exception {
     ServerSocket serverSocket = new ServerSocket(0, 1, InetAddress.getByName(null));
     Future<DebugServerTransport> future =
         executor.submit(
-            () -> DebugServerTransport.createAndWaitForClient(events.reporter(), serverSocket));
+            () ->
+                DebugServerTransport.createAndWaitForClient(
+                    events.reporter(), serverSocket, false));
     MockDebugClient client = new MockDebugClient();
     client.connect(Duration.ofSeconds(10), serverSocket);
 
@@ -115,7 +111,9 @@ public class DebugServerTransportTest {
     ServerSocket serverSocket = new ServerSocket(0, 1, InetAddress.getByName(null));
     Future<DebugServerTransport> future =
         executor.submit(
-            () -> DebugServerTransport.createAndWaitForClient(events.reporter(), serverSocket));
+            () ->
+                DebugServerTransport.createAndWaitForClient(
+                    events.reporter(), serverSocket, false));
     MockDebugClient client = new MockDebugClient();
     client.connect(Duration.ofSeconds(10), serverSocket);
 

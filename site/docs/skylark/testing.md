@@ -82,9 +82,11 @@ myrule = rule(
 
 `//mypkg/myrules_test.bzl`:
 
+
 ```python
 load("@bazel_skylib//:lib.bzl", "asserts", "unittest")
 load(":myrules.bzl", "myrule", "MyInfo")
+
 # ==== Check the provider contents ====
 
 def _provider_contents_test_impl(ctx):
@@ -131,7 +133,7 @@ def myrules_test_suite():
           # ...
       ],
   )
-````
+```
 
 The test can be run with `bazel test //mypkg:myrules_test`.
 
@@ -418,6 +420,7 @@ def myhelper():
 
 `//mypkg/myhelpers_test.bzl`:
 
+
 ```python
 load("@bazel_skylib//:lib.bzl", "asserts", "unittest")
 load(":myhelpers.bzl", "myhelper")
@@ -439,7 +442,7 @@ def myhelpers_test_suite():
     myhelper_test,
     # ...
   )
-````
+```
 
 For more examples, see Skylib’s own [tests](https://github.com/bazelbuild/bazel-skylib/blob/master/tests/BUILD).
 

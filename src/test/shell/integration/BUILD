@@ -18,8 +18,11 @@ sh_test(
     name = "progress_reporting_test",
     size = "large",
     srcs = ["progress_reporting_test.sh"],
-    data = [":test-deps"],
-    shard_count = 8,
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    shard_count = 4,
 )
 
 sh_test(
@@ -27,14 +30,21 @@ sh_test(
     size = "medium",
     srcs = ["runfiles_test.sh"],
     data = [":test-deps"],
-    tags = ["local"],
+    tags = [
+        "local",
+        # no_windows: this test exercises the symlink-based runfiles tree.
+        "no_windows",
+    ],
 )
 
 sh_test(
     name = "python_test",
     size = "medium",
     srcs = ["python_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -43,6 +53,7 @@ sh_test(
     srcs = ["loading_phase_tests.sh"],
     data = [":test-deps"],
     shard_count = 4,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -50,6 +61,7 @@ sh_test(
     size = "large",
     srcs = ["execution_phase_tests.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -58,6 +70,7 @@ sh_test(
     srcs = ["experimental_ui_test.sh"],
     data = [":test-deps"],
     shard_count = 11,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -70,7 +83,9 @@ sh_test(
         "//src/test/shell:shell_utils",
     ],
     shard_count = 5,
-    tags = ["jdk8"],
+    tags = [
+        "no_windows",
+    ],
     toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
@@ -79,6 +94,7 @@ sh_test(
     size = "medium",
     srcs = ["startup_options_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -87,6 +103,7 @@ sh_test(
     srcs = ["run_test.sh"],
     data = [":test-deps"],
     shard_count = 3,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -94,6 +111,7 @@ sh_test(
     size = "medium",
     srcs = ["stub_finds_runfiles_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -101,6 +119,7 @@ sh_test(
     size = "medium",
     srcs = ["discard_analysis_cache_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -108,6 +127,7 @@ sh_test(
     size = "large",
     srcs = ["output_filter_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -115,6 +135,7 @@ sh_test(
     srcs = ["bazel_testjobs_test.sh"],
     data = [":test-deps"],
     shard_count = 3,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -122,6 +143,7 @@ sh_test(
     size = "large",
     srcs = ["bazel_query_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -129,6 +151,15 @@ sh_test(
     size = "large",
     srcs = ["configured_query_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
+)
+
+sh_test(
+    name = "aquery_test",
+    size = "large",
+    srcs = ["aquery_test.sh"],
+    data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -137,6 +168,7 @@ sh_test(
     srcs = ["bazel_command_log_test.sh"],
     data = [":test-deps"],
     shard_count = 4,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -144,6 +176,7 @@ sh_test(
     size = "medium",
     srcs = ["bazel_javabase_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -153,7 +186,10 @@ sh_test(
     data = [":test-deps"],
     # This test doesn't work with the sandbox on, see the source file
     # for details.
-    tags = ["local"],
+    tags = [
+        "local",
+        "no_windows",
+    ],
 )
 
 sh_test(
@@ -161,6 +197,7 @@ sh_test(
     size = "medium",
     srcs = ["force_delete_output_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -169,6 +206,7 @@ sh_test(
     timeout = "moderate",
     srcs = ["incompatible_changes_conflict_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -176,6 +214,7 @@ sh_test(
     size = "medium",
     srcs = ["skylark_flag_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -183,6 +222,7 @@ sh_test(
     size = "medium",
     srcs = ["ui_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -190,6 +230,7 @@ sh_test(
     size = "medium",
     srcs = ["rc_options_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -197,6 +238,7 @@ sh_test(
     size = "large",
     srcs = ["cpp_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -204,6 +246,7 @@ sh_test(
     size = "large",
     srcs = ["action_env_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_library(
@@ -217,6 +260,7 @@ sh_test(
     size = "medium",
     srcs = ["stamping_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -228,6 +272,7 @@ sh_test(
         ":test-deps",
     ],
     shard_count = 6,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -238,6 +283,7 @@ sh_test(
         ":discard_graph_edges_lib.sh",
         ":test-deps",
     ],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -247,6 +293,7 @@ sh_test(
     srcs = ["build_event_stream_test.sh"],
     data = [":test-deps"],
     shard_count = 2,
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -262,7 +309,9 @@ sh_test(
         "//src/test/java/com/google/devtools/build/lib:ExampleWorker_deploy.jar",
     ],
     shard_count = 3,
-    tags = ["jdk8"],
+    tags = [
+        "no_windows",
+    ],
 )
 
 sh_test(
@@ -280,7 +329,9 @@ sh_test(
     # TODO(b/34450149): remove when no longer flaky
     flaky = 1,
     shard_count = 3,
-    tags = ["jdk8"],
+    tags = [
+        "no_windows",
+    ],
 )
 
 sh_test(
@@ -288,6 +339,7 @@ sh_test(
     size = "medium",
     srcs = ["server_logging_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -295,12 +347,14 @@ sh_test(
     size = "medium",
     srcs = ["client_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
     name = "test_test",
     srcs = ["test_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -308,6 +362,7 @@ sh_test(
     size = "medium",
     srcs = ["outputs_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -321,6 +376,7 @@ sh_test(
         "//src/main/protobuf:execution_statistics.proto",
         "//third_party/protobuf:protoc",
     ],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -335,6 +391,7 @@ sh_test(
         "//src/test/shell:sandboxing_test_utils.sh",
         "//third_party/protobuf:protoc",
     ],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -345,6 +402,7 @@ sh_test(
         ":test-deps",
         "//src/test/shell:sandboxing_test_utils.sh",
     ],
+    tags = ["no_windows"],
 )
 
 package_group(
@@ -372,6 +430,7 @@ sh_test(
     size = "medium",
     srcs = ["prelude_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 sh_test(
@@ -379,6 +438,7 @@ sh_test(
     size = "medium",
     srcs = ["sandboxfs_test.sh"],
     data = [":test-deps"],
+    tags = ["no_windows"],
 )
 
 ########################################################################
@@ -387,4 +447,21 @@ sh_test(
 test_suite(
     name = "all_tests",
     visibility = ["//visibility:public"],
+)
+
+test_suite(
+    name = "windows_tests",
+    tags = [
+        "-no_windows",
+        "-slow",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+test_suite(
+    name = "all_windows_tests",
+    tests = [
+        ":windows_tests",
+    ],
+    visibility = ["//src/test/shell:__pkg__"],
 )

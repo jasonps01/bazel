@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.rules.objc;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.RuleContext;
@@ -24,12 +25,14 @@ import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleContext;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
+import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.Attribute.SplitTransitionProvider;
 import com.google.devtools.build.lib.packages.Info;
-import com.google.devtools.build.lib.packages.NativeInfo;
+import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.packages.Provider;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.packages.SkylarkAspect;
+import com.google.devtools.build.lib.packages.SkylarkInfo;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform.PlatformType;
@@ -41,12 +44,12 @@ import com.google.devtools.build.lib.rules.objc.AppleBinary.AppleBinaryOutput;
 import com.google.devtools.build.lib.rules.objc.ObjcProvider.Key;
 import com.google.devtools.build.lib.skylarkbuildapi.SkylarkRuleContextApi;
 import com.google.devtools.build.lib.skylarkbuildapi.apple.AppleCommonApi;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.Environment;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.Runtime;
 import com.google.devtools.build.lib.syntax.SkylarkDict;
 import com.google.devtools.build.lib.syntax.SkylarkNestedSet;
-import com.google.devtools.build.lib.syntax.SkylarkSignatureProcessor;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.Map;
 import javax.annotation.Nullable;
@@ -230,13 +233,14 @@ public class AppleSkylarkCommon
   }
 
   @Override
-  public NativeInfo linkMultiArchBinary(SkylarkRuleContextApi skylarkRuleContextApi)
+  public Info linkMultiArchBinary(
+      SkylarkRuleContextApi skylarkRuleContextApi, Environment environment)
       throws EvalException, InterruptedException {
     SkylarkRuleContext skylarkRuleContext = (SkylarkRuleContext) skylarkRuleContextApi;
     try {
       RuleContext ruleContext = skylarkRuleContext.getRuleContext();
       AppleBinaryOutput appleBinaryOutput = AppleBinary.linkMultiArchBinary(ruleContext);
-      return appleBinaryOutput.getBinaryInfoProvider();
+      return createAppleBinaryOutputSkylarkStruct(appleBinaryOutput, environment);
     } catch (RuleErrorException | ActionConflictException exception) {
       throw new EvalException(null, exception);
     }
@@ -252,7 +256,24 @@ public class AppleSkylarkCommon
     return objcProtoAspect;
   }
 
-  static {
-    SkylarkSignatureProcessor.configureSkylarkFunctions(AppleSkylarkCommon.class);
+  /**
+   * Creates a Skylark struct that contains the results of the {@code link_multi_arch_binary}
+   * function.
+   */
+  private Info createAppleBinaryOutputSkylarkStruct(
+      AppleBinaryOutput output, Environment environment) {
+    Provider constructor = new NativeProvider<Info>(Info.class, "apple_binary_output") {};
+    // We have to transform the output group dictionary into one that contains SkylarkValues instead
+    // of plain NestedSets because the Skylark caller may want to return this directly from their
+    // implementation function.
+    Map<String, SkylarkValue> outputGroups =
+        Maps.transformValues(output.getOutputGroups(), v -> SkylarkNestedSet.of(Artifact.class, v));
+
+    ImmutableMap<String, Object> fields =
+        ImmutableMap.of(
+            "binary_provider", output.getBinaryInfoProvider(),
+            "debug_outputs_provider", output.getDebugOutputsProvider(),
+            "output_groups", SkylarkDict.copyOf(environment, outputGroups));
+    return SkylarkInfo.createSchemaless(constructor, fields, Location.BUILTIN);
   }
 }

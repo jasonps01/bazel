@@ -98,11 +98,9 @@ import com.google.devtools.build.lib.util.OrderedSetMultimap;
 import com.google.devtools.build.lib.util.StringUtil;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -181,7 +179,6 @@ public final class RuleContext extends TargetContext
   private final ImmutableSet<String> disabledFeatures;
   private final String ruleClassNameForLogging;
   private final BuildConfiguration hostConfiguration;
-  private final PatchTransition disableLipoTransition;
   private final ConfigurationFragmentPolicy configurationFragmentPolicy;
   private final ImmutableList<Class<? extends BuildConfiguration.Fragment>> universalFragments;
   private final ErrorReporter reporter;
@@ -204,9 +201,13 @@ public final class RuleContext extends TargetContext
       ImmutableMap<String, Attribute> aspectAttributes,
       @Nullable ToolchainContext toolchainContext,
       ConstraintSemantics constraintSemantics) {
-    super(builder.env, builder.rule, builder.configuration, builder.prerequisiteMap.get(null),
+    super(
+        builder.env,
+        builder.target.getAssociatedRule(),
+        builder.configuration,
+        builder.prerequisiteMap.get(null),
         builder.visibility);
-    this.rule = builder.rule;
+    this.rule = builder.target.getAssociatedRule();
     this.aspects = builder.aspects;
     this.aspectDescriptors =
         builder
@@ -227,7 +228,6 @@ public final class RuleContext extends TargetContext
     this.disabledFeatures = ImmutableSortedSet.copyOf(allDisabledFeatures);
     this.ruleClassNameForLogging = ruleClassNameForLogging;
     this.hostConfiguration = builder.hostConfiguration;
-    this.disableLipoTransition = builder.disableLipoTransition;
     reporter = builder.reporter;
     this.toolchainContext = toolchainContext;
     this.constraintSemantics = constraintSemantics;
@@ -975,6 +975,19 @@ public final class RuleContext extends TargetContext
   }
 
   /**
+   * Returns the declared provider (native and Skylark) for the specified constructor under the
+   * specified attribute of this target in the BUILD file. May return null if there is no
+   * TransitiveInfoCollection under the specified attribute.
+   */
+  @Nullable
+  public <T extends Info> T getPrerequisite(
+      String attributeName, Mode mode, final BuiltinProvider<T> skylarkKey) {
+    TransitiveInfoCollection prerequisite = getPrerequisite(attributeName, mode);
+    return prerequisite == null ? null : prerequisite.get(skylarkKey);
+  }
+
+
+  /**
    * Returns all the providers of the specified type that are listed under the specified attribute
    * of this target in the BUILD file, and that contain the specified provider.
    */
@@ -1052,26 +1065,6 @@ public final class RuleContext extends TargetContext
     return new Expander(this, getConfigurationMakeVariableContext());
   }
 
-  public ImmutableMap<String, String> getMakeVariables(Iterable<String> attributeNames) {
-    ArrayList<TemplateVariableInfo> templateVariableInfos = new ArrayList<>();
-
-    for (String attributeName : attributeNames) {
-      // TODO(b/37567440): Remove this continue statement.
-      if (!attributes().has(attributeName)) {
-        continue;
-      }
-      Iterables.addAll(templateVariableInfos, getPrerequisites(
-          attributeName, Mode.DONT_CHECK, TemplateVariableInfo.PROVIDER));
-    }
-
-    LinkedHashMap<String, String> makeVariables = new LinkedHashMap<>();
-    for (TemplateVariableInfo templateVariableInfo : templateVariableInfos) {
-      makeVariables.putAll(templateVariableInfo.getVariables());
-    }
-
-    return ImmutableMap.copyOf(makeVariables);
-  }
-
   /**
    * Returns a cached context that maps Make variable names (string) to values (string) without any
    * extra {@link MakeVariableSupplier}.
@@ -1098,7 +1091,7 @@ public final class RuleContext extends TargetContext
     if (getToolchainContext() == null) {
       return null;
     }
-    return getToolchainContext().getExecutionPlatform();
+    return getToolchainContext().executionPlatform();
   }
 
   private void checkAttribute(String attributeName, Mode mode) {
@@ -1410,14 +1403,14 @@ public final class RuleContext extends TargetContext
   /**
    * Builder class for a RuleContext.
    */
+  @VisibleForTesting
   public static final class Builder implements RuleErrorConsumer  {
     private final AnalysisEnvironment env;
-    private final Rule rule;
+    private final Target target;
     private final ConfigurationFragmentPolicy configurationFragmentPolicy;
     private ImmutableList<Class<? extends BuildConfiguration.Fragment>> universalFragments;
     private final BuildConfiguration configuration;
     private final BuildConfiguration hostConfiguration;
-    private PatchTransition disableLipoTransition;
     private final PrerequisiteValidator prerequisiteValidator;
     private final ErrorReporter reporter;
     private OrderedSetMultimap<Attribute, ConfiguredTargetAndData> prerequisiteMap;
@@ -1427,37 +1420,39 @@ public final class RuleContext extends TargetContext
     private ImmutableList<Aspect> aspects;
     private ToolchainContext toolchainContext;
     private ConstraintSemantics constraintSemantics;
+    private ConfiguredTargetAndData associatedTarget;
 
-    Builder(
+    @VisibleForTesting
+    public Builder(
         AnalysisEnvironment env,
-        Rule rule,
+        Target target,
         ImmutableList<Aspect> aspects,
         BuildConfiguration configuration,
         BuildConfiguration hostConfiguration,
-        PatchTransition disableLipoTransition,
         PrerequisiteValidator prerequisiteValidator,
         ConfigurationFragmentPolicy configurationFragmentPolicy) {
       this.env = Preconditions.checkNotNull(env);
-      this.rule = Preconditions.checkNotNull(rule);
+      this.target = Preconditions.checkNotNull(target);
       this.aspects = aspects;
       this.configurationFragmentPolicy = Preconditions.checkNotNull(configurationFragmentPolicy);
       this.configuration = Preconditions.checkNotNull(configuration);
       this.hostConfiguration = Preconditions.checkNotNull(hostConfiguration);
-      this.disableLipoTransition = disableLipoTransition;
       this.prerequisiteValidator = prerequisiteValidator;
-      reporter = new ErrorReporter(env, rule, getRuleClassNameForLogging());
+      reporter = new ErrorReporter(env, target.getAssociatedRule(), getRuleClassNameForLogging());
     }
 
-    RuleContext build() {
+    @VisibleForTesting
+    public RuleContext build() {
       Preconditions.checkNotNull(prerequisiteMap);
       Preconditions.checkNotNull(configConditions);
       Preconditions.checkNotNull(visibility);
       Preconditions.checkNotNull(constraintSemantics);
-      AttributeMap attributes = ConfiguredAttributeMapper.of(rule, configConditions);
+      AttributeMap attributes =
+          ConfiguredAttributeMapper.of(target.getAssociatedRule(), configConditions);
       validateAttributes(attributes);
       ListMultimap<String, ConfiguredTargetAndData> targetMap = createTargetMap();
       ListMultimap<String, ConfiguredFilesetEntry> filesetEntryMap =
-          createFilesetEntryMap(rule, configConditions);
+          createFilesetEntryMap(target.getAssociatedRule(), configConditions);
       return new RuleContext(
           this,
           attributes,
@@ -1472,10 +1467,13 @@ public final class RuleContext extends TargetContext
     }
 
     private void validateAttributes(AttributeMap attributes) {
-      rule.getRuleClassObject().checkAttributesNonEmpty(rule, reporter, attributes);
+      target
+          .getAssociatedRule()
+          .getRuleClassObject()
+          .checkAttributesNonEmpty(target.getAssociatedRule(), reporter, attributes);
     }
 
-    Builder setVisibility(NestedSet<PackageGroupContents> visibility) {
+    public Builder setVisibility(NestedSet<PackageGroupContents> visibility) {
       this.visibility = visibility;
       return this;
     }
@@ -1484,7 +1482,7 @@ public final class RuleContext extends TargetContext
      * Sets the prerequisites and checks their visibility. It also generates appropriate error or
      * warning messages and sets the error flag as appropriate.
      */
-    Builder setPrerequisites(
+    public Builder setPrerequisites(
         OrderedSetMultimap<Attribute, ConfiguredTargetAndData> prerequisiteMap) {
       this.prerequisiteMap = Preconditions.checkNotNull(prerequisiteMap);
       return this;
@@ -1493,7 +1491,7 @@ public final class RuleContext extends TargetContext
     /**
      * Adds attributes which are defined by an Aspect (and not by RuleClass).
      */
-    Builder setAspectAttributes(Map<String, Attribute> aspectAttributes) {
+    public Builder setAspectAttributes(Map<String, Attribute> aspectAttributes) {
       this.aspectAttributes = ImmutableMap.copyOf(aspectAttributes);
       return this;
     }
@@ -1502,7 +1500,8 @@ public final class RuleContext extends TargetContext
      * Sets the configuration conditions needed to determine which paths to follow for this
      * rule's configurable attributes.
      */
-    Builder setConfigConditions(ImmutableMap<Label, ConfigMatchingProvider> configConditions) {
+    public Builder setConfigConditions(
+        ImmutableMap<Label, ConfigMatchingProvider> configConditions) {
       this.configConditions = Preconditions.checkNotNull(configConditions);
       return this;
     }
@@ -1510,7 +1509,7 @@ public final class RuleContext extends TargetContext
     /**
      * Sets the fragment that can be legally accessed even when not explicitly declared.
      */
-    Builder setUniversalFragments(
+    public Builder setUniversalFragments(
         ImmutableList<Class<? extends BuildConfiguration.Fragment>> fragments) {
       // TODO(bazel-team): Add this directly to ConfigurationFragmentPolicy, so we
       // don't need separate logic specifically for checking this fragment. The challenge is
@@ -1521,12 +1520,12 @@ public final class RuleContext extends TargetContext
     }
 
     /** Sets the {@link ToolchainContext} used to access toolchains used by this rule. */
-    Builder setToolchainContext(ToolchainContext toolchainContext) {
+    public Builder setToolchainContext(ToolchainContext toolchainContext) {
       this.toolchainContext = toolchainContext;
       return this;
     }
 
-    Builder setConstraintSemantics(ConstraintSemantics constraintSemantics) {
+    public Builder setConstraintSemantics(ConstraintSemantics constraintSemantics) {
       this.constraintSemantics = constraintSemantics;
       return this;
     }
@@ -1562,6 +1561,10 @@ public final class RuleContext extends TargetContext
      */
     private ListMultimap<String, ConfiguredFilesetEntry> createFilesetEntryMap(
         final Rule rule, ImmutableMap<Label, ConfigMatchingProvider> configConditions) {
+      if (!target.getTargetKind().equals("Fileset rule")) {
+        return ImmutableSortedKeyListMultimap.<String, ConfiguredFilesetEntry>builder().build();
+      }
+
       final ImmutableSortedKeyListMultimap.Builder<String, ConfiguredFilesetEntry> mapBuilder =
           ImmutableSortedKeyListMultimap.builder();
       for (Attribute attr : rule.getAttributes()) {
@@ -1718,7 +1721,10 @@ public final class RuleContext extends TargetContext
       if (prerequisiteTarget instanceof Rule) {
         Rule prerequisiteRule = (Rule) prerequisiteTarget;
 
-        String reason = attribute.getValidityPredicate().checkValid(rule, prerequisiteRule);
+        String reason =
+            attribute
+                .getValidityPredicate()
+                .checkValid(target.getAssociatedRule(), prerequisiteRule);
         if (reason != null) {
           reportBadPrerequisite(attribute, prerequisite, reason, false);
         }
@@ -1759,7 +1765,7 @@ public final class RuleContext extends TargetContext
     }
 
     public Rule getRule() {
-      return rule;
+      return target.getAssociatedRule();
     }
 
     /**
@@ -1767,13 +1773,13 @@ public final class RuleContext extends TargetContext
      */
     public String getRuleClassNameForLogging() {
       if (aspects.isEmpty()) {
-        return rule.getRuleClass();
+        return target.getAssociatedRule().getRuleClass();
       }
 
       return Joiner.on(",")
               .join(aspects.stream().map(a -> a.getDescriptor()).collect(Collectors.toList()))
           + " aspect on "
-          + rule.getRuleClass();
+          + target.getAssociatedRule().getRuleClass();
     }
 
     public BuildConfiguration getConfiguration() {
@@ -1789,7 +1795,7 @@ public final class RuleContext extends TargetContext
      * method to determine whether a dependency is allowed as per visibility rules.
      */
     public boolean isVisible(TransitiveInfoCollection prerequisite) {
-      return RuleContext.isVisible(rule, prerequisite);
+      return RuleContext.isVisible(target.getAssociatedRule(), prerequisite);
     }
 
     private void validateDirectPrerequisiteFileTypes(
@@ -1823,6 +1829,9 @@ public final class RuleContext extends TargetContext
         }
         for (Artifact sourceArtifact : artifacts) {
           if (allowedFileTypes.apply(sourceArtifact.getFilename())) {
+            return;
+          }
+          if (sourceArtifact.isTreeArtifact()) {
             return;
           }
         }

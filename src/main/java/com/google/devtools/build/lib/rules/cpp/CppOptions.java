@@ -25,9 +25,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.StripMode;
-import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.util.OS;
-import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LipoMode;
 import com.google.devtools.common.options.Converter;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
@@ -40,10 +38,8 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
 
 /** Command-line options for C++. */
-@AutoCodec(strategy = AutoCodec.Strategy.PUBLIC_FIELDS)
 public class CppOptions extends FragmentOptions {
   /**
    * Converts a comma-separated list of compilation mode settings to a properly typed List.
@@ -106,7 +102,8 @@ public class CppOptions extends FragmentOptions {
         throw new OptionsParsingException("Not a label");
       }
       try {
-        return Label.parseAbsolute(input).getRelative(LIBC_RELATIVE_LABEL);
+        return Label.parseAbsolute(input, ImmutableMap.of())
+            .getRelativeWithRemapping(LIBC_RELATIVE_LABEL, ImmutableMap.of());
       } catch (LabelSyntaxException e) {
         throw new OptionsParsingException(e.getMessage());
       }
@@ -117,24 +114,6 @@ public class CppOptions extends FragmentOptions {
       return "a label";
     }
   }
-
-  /**
-   * Converter for the --lipo option.
-   */
-  public static class LipoModeConverter extends EnumConverter<LipoMode> {
-    public LipoModeConverter() {
-      super(LipoMode.class, "LIPO mode");
-    }
-  }
-
-  @Option(
-      name = "experimental_allow_lipo",
-      defaultValue = "true",
-      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
-      metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-      help = "Flag to roll out the removal of LIPO.")
-  public boolean allowLipo;
 
   @Option(
     name = "crosstool_top",
@@ -170,6 +149,14 @@ public class CppOptions extends FragmentOptions {
     help = "Specifies a suffix to be added to the configuration directory."
   )
   public String outputDirectoryTag;
+
+  @Option(
+      name = "minimum_os_version",
+      defaultValue = "null",
+      documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.AFFECTS_OUTPUTS},
+      help = "The minimum OS version which your compilation targets.")
+  public String minimumOsVersion;
 
   // O intrepid reaper of unused options: Be warned that the [no]start_end_lib
   // option, however tempting to remove, has a use case. Look in our telemetry data.
@@ -383,20 +370,6 @@ public class CppOptions extends FragmentOptions {
   public Label customMalloc;
 
   @Option(
-      name = "experimental_shortened_obj_file_path",
-      defaultValue = "true",
-      documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
-      effectTags = {OptionEffectTag.ACTION_COMMAND_LINES, OptionEffectTag.AFFECTS_OUTPUTS},
-      help =
-          "When off, object files are generated at _objs/<target_name>/<source_package_path>/"
-              + "<source_base_name>.o, otherwise they are shortened to _objs/<target_name>/"
-              + "<source_base_name>.o. If there are multiple source files with the same base name, "
-              + "to avoid conflict, the object file path is _objs/<target_name>/<N>"
-              + "/<source_base_name>.o, where N = the source file's order among all source files "
-              + "with the same base name, N starts with 0.")
-  public boolean shortenObjFilePath;
-
-  @Option(
     name = "legacy_whole_archive",
     defaultValue = "true",
     documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
@@ -434,20 +407,7 @@ public class CppOptions extends FragmentOptions {
             + "With Clang/LLVM compiler, it also accepts the directory name under"
             + "which the raw profile file(s) will be dumped at runtime."
   )
-  /**
-   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
-   * determines whether these options are actually "active" for this configuration. Instead, use the
-   * equivalent getter method, which takes that into account.
-   */
   public String fdoInstrumentForBuild;
-
-  /**
-   * Returns the --fdo_instrument value if FDO is specified and active for this configuration,
-   * the default value otherwise.
-   */
-  public String getFdoInstrument() {
-    return enableLipoSettings() ? fdoInstrumentForBuild : null;
-  }
 
   @Option(
     name = "fdo_optimize",
@@ -468,17 +428,13 @@ public class CppOptions extends FragmentOptions {
             + "the file visible to Bazel. It also accepts a raw or an indexed LLVM profile file. "
             + "This flag will be superseded by fdo_profile rule."
   )
-  /**
-   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
-   * determines whether these options are actually "active" for this configuration. Instead, use the
-   * equivalent getter method, which takes that into account.
-   */
   public List<String> fdoProfiles;
 
   /**
-   * Select profile from the list of profiles passed through multiple -fdo_optimize options.
+   * Returns the --fdo_optimize value if FDO is specified and active for this configuration, the
+   * default value otherwise.
    */
-  private String selectProfile() {
+  public String getFdoOptimize() {
     if (fdoProfiles == null) {
       return null;
     }
@@ -499,14 +455,6 @@ public class CppOptions extends FragmentOptions {
     return lastXBinaryProfile;
   }
 
-  /**
-   * Returns the --fdo_optimize value if FDO is specified and active for this
-   * configuration, the default value otherwise.
-   */
-  public String getFdoOptimize() {
-    return enableLipoSettings() ? selectProfile() : null;
-  }
-
   @Option(
     name = "fdo_prefetch_hints",
     defaultValue = "null",
@@ -525,147 +473,6 @@ public class CppOptions extends FragmentOptions {
     return fdoPrefetchHintsLabel;
   }
 
-  /**
-   * Returns the --autofdo_lipo_data value for this configuration. This is false except for data
-   * configurations under LIPO builds.
-   */
-  public boolean getAutoFdoLipoData() {
-    if (enableLipoSettings()) {
-      return false;
-    }
-
-    String fdoProfile = selectProfile();
-    return lipoModeForBuild != LipoMode.OFF
-        && fdoProfile != null
-        && FdoSupport.isAutoFdo(fdoProfile);
-  }
-
-  @Option(
-    name = "convert_lipo_to_thinlto",
-    defaultValue = "false",
-    documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
-    effectTags = {OptionEffectTag.EXECUTION, OptionEffectTag.AFFECTS_OUTPUTS},
-    help =
-        "If set, builds using LIPO will automatically be converted to ThinLTO for the LLVM "
-            + "compiler."
-  )
-  public boolean convertLipoToThinLto;
-
-  @Option(
-    name = "lipo",
-    defaultValue = "off",
-    converter = LipoModeConverter.class,
-    documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
-    effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
-    help =
-        "Enable LIPO optimization (lightweight inter-procedural optimization, The allowed "
-            + "values for this option are 'off' and 'binary', which enables LIPO. This option "
-            + "only has an effect when FDO is also enabled. Currently LIPO is only supported "
-            + "when building a single cc_binary rule."
-  )
-  /**
-   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
-   * determines whether these options are actually "active" for this configuration. Instead, use the
-   * equivalent getter method, which takes that into account.
-   */
-  public LipoMode lipoModeForBuild;
-
-  /**
-   * Returns the --lipo value if LIPO is specified and active for this configuration,
-   * the default value otherwise.
-   */
-  public LipoMode getLipoMode() {
-    return enableLipoSettings() ? lipoModeForBuild : LipoMode.OFF;
-  }
-
-  @Option(
-    name = "lipo_context",
-    defaultValue = "null",
-    converter = LabelConverter.class,
-    implicitRequirements = {"--linkopt=-Wl,--warn-unresolved-symbols"},
-    documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
-    effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
-    help = "Specifies the binary from which the LIPO profile information comes."
-  )
-  /**
-   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
-   * determines whether these options are actually "active" for this configuration. Instead, use the
-   * equivalent getter method, which takes that into account.
-   */
-  public Label lipoContextForBuild;
-
-  /**
-   * Returns the --lipo_context value if LIPO is specified and active for this configuration,
-   * null otherwise.
-   */
-  @Nullable
-  public Label getLipoContext() {
-    return isLipoOptimization() ? lipoContextForBuild : null;
-  }
-
-  /**
-   * Returns the LIPO context for this build, even if LIPO isn't enabled in the current
-   * configuration.
-   */
-  public Label getLipoContextForBuild() {
-    return lipoContextForBuild;
-  }
-
-  /**
-   * Internal state determining how to apply LIPO settings under this configuration.
-   */
-  public enum LipoConfigurationState {
-    /** Don't LIPO-optimize targets under this configuration. */
-    IGNORE_LIPO,
-    /** LIPO-optimize targets under this configuration if this is a LIPO build. */
-    APPLY_LIPO,
-    /**
-     * Evaluate targets in this configuration in "LIPO context collector" mode. See
-     * {@link FdoSupport} for details.
-      */
-    LIPO_CONTEXT_COLLECTOR,
-  }
-
-  /**
-   * Converter for {@link LipoConfigurationState}.
-   */
-  public static class LipoConfigurationStateConverter
-      extends EnumConverter<LipoConfigurationState> {
-    public LipoConfigurationStateConverter() {
-      super(LipoConfigurationState.class, "LIPO configuration state");
-    }
-  }
-
-  @Option(
-    name = "lipo configuration state",
-    defaultValue = "apply_lipo",
-    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-    effectTags = {OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION},
-    metadataTags = {OptionMetadataTag.INTERNAL},
-    converter = LipoConfigurationStateConverter.class
-  )
-  public LipoConfigurationState lipoConfigurationState;
-
-  /**
-   * Returns true if targets under this configuration should use the build's LIPO settings.
-   *
-   * <p>Even when we switch off LIPO (e.g. by switching to a data configuration), we still need to
-   * remember the LIPO settings in case we need to switch back (e.g. if we build a genrule with a
-   * data dependency on the LIPO context).
-   *
-   * <p>We achieve this by maintaining a "configuration state" flag that flips on / off when we
-   * want to enable / disable LIPO respectively. This means we need to be careful to distinguish
-   * between the existence of LIPO settings and LIPO actually applying to the configuration. So when
-   * buiding a target, it's not enough to see if {@link #lipoContextForBuild} or
-   * {@link #lipoModeForBuild} are set. We also need to check this flag.
-   *
-   * <p>This class exposes appropriate convenience methods to make these checks convenient and easy.
-   * Use them and read the documentation carefully.
-   */
-  private boolean enableLipoSettings() {
-    return lipoConfigurationState != LipoConfigurationState.IGNORE_LIPO;
-  }
-
   @Option(
     name = "fdo_profile",
     defaultValue = "null",
@@ -676,14 +483,6 @@ public class CppOptions extends FragmentOptions {
     help = "The fdo_profile representing the profile to be used for optimization."
   )
   public Label fdoProfileLabel;
-
-  /**
-   * Returns the --fdo_optimize value if FDO is specified and active for this configuration, the
-   * default value otherwise.
-   */
-  public Label getFdoProfileLabel() {
-    return enableLipoSettings() ? fdoProfileLabel : null;
-  }
 
   @Option(
       name = "enable_fdo_profile_absolute_path",
@@ -891,6 +690,14 @@ public class CppOptions extends FragmentOptions {
   )
   public boolean pruneCppInputDiscovery;
 
+  @Option(
+    name = "experimental_no_dotd_scanning_with_modules",
+    defaultValue = "false",
+    documentationCategory = OptionDocumentationCategory.BUILD_TIME_OPTIMIZATION,
+    effectTags = {OptionEffectTag.EXECUTION, OptionEffectTag.CHANGES_INPUTS},
+    help = "If enabled, don't analyze generated .d files in builds with Clang's C++ modules."
+  )
+  public boolean noDotdScanningWithModules;
 
   @Option(
     name = "parse_headers_verifies_modules",
@@ -966,17 +773,109 @@ public class CppOptions extends FragmentOptions {
   public boolean useLLVMCoverageMapFormat;
 
   @Option(
-      name = "experimental_expand_linkopts_labels",
+      name = "incompatible_enable_legacy_cpp_toolchain_skylark_api",
       defaultValue = "true",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {
+          OptionMetadataTag.INCOMPATIBLE_CHANGE,
+          OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES},
+      help = "Flag for disabling access to the C++ toolchain API through the ctx.fragments.cpp .")
+  public boolean enableLegacyToolchainSkylarkApi;
+
+  @Option(
+      name = "experimental_enable_cc_skylark_api",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
       metadataTags = {OptionMetadataTag.EXPERIMENTAL},
-      help = "If true, entries in linkopts that are not preceded by - or $ will be expanded.")
-  public boolean expandLinkoptsLabels;
+      help =
+          "If true, the C++ Skylark API can be used. Don't enable this flag yet, we will be making "
+              + "breaking changes.")
+  public boolean enableCcSkylarkApi;
+
+  @Option(
+      name = "experimental_disable_legacy_cc_linking_api",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help = "If true, C++ Skylark API exposing linking flags will be disabled.")
+  public boolean disableLegacyLinkingApi;
+
+  @Option(
+      name = "experimental_disable_legacy_cc_compilation_api",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help = "If true, C++ Skylark API exposing compilation flags will be disabled.")
+  public boolean disableLegacyCompilationApi;
+
+  @Option(
+      name = "experimental_disable_linking_mode_flags",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help = "If true, Bazel will not read crosstool flags from linking_mode_flags field.")
+  public boolean disableLinkingModeFlags;
+
+  @Option(
+      name = "experimental_disable_compilation_mode_flags",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help = "If true, Bazel will not read crosstool flags from compilation_mode_flags field.")
+  public boolean disableCompilationModeFlags;
+
+  @Option(
+      name = "experimental_disable_legacy_crosstool_fields",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help =
+          "If true, Bazel will not read crosstool flags from legacy crosstool fields (see #5187.")
+  public boolean disableLegacyCrosstoolFields;
+
+  @Option(
+      name = "experimental_enable_cc_dynlibs_for_runtime",
+      defaultValue = "true",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.EAGERNESS_TO_EXIT},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help =
+          "If false, Blaze will not propagate runtime libs through CcDynamicLibrariesForRuntime "
+              + "field of CcLinkingInfo. See b/111289526.")
+  public boolean enableCcDynamicLibrariesForRuntime;
+
+  @Option(
+      name = "experimental_linkopts_in_user_link_flags",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help =
+          "If true, flags coming from --linkopt Bazel option will appear in user_link_flags "
+              + "crosstool variable.")
+  public boolean enableLinkoptsInUserLinkFlags;
+
+  @Option(
+      name = "experimental_enable_cc_toolchain_label_from_crosstool_proto",
+      defaultValue = "true",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.EAGERNESS_TO_EXIT},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help = "If false, Bazel will not use the CROSSTOOL file to select the cc_toolchain label.")
+  public boolean enableCcToolchainFromCrosstool;
 
   @Override
   public FragmentOptions getHost() {
     CppOptions host = (CppOptions) getDefault();
+
+    host.enableCcSkylarkApi = enableCcSkylarkApi;
 
     // The crosstool options are partially copied from the target configuration.
     if (hostCrosstoolTop == null) {
@@ -1013,9 +912,9 @@ public class CppOptions extends FragmentOptions {
     host.stripBinaries = StripMode.ALWAYS;
     host.fdoProfiles = null;
     host.fdoProfileLabel = null;
-    host.lipoModeForBuild = LipoMode.OFF;
     host.inmemoryDotdFiles = inmemoryDotdFiles;
     host.pruneCppInputDiscovery = pruneCppInputDiscovery;
+    host.noDotdScanningWithModules = noDotdScanningWithModules;
 
     return host;
   }
@@ -1042,53 +941,6 @@ public class CppOptions extends FragmentOptions {
    * Returns true if targets under this configuration should apply FDO.
    */
   public boolean isFdo() {
-    return getFdoOptimize() != null || getFdoInstrument() != null || getFdoProfileLabel() != null;
-  }
-
-  /**
-   * Returns true if this configuration has LIPO optimization settings (even if they're
-   * not necessarily active).
-   */
-  private boolean hasLipoOptimizationState() {
-    return lipoModeForBuild == LipoMode.BINARY && selectProfile() != null
-        && lipoContextForBuild != null;
-  }
-
-  /**
-   * Returns true if targets under this configuration should LIPO-optimize.
-   */
-  public boolean isLipoOptimization() {
-    return hasLipoOptimizationState() && enableLipoSettings() && !isLipoContextCollector();
-  }
-
-  /**
-   * Returns true if this is a data configuration for a LIPO-optimizing build.
-   *
-   * <p>This means LIPO is not applied for this configuration, but LIPO might be reenabled further
-   * down the dependency tree.
-   */
-  public boolean isDataConfigurationForLipoOptimization() {
-    return hasLipoOptimizationState() && !enableLipoSettings();
-  }
-
-  /**
-   * Returns true if targets under this configuration should LIPO-optimize or LIPO-instrument.
-   */
-  public boolean isLipoOptimizationOrInstrumentation() {
-    return getLipoMode() == LipoMode.BINARY
-        && ((getFdoOptimize() != null && getLipoContext() != null) || getFdoInstrument() != null)
-        && !isLipoContextCollector();
-  }
-
-  /**
-   * Returns true if this is the LIPO context collector configuration.
-   */
-  public boolean isLipoContextCollector() {
-    return lipoConfigurationState == LipoConfigurationState.LIPO_CONTEXT_COLLECTOR;
-  }
-
-  @Override
-  public boolean enableActions() {
-    return !isLipoContextCollector();
+    return getFdoOptimize() != null || fdoInstrumentForBuild != null || fdoProfileLabel != null;
   }
 }

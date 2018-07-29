@@ -115,6 +115,21 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
   public boolean incompatibleDepsetIsNotIterable;
 
   @Option(
+      name = "incompatible_disable_deprecated_attr_params",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      metadataTags = {
+          OptionMetadataTag.INCOMPATIBLE_CHANGE,
+          OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
+      },
+      help =
+          "If set to true, disable the deprecated parameters 'single_file' and 'non_empty' on "
+              + "skylark attribute definition methods, such as attr.label()."
+  )
+  public boolean incompatibleDisableDeprecatedAttrParams;
+
+  @Option(
     name = "incompatible_disable_objc_provider_resources",
     defaultValue = "false",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
@@ -126,6 +141,19 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
     help = "If set to true, disallow use of deprecated resource fields on the Objc provider."
   )
   public boolean incompatibleDisableObjcProviderResources;
+
+  @Option(
+      name = "incompatible_disallow_data_transition",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      metadataTags = {
+          OptionMetadataTag.INCOMPATIBLE_CHANGE,
+          OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
+      },
+      help = "If set to true, rule attributes cannot set 'cfg = \"data\"', which is a noop."
+  )
+  public boolean incompatibleDisallowDataTransition;
 
   @Option(
     name = "incompatible_disallow_dict_plus",
@@ -164,6 +192,19 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
       },
       help = "If set to true, old-style JavaInfo provider construction is disallowed.")
   public boolean incompatibleDisallowLegacyJavaInfo;
+
+  @Option(
+      name = "incompatible_generate_javacommon_source_jar",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      metadataTags = {
+          OptionMetadataTag.INCOMPATIBLE_CHANGE,
+          OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
+      },
+      help = "If set to true, java_common.compile will always generate an output source jar."
+  )
+  public boolean incompatibleGenerateJavaCommonSourceJar;
 
   @Option(
     name = "incompatible_disallow_slash_operator",
@@ -240,6 +281,18 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
   public boolean incompatiblePackageNameIsAFunction;
 
   @Option(
+      name = "incompatible_range_type",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      metadataTags = {
+        OptionMetadataTag.INCOMPATIBLE_CHANGE,
+        OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES
+      },
+      help = "If set to true, range() will use the 'range' type instead of 'list'.")
+  public boolean incompatibleRangeType;
+
+  @Option(
     name = "incompatible_remove_native_git_repository",
     defaultValue = "false",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
@@ -301,15 +354,19 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
         .incompatibleBzlDisallowLoadAfterStatement(incompatibleBzlDisallowLoadAfterStatement)
         .incompatibleDepsetIsNotIterable(incompatibleDepsetIsNotIterable)
         .incompatibleDepsetUnion(incompatibleDepsetUnion)
+        .incompatibleDisableDeprecatedAttrParams(incompatibleDisableDeprecatedAttrParams)
         .incompatibleDisableObjcProviderResources(incompatibleDisableObjcProviderResources)
+        .incompatibleDisallowDataTransition(incompatibleDisallowDataTransition)
         .incompatibleDisallowDictPlus(incompatibleDisallowDictPlus)
         .incompatibleDisallowFileType(incompatibleDisallowFileType)
         .incompatibleDisallowLegacyJavaInfo(incompatibleDisallowLegacyJavaInfo)
         .incompatibleDisallowOldStyleArgsAdd(incompatibleDisallowOldStyleArgsAdd)
         .incompatibleDisallowSlashOperator(incompatibleDisallowSlashOperator)
+        .incompatibleGenerateJavaCommonSourceJar(incompatibleGenerateJavaCommonSourceJar)
         .incompatibleNewActionsApi(incompatibleNewActionsApi)
         .incompatibleNoSupportToolsInActionInputs(incompatibleNoSupportToolsInActionInputs)
         .incompatiblePackageNameIsAFunction(incompatiblePackageNameIsAFunction)
+        .incompatibleRangeType(incompatibleRangeType)
         .incompatibleRemoveNativeGitRepository(incompatibleRemoveNativeGitRepository)
         .incompatibleRemoveNativeHttpArchive(incompatibleRemoveNativeHttpArchive)
         .incompatibleStringIsNotIterable(incompatibleStringIsNotIterable)

@@ -28,9 +28,9 @@ import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.RunfilesSupport;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
+import com.google.devtools.build.lib.analysis.actions.Substitution;
+import com.google.devtools.build.lib.analysis.actions.Template;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction;
-import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Substitution;
-import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Template;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
@@ -40,8 +40,8 @@ import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidA
 import com.google.devtools.build.lib.rules.java.ClasspathConfiguredFragment;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
-import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
+import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider.ClasspathType;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
 import com.google.devtools.build.lib.rules.java.JavaCompilationHelper;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration;
@@ -85,9 +85,7 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
         ruleContext.getFragment(AndroidLocalTestConfiguration.class);
 
     final JavaCommon javaCommon = new JavaCommon(ruleContext, javaSemantics);
-    if (androidLocalTestConfiguration.androidLocalTestUsesJavaRuleValidation()) {
-      javaSemantics.checkRule(ruleContext, javaCommon);
-    }
+    javaSemantics.checkRule(ruleContext, javaCommon);
 
     // Use the regular Java javacopts. Enforcing android-compatible Java
     // (-source 7 -target 7 and no TWR) is unnecessary for robolectric tests
@@ -588,7 +586,7 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
   private static NestedSet<Artifact> getLibraryResourceJars(RuleContext ruleContext) {
     Iterable<AndroidLibraryResourceClassJarProvider> libraryResourceJarProviders =
         AndroidCommon.getTransitivePrerequisites(
-            ruleContext, Mode.TARGET, AndroidLibraryResourceClassJarProvider.class);
+            ruleContext, Mode.TARGET, AndroidLibraryResourceClassJarProvider.PROVIDER);
 
     NestedSetBuilder<Artifact> libraryResourceJarsBuilder = NestedSetBuilder.naiveLinkOrder();
     for (AndroidLibraryResourceClassJarProvider provider : libraryResourceJarProviders) {

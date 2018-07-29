@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionEffectTag;
+import com.google.devtools.common.options.OptionMetadataTag;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsProvider;
@@ -73,6 +74,15 @@ public class InfoCommand implements BlazeCommand {
       help = "Include the \"Make\" environment in the output."
     )
     public boolean showMakeEnvironment;
+
+    @Option(
+        name = "experimental_supports_info_crosstool_configuration",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.UNKNOWN},
+        metadataTags = {OptionMetadataTag.HIDDEN},
+        help = "Noop.")
+    public boolean experimentalSupportsInfoCrosstoolConfiguration;
   }
 
   /**

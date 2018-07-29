@@ -43,6 +43,19 @@ import javax.annotation.Nullable;
  */
 public class ActionExecutionContext implements Closeable {
 
+  /** Enum for --subcommands flag */
+  public enum ShowSubcommands {
+    TRUE(true, false), PRETTY_PRINT(true, true), FALSE(false, false);
+
+    private final boolean shouldShowSubcommands;
+    private final boolean prettyPrintArgs;
+
+    private ShowSubcommands(boolean shouldShowSubcommands, boolean prettyPrintArgs) {
+      this.shouldShowSubcommands = shouldShowSubcommands;
+      this.prettyPrintArgs = prettyPrintArgs;
+    }
+  }
+
   private final Executor executor;
   private final MetadataProvider actionInputFileCache;
   private final ActionInputPrefetcher actionInputPrefetcher;
@@ -84,7 +97,7 @@ public class ActionExecutionContext implements Closeable {
     this.artifactExpander = artifactExpander;
     this.env = env;
     this.actionFileSystem = actionFileSystem;
-    this.pathResolver = createPathResolver(actionFileSystem,
+    this.pathResolver = ArtifactPathResolver.createPathResolver(actionFileSystem,
         // executor is only ever null in testing.
         executor == null ? null : executor.getExecRoot());
   }
@@ -180,16 +193,6 @@ public class ActionExecutionContext implements Closeable {
     return pathResolver.transformRoot(artifact.getRoot().getRoot());
   }
 
-  private static ArtifactPathResolver createPathResolver(FileSystem actionFileSystem,
-      Path execRoot) {
-    if (actionFileSystem == null) {
-      return ArtifactPathResolver.forExecRoot(execRoot);
-    } else {
-      return ArtifactPathResolver.withTransformedFileSystem(
-          actionFileSystem.getPath(execRoot.asFragment()));
-    }
-  }
-
   public ArtifactPathResolver getPathResolver() {
     return pathResolver;
   }
@@ -246,19 +249,15 @@ public class ActionExecutionContext implements Closeable {
   }
 
   /**
-   * Whether this Executor reports subcommands. If not, reportSubcommand has no effect.
-   * This is provided so the caller of reportSubcommand can avoid wastefully constructing the
-   * subcommand string.
-   */
-  public boolean reportsSubcommands() {
-    return executor.reportsSubcommands();
-  }
-
-  /**
    * Report a subcommand event to this Executor's Reporter and, if action
    * logging is enabled, post it on its EventBus.
    */
-  public void reportSubcommand(Spawn spawn) {
+  public void maybeReportSubcommand(Spawn spawn) {
+    ShowSubcommands showSubcommands = executor.reportsSubcommands();
+    if (!showSubcommands.shouldShowSubcommands) {
+      return;
+    }
+
     String reason;
     ActionOwner owner = spawn.getResourceOwner().getOwner();
     if (owner == null) {
@@ -267,7 +266,7 @@ public class ActionExecutionContext implements Closeable {
       reason = Label.print(owner.getLabel())
           + " [" + spawn.getResourceOwner().prettyPrint() + "]";
     }
-    String message = Spawns.asShellCommand(spawn, getExecRoot());
+    String message = Spawns.asShellCommand(spawn, getExecRoot(), showSubcommands.prettyPrintArgs);
     getEventHandler().handle(Event.of(EventKind.SUBCOMMAND, null, "# " + reason + "\n" + message));
   }
 
@@ -285,10 +284,6 @@ public class ActionExecutionContext implements Closeable {
    */
   public FileOutErr getFileOutErr() {
     return fileOutErr;
-  }
-
-  public boolean hasActionFileSystem() {
-    return actionFileSystem != null;
   }
 
   /**

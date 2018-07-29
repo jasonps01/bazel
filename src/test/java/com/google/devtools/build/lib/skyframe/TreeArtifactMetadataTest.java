@@ -33,6 +33,7 @@ import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
 import com.google.devtools.build.lib.actions.Artifact.SpecialArtifactType;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
+import com.google.devtools.build.lib.actions.ArtifactSkyKey;
 import com.google.devtools.build.lib.actions.BasicActionLookupValue;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.FileValue;
@@ -232,8 +233,7 @@ public class TreeArtifactMetadataTest extends ArtifactFunctionTestCase {
               ALL_OWNER,
               new BasicActionLookupValue(
                   Actions.filterSharedActionsAndThrowActionConflict(
-                      actionKeyContext, ImmutableList.copyOf(actions)),
-                  false)));
+                      actionKeyContext, ImmutableList.copyOf(actions)))));
     }
   }
 
@@ -272,11 +272,13 @@ public class TreeArtifactMetadataTest extends ArtifactFunctionTestCase {
 
       TreeArtifactValue treeArtifactValue = TreeArtifactValue.create(treeArtifactData);
 
-      return new ActionExecutionValue(
+      return ActionExecutionValue.create(
           fileData,
           ImmutableMap.of(output, treeArtifactValue),
           ImmutableMap.<Artifact, FileArtifactValue>of(),
-          /*outputSymlinks=*/ null);
+          /*outputSymlinks=*/ null,
+          /*discoveredModules=*/ null,
+          /*notifyOnActionCacheHitAction=*/ false);
     }
 
     @Override

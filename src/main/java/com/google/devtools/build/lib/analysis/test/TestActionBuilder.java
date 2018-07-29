@@ -204,6 +204,9 @@ public final class TestActionBuilder {
 
     Artifact testSetupScript = ruleContext.getHostPrerequisiteArtifact("$test_setup_script");
     inputsBuilder.add(testSetupScript);
+    Artifact testXmlGeneratorScript =
+        ruleContext.getHostPrerequisiteArtifact("$xml_generator_script");
+    inputsBuilder.add(testXmlGeneratorScript);
 
     Artifact collectCoverageScript = null;
     TreeMap<String, String> extraTestEnv = new TreeMap<>();
@@ -307,6 +310,7 @@ public final class TestActionBuilder {
                 ruleContext.getActionOwner(),
                 inputs,
                 testSetupScript,
+                testXmlGeneratorScript,
                 collectCoverageScript,
                 testLog,
                 cacheStatus,
@@ -323,13 +327,14 @@ public final class TestActionBuilder {
       }
     }
     // TODO(bazel-team): Passing the reportGenerator to every TestParams is a bit strange.
-    Artifact reportGenerator = null;
+    FilesToRunProvider reportGenerator = null;
     if (config.isCodeCoverageEnabled()) {
       // It's not enough to add this if the rule has coverage enabled because the command line may
       // contain rules with baseline coverage but no test rules that have coverage enabled, and in
       // that case, we still need the report generator.
-      reportGenerator = ruleContext.getPrerequisiteArtifact(
-          ":coverage_report_generator", Mode.HOST);
+      TransitiveInfoCollection reportGeneratorTarget =
+          ruleContext.getPrerequisite(":coverage_report_generator", Mode.HOST);
+      reportGenerator = reportGeneratorTarget.getProvider(FilesToRunProvider.class);
     }
 
     return new TestParams(runsPerTest, shards, TestTimeout.getTestTimeout(ruleContext.getRule()),

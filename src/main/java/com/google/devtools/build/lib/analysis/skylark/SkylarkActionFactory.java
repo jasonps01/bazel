@@ -24,10 +24,11 @@ import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
 import com.google.devtools.build.lib.actions.CommandLine;
-import com.google.devtools.build.lib.actions.CommandLineItemSimpleFormatter;
 import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.actions.RunfilesSupplier;
+import com.google.devtools.build.lib.actions.SingleStringArgFormatter;
+import com.google.devtools.build.lib.actions.extra.ExtraActionInfo;
 import com.google.devtools.build.lib.actions.extra.SpawnInfo;
 import com.google.devtools.build.lib.analysis.CommandHelper;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
@@ -38,13 +39,14 @@ import com.google.devtools.build.lib.analysis.actions.ActionConstructionContext;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
+import com.google.devtools.build.lib.analysis.actions.Substitution;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction;
-import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Substitution;
 import com.google.devtools.build.lib.analysis.skylark.SkylarkCustomCommandLine.ScalarArg;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.TargetUtils;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkbuildapi.CommandLineArgsApi;
 import com.google.devtools.build.lib.skylarkbuildapi.FileApi;
 import com.google.devtools.build.lib.skylarkbuildapi.SkylarkActionFactoryApi;
@@ -63,6 +65,7 @@ import com.google.devtools.build.lib.syntax.SkylarkMutable;
 import com.google.devtools.build.lib.syntax.SkylarkNestedSet;
 import com.google.devtools.build.lib.syntax.SkylarkSemantics;
 import com.google.devtools.build.lib.vfs.PathFragment;
+import com.google.protobuf.GeneratedMessage;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -143,10 +146,14 @@ public class SkylarkActionFactory implements SkylarkActionFactoryApi {
             inputSet,
             ImmutableList.of(PseudoAction.getDummyOutput(ruleContext)),
             mnemonic,
-            SpawnInfo.spawnInfo,
+            SPAWN_INFO,
             SpawnInfo.newBuilder().build());
     ruleContext.registerAction(action);
   }
+
+  @AutoCodec @AutoCodec.VisibleForSerialization
+  static final GeneratedMessage.GeneratedExtension<ExtraActionInfo, SpawnInfo> SPAWN_INFO =
+      SpawnInfo.spawnInfo;
 
   @Override
   public void write(FileApi output, Object content, Boolean isExecutable) throws EvalException {
@@ -765,7 +772,7 @@ public class SkylarkActionFactory implements SkylarkActionFactoryApi {
         throws EvalException {
       if (formatStr != null
           && skylarkSemantics.incompatibleDisallowOldStyleArgsAdd()
-          && !CommandLineItemSimpleFormatter.isValid(formatStr)) {
+          && !SingleStringArgFormatter.isValid(formatStr)) {
         throw new EvalException(
             null,
             String.format(
@@ -791,7 +798,7 @@ public class SkylarkActionFactory implements SkylarkActionFactoryApi {
       if (isImmutable()) {
         throw new EvalException(null, "cannot modify frozen value");
       }
-      if (!paramFileArg.contains("%s")) {
+      if (!SingleStringArgFormatter.isValid(paramFileArg)) {
         throw new EvalException(
             null,
             "Invalid value for parameter \"param_file_arg\": Expected string with a single \"%s\"");

@@ -15,9 +15,7 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Functions;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -35,7 +33,6 @@ import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.
 import com.google.devtools.build.lib.rules.cpp.CcCommon.CoptsFilter;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction.DotdFile;
-import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
@@ -72,8 +69,7 @@ public class CppCompileActionBuilder {
   private boolean allowUsingHeaderModules;
   private UUID actionClassId = GUID;
   private CppConfiguration cppConfiguration;
-  private ImmutableMap<Artifact, IncludeScannable> lipoScannableMap;
-  private final ImmutableList.Builder<Artifact> additionalIncludeScanningRoots;
+  private final ArrayList<Artifact> additionalIncludeScanningRoots;
   private Boolean shouldScanIncludes;
   private Map<String, String> executionInfo = new LinkedHashMap<>();
   private CppSemantics cppSemantics;
@@ -84,6 +80,7 @@ public class CppCompileActionBuilder {
   @Nullable private String actionName;
   private ImmutableList<Artifact> builtinIncludeFiles;
   private Iterable<Artifact> inputsForInvalidation = ImmutableList.of();
+  private Iterable<Artifact> additionalPrunableHeaders = ImmutableList.of();
   // New fields need to be added to the copy constructor.
 
   /**
@@ -102,7 +99,6 @@ public class CppCompileActionBuilder {
     this(
         ruleContext.getActionOwner(),
         configuration,
-        getLipoScannableMap(ruleContext, ccToolchain),
         ccToolchain,
         ruleContext.attributes().has("$grep_includes")
             ? ruleContext.getPrerequisiteArtifact("$grep_includes", Mode.HOST)
@@ -113,15 +109,13 @@ public class CppCompileActionBuilder {
   private CppCompileActionBuilder(
       ActionOwner actionOwner,
       BuildConfiguration configuration,
-      Map<Artifact, IncludeScannable> lipoScannableMap,
       CcToolchainProvider ccToolchain,
       @Nullable Artifact grepIncludes) {
     this.owner = actionOwner;
     this.configuration = configuration;
     this.cppConfiguration = configuration.getFragment(CppConfiguration.class);
-    this.lipoScannableMap = ImmutableMap.copyOf(lipoScannableMap);
     this.mandatoryInputsBuilder = NestedSetBuilder.stableOrder();
-    this.additionalIncludeScanningRoots = new ImmutableList.Builder<>();
+    this.additionalIncludeScanningRoots = new ArrayList<>();
     this.allowUsingHeaderModules = true;
     this.env = configuration.getActionEnvironment();
     this.codeCoverageEnabled = configuration.isCodeCoverageEnabled();
@@ -139,8 +133,8 @@ public class CppCompileActionBuilder {
     this.mandatoryInputsBuilder = NestedSetBuilder.<Artifact>stableOrder()
         .addTransitive(other.mandatoryInputsBuilder.build());
     this.inputsForInvalidation = other.inputsForInvalidation;
-    this.additionalIncludeScanningRoots =
-        new ImmutableList.Builder<Artifact>().addAll(other.additionalIncludeScanningRoots.build());
+    this.additionalIncludeScanningRoots = new ArrayList<>();
+    this.additionalIncludeScanningRoots.addAll(other.additionalIncludeScanningRoots);
     this.outputFile = other.outputFile;
     this.dwoFile = other.dwoFile;
     this.ltoIndexingFile = other.ltoIndexingFile;
@@ -156,7 +150,6 @@ public class CppCompileActionBuilder {
     this.configuration = other.configuration;
     this.usePic = other.usePic;
     this.allowUsingHeaderModules = other.allowUsingHeaderModules;
-    this.lipoScannableMap = other.lipoScannableMap;
     this.shouldScanIncludes = other.shouldScanIncludes;
     this.executionInfo = new LinkedHashMap<>(other.executionInfo);
     this.env = other.env;
@@ -165,26 +158,6 @@ public class CppCompileActionBuilder {
     this.ccToolchain = other.ccToolchain;
     this.actionName = other.actionName;
     this.grepIncludes = other.grepIncludes;
-  }
-
-  private static ImmutableMap<Artifact, IncludeScannable> getLipoScannableMap(
-      RuleContext ruleContext, CcToolchainProvider toolchain) {
-    if (!CppHelper.isLipoOptimization(ruleContext.getFragment(CppConfiguration.class), toolchain)
-        // Rules that do not contain sources that are compiled into object files, but may
-        // contain headers, will still create CppCompileActions without providing a
-        // lipo_context_collector.
-        || ruleContext
-                .attributes()
-                .getAttributeDefinition(TransitiveLipoInfoProvider.LIPO_CONTEXT_COLLECTOR)
-            == null) {
-      return ImmutableMap.<Artifact, IncludeScannable>of();
-    }
-    LipoContextProvider provider =
-        ruleContext.getPrerequisite(
-            TransitiveLipoInfoProvider.LIPO_CONTEXT_COLLECTOR,
-            Mode.DONT_CHECK,
-            LipoContextProvider.class);
-    return provider.getIncludeScannables();
   }
 
   public PathFragment getTempOutputFile() {
@@ -208,24 +181,6 @@ public class CppCompileActionBuilder {
     return mandatoryInputsBuilder.build();
   }
 
-  private Iterable<IncludeScannable> getLipoScannables(NestedSet<Artifact> realMandatoryInputs) {
-    boolean fake = tempOutputFile != null;
-
-    return lipoScannableMap.isEmpty() || fake
-        ? ImmutableList.<IncludeScannable>of()
-        : Iterables.filter(
-            Iterables.transform(
-                Iterables.filter(
-                    FileType.filter(
-                        realMandatoryInputs,
-                        CppFileTypes.C_SOURCE,
-                        CppFileTypes.CPP_SOURCE,
-                        CppFileTypes.ASSEMBLER_WITH_C_PREPROCESSOR),
-                    Predicates.not(Predicates.equalTo(getSourceFile()))),
-                Functions.forMap(lipoScannableMap, null)),
-            Predicates.notNull());
-  }
-
   private String getActionName() {
     if (actionName != null) {
       return actionName;
@@ -238,13 +193,9 @@ public class CppCompileActionBuilder {
       if (!cppConfiguration.getParseHeadersVerifiesModules()
           && featureConfiguration.isEnabled(CppRuleClasses.PARSE_HEADERS)) {
         return CppActionNames.CPP_HEADER_PARSING;
-      } else if (!cppConfiguration.getParseHeadersVerifiesModules()
-          && featureConfiguration.isEnabled(CppRuleClasses.PREPROCESS_HEADERS)) {
-        return CppActionNames.CPP_HEADER_PREPROCESSING;
       } else {
         // CcCommon.collectCAndCppSources() ensures we do not add headers to
-        // the compilation artifacts unless either 'parse_headers' or
-        // 'preprocess_headers' is set.
+        // the compilation artifacts unless 'parse_headers' is set.
         throw new IllegalStateException();
       }
     } else if (CppFileTypes.C_SOURCE.matches(sourcePath)) {
@@ -333,25 +284,10 @@ public class CppCompileActionBuilder {
     NestedSet<Artifact> realMandatoryInputs = buildMandatoryInputs();
     NestedSet<Artifact> allInputs = buildAllInputs(realMandatoryInputs);
 
-    NestedSetBuilder<Artifact> prunableHeadersBuilder = NestedSetBuilder.stableOrder();
-    prunableHeadersBuilder.addTransitive(ccCompilationContext.getDeclaredIncludeSrcs());
-    prunableHeadersBuilder.addTransitive(cppSemantics.getAdditionalPrunableIncludes());
-
-    Iterable<IncludeScannable> lipoScannables = getLipoScannables(realMandatoryInputs);
-    // We need to add "legal generated scanner files" coming through LIPO scannables here. These
-    // usually contain pre-grepped source files, i.e. files just containing the #include lines
-    // extracted from generated files. With LIPO, some of these files can be accessed, even though
-    // there is no direct dependency on them. Adding the artifacts as inputs to this compile
-    // action ensures that the action generating them is actually executed.
-    for (IncludeScannable lipoScannable : lipoScannables) {
-      for (Artifact value : lipoScannable.getLegalGeneratedScannerFileMap().values()) {
-        if (value != null) {
-          prunableHeadersBuilder.add(value);
-        }
-      }
-    }
-
-    NestedSet<Artifact> prunableHeaders = prunableHeadersBuilder.build();
+    NestedSet<Artifact> prunableHeaders =
+        NestedSetBuilder.fromNestedSet(cppSemantics.getAdditionalPrunableIncludes())
+            .addAll(additionalPrunableHeaders)
+            .build();
 
     // Copying the collections is needed to make the builder reusable.
     CppCompileAction action;
@@ -364,12 +300,11 @@ public class CppCompileActionBuilder {
               featureConfiguration,
               variables,
               sourceFile,
+              cppConfiguration,
               shouldScanIncludes,
               shouldPruneModules(),
-              cppConfiguration.getPruneCppInputDiscovery(),
               usePic,
               useHeaderModules,
-              cppConfiguration.isStrictSystemIncludes(),
               realMandatoryInputs,
               inputsForInvalidation,
               getBuiltinIncludeFiles(),
@@ -380,7 +315,6 @@ public class CppCompileActionBuilder {
               env,
               ccCompilationContext,
               coptsFilter,
-              getLipoScannables(realMandatoryInputs),
               cppSemantics,
               ccToolchain,
               ImmutableMap.copyOf(executionInfo),
@@ -393,12 +327,11 @@ public class CppCompileActionBuilder {
               featureConfiguration,
               variables,
               sourceFile,
+              cppConfiguration,
               shouldScanIncludes,
               shouldPruneModules(),
-              cppConfiguration.getPruneCppInputDiscovery(),
               usePic,
               useHeaderModules,
-              cppConfiguration.isStrictSystemIncludes(),
               realMandatoryInputs,
               inputsForInvalidation,
               getBuiltinIncludeFiles(),
@@ -411,8 +344,7 @@ public class CppCompileActionBuilder {
               env,
               ccCompilationContext,
               coptsFilter,
-              getLipoScannables(realMandatoryInputs),
-              additionalIncludeScanningRoots.build(),
+              ImmutableList.copyOf(additionalIncludeScanningRoots),
               actionClassId,
               ImmutableMap.copyOf(executionInfo),
               getActionName(),
@@ -459,10 +391,7 @@ public class CppCompileActionBuilder {
    * Returns the list of all inputs for the {@link CppCompileAction} as configured.
    */
   NestedSet<Artifact> buildAllInputs(NestedSet<Artifact> mandatoryInputs) {
-    NestedSetBuilder<Artifact> builder = NestedSetBuilder.stableOrder();
-    builder.addTransitive(mandatoryInputs);
-    builder.addAll(inputsForInvalidation);
-    return builder.build();
+    return NestedSetBuilder.fromNestedSet(mandatoryInputs).addAll(inputsForInvalidation).build();
   }
 
   private boolean useHeaderModules() {
@@ -564,7 +493,7 @@ public class CppCompileActionBuilder {
   }
 
   public CppCompileActionBuilder addAdditionalIncludeScanningRoots(
-      Iterable<Artifact> additionalIncludeScanningRoots) {
+      List<Artifact> additionalIncludeScanningRoots) {
     this.additionalIncludeScanningRoots.addAll(additionalIncludeScanningRoots);
     return this;
   }
@@ -715,5 +644,16 @@ public class CppCompileActionBuilder {
   public CppCompileActionBuilder setActionEnvironment(ActionEnvironment env) {
     this.env = env;
     return this;
+  }
+
+  public CppCompileActionBuilder setAdditionalPrunableHeaders(
+      Iterable<Artifact> additionalPrunableHeaders) {
+    this.additionalPrunableHeaders = Preconditions.checkNotNull(additionalPrunableHeaders);
+    return this;
+  }
+
+  public boolean shouldCompileHeaders() {
+    Preconditions.checkNotNull(featureConfiguration);
+    return ccToolchain.shouldProcessHeaders(featureConfiguration);
   }
 }

@@ -22,8 +22,8 @@ import com.google.devtools.build.lib.actions.cache.DigestUtils;
 import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.testutil.TestThread;
 import com.google.devtools.build.lib.testutil.TestUtils;
+import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.FileSystem;
-import com.google.devtools.build.lib.vfs.FileSystem.HashFunction;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.inmemoryfs.InMemoryFileSystem;
@@ -49,16 +49,20 @@ public class DigestUtilsTest {
     DigestUtils.configureCache(0);
   }
 
-  private static void assertDigestCalculationConcurrency(boolean expectConcurrent,
-      final boolean fastDigest, final int fileSize1, final int fileSize2,
-      HashFunction hf) throws Exception {
+  private static void assertDigestCalculationConcurrency(
+      boolean expectConcurrent,
+      final boolean fastDigest,
+      final int fileSize1,
+      final int fileSize2,
+      DigestHashFunction hf)
+      throws Exception {
     final CountDownLatch barrierLatch = new CountDownLatch(2); // Used to block test threads.
     final CountDownLatch readyLatch = new CountDownLatch(1);   // Used to block main thread.
 
     FileSystem myfs =
         new InMemoryFileSystem(BlazeClock.instance(), hf) {
           @Override
-          protected byte[] getDigest(Path path, HashFunction hashFunction) throws IOException {
+          protected byte[] getDigest(Path path) throws IOException {
             try {
               barrierLatch.countDown();
               readyLatch.countDown();
@@ -68,12 +72,12 @@ public class DigestUtilsTest {
             } catch (Exception e) {
               throw new IOException(e);
             }
-            return super.getDigest(path, hashFunction);
+            return super.getDigest(path);
           }
 
           @Override
-          protected byte[] getFastDigest(Path path, HashFunction hashFunction) throws IOException {
-            return fastDigest ? super.getDigest(path, hashFunction) : null;
+          protected byte[] getFastDigest(Path path) throws IOException {
+            return fastDigest ? super.getDigest(path) : null;
           }
         };
 
@@ -109,30 +113,31 @@ public class DigestUtilsTest {
   }
 
   /**
-   * Ensures that digest calculation is synchronized for files
-   * greater than 4096 bytes if the digest is not available cheaply,
-   * so machines with rotating drives don't become unusable.
+   * Ensures that digest calculation is synchronized for files greater than
+   * {@link DigestUtils#MULTI_THREADED_DIGEST_MAX_FILE_SIZE} bytes if the digest is not
+   * available cheaply, so machines with rotating drives don't become unusable.
    */
   @Test
   public void testCalculationConcurrency() throws Exception {
-    for (HashFunction hf : Arrays.asList(HashFunction.MD5, HashFunction.SHA1)) {
-      assertDigestCalculationConcurrency(true, true, 4096, 4096, hf);
-      assertDigestCalculationConcurrency(true, true, 4097, 4097, hf);
-      assertDigestCalculationConcurrency(true, false, 4096, 4096, hf);
-      assertDigestCalculationConcurrency(false, false, 4097, 4097, hf);
-      assertDigestCalculationConcurrency(true, false, 1024, 4097, hf);
-      assertDigestCalculationConcurrency(true, false, 1024, 1024, hf);
+    final int small = DigestUtils.MULTI_THREADED_DIGEST_MAX_FILE_SIZE;
+    final int large = DigestUtils.MULTI_THREADED_DIGEST_MAX_FILE_SIZE + 1;
+    for (DigestHashFunction hf : Arrays.asList(DigestHashFunction.MD5, DigestHashFunction.SHA1)) {
+      assertDigestCalculationConcurrency(true, true, small, small, hf);
+      assertDigestCalculationConcurrency(true, true, large, large, hf);
+      assertDigestCalculationConcurrency(true, false, small, small, hf);
+      assertDigestCalculationConcurrency(true, false, small, large, hf);
+      assertDigestCalculationConcurrency(false, false, large, large, hf);
     }
   }
 
-  public void assertRecoverFromMalformedDigest(HashFunction... hashFunctions) throws Exception {
-    for (HashFunction hf : hashFunctions) {
+  public void assertRecoverFromMalformedDigest(DigestHashFunction... hashFunctions)
+      throws Exception {
+    for (DigestHashFunction hf : hashFunctions) {
       final byte[] malformed = {0, 0, 0};
       FileSystem myFS =
           new InMemoryFileSystem(BlazeClock.instance(), hf) {
             @Override
-            protected byte[] getFastDigest(Path path, HashFunction hashFunction)
-                throws IOException {
+            protected byte[] getFastDigest(Path path) throws IOException {
               // Digest functions have more than 3 bytes, usually at least 16.
               return malformed;
             }
@@ -153,7 +158,7 @@ public class DigestUtilsTest {
       fail("Digests cache should remain disabled until configureCache is called");
     } catch (NullPointerException expected) {
     }
-    assertRecoverFromMalformedDigest(HashFunction.MD5, HashFunction.SHA1);
+    assertRecoverFromMalformedDigest(DigestHashFunction.MD5, DigestHashFunction.SHA1);
     try {
       DigestUtils.getCacheStats();
       fail("Digests cache was unexpectedly enabled through the test");
@@ -170,7 +175,7 @@ public class DigestUtilsTest {
     // hash function is not part of the cache key. This is intentional: the hash function is
     // essentially final and can only be changed for tests. Therefore, just test the same hash
     // function twice to further exercise the cache code.
-    assertRecoverFromMalformedDigest(HashFunction.MD5, HashFunction.MD5);
+    assertRecoverFromMalformedDigest(DigestHashFunction.MD5, DigestHashFunction.MD5);
 
     assertThat(DigestUtils.getCacheStats()).isNotNull(); // Ensure the cache remains enabled.
   }
@@ -221,15 +226,15 @@ public class DigestUtilsTest {
     FileSystem tracingFileSystem =
         new InMemoryFileSystem(BlazeClock.instance()) {
           @Override
-          protected byte[] getFastDigest(Path path, HashFunction hashFunction) throws IOException {
+          protected byte[] getFastDigest(Path path) throws IOException {
             getFastDigestCounter.incrementAndGet();
             return null;
           }
 
           @Override
-          protected byte[] getDigest(Path path, HashFunction hashFunction) throws IOException {
+          protected byte[] getDigest(Path path) throws IOException {
             getDigestCounter.incrementAndGet();
-            return super.getDigest(path, hashFunction);
+            return super.getDigest(path);
           }
         };
 

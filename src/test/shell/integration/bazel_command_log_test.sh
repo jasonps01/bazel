@@ -36,12 +36,27 @@ function strip_lines_from_bazel_cc() {
     -e "/^INFO: Reading 'startup' options from /d" \
     -e '/^\$TEST_TMPDIR defined: output root default is/d' \
     -e '/^OpenJDK 64-Bit Server VM warning: ignoring option UseSeparateVSpacesInYoungGen; support was removed in 8.0/d' \
-    -e '/^Starting local Bazel server and connecting to it\.\.\.\.*$/d' \
-    -e '/^Starting local Blaze server and connecting to it\.\.\.\.*$/d' \
-    -e '/^\.*$/d' \
+    -e '/^Starting local B[azel]* server and connecting to it\.\.\.\.*$/d' \
+    -e '/^\.\.\. still trying to connect to local B[azel]* server after \d+ seconds \.\.\.\.*$/d' \
     -e '/^Killed non-responsive server process/d' \
     -e '/server needs to be killed, because the startup options are different/d' \
     -e '/^WARNING: Waiting for server process to terminate (waited 5 seconds, waiting at most 60)$/d' \
+    $TEST_log)
+
+  echo "$clean_log" > $TEST_log
+}
+
+function strip_protobuf_unsafe_warning() {
+  # TODO: Protobuf triggers illegal reflective access warning in JDK 9.
+  # Remove this workaround when protobuf fixes this.
+  # See https://github.com/google/protobuf/issues/3781
+  clean_log=$(\
+    sed \
+    -e "/^WARNING: An illegal reflective access operation has occurred/d" \
+    -e "/^WARNING: Illegal reflective access by com\.google\.protobuf\.UnsafeUtil /d" \
+    -e "/^WARNING: Please consider reporting this to the maintainers of com\.google\.protobuf\.UnsafeUtil/d" \
+    -e "/^WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations/d" \
+    -e "/^WARNING: All illegal access operations will be denied in a future release/d" \
     $TEST_log)
 
   echo "$clean_log" > $TEST_log
@@ -53,6 +68,7 @@ function test_batch_mode() {
 
   # strip extra lines printed by bazel.cc
   strip_lines_from_bazel_cc
+  strip_protobuf_unsafe_warning
 
   # compare $TEST_log with command.log
   assert_equals "" "$(diff $TEST_log $log 2>&1)"
@@ -69,6 +85,7 @@ function test_batch_mode_with_logging_flag() {
 
   # strip extra lines printed by bazel.cc
   strip_lines_from_bazel_cc
+  strip_protobuf_unsafe_warning
 
   # compare $TEST_log with command.log
   assert_equals "" "$(diff $TEST_log $log 2>&1)"

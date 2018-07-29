@@ -121,9 +121,11 @@ public enum LinkBuildVariables {
       SequenceBuilder librariesToLink,
       Iterable<String> librarySearchDirectories,
       boolean isLegacyFullyStaticLinkingMode,
-      boolean isStaticLinkingMode)
+      boolean isStaticLinkingMode,
+      boolean addIfsoRelatedVariables)
       throws EvalException {
-    CcToolchainVariables.Builder buildVariables = new CcToolchainVariables.Builder();
+    CcToolchainVariables.Builder buildVariables =
+        new CcToolchainVariables.Builder(ccToolchainProvider.getBuildVariables());
 
     // symbol counting
     if (symbolCounts != null) {
@@ -160,8 +162,6 @@ public enum LinkBuildVariables {
 
     if (librariesToLink != null) {
       buildVariables.addCustomBuiltVariable(LIBRARIES_TO_LINK.getVariableName(), librariesToLink);
-      // TODO(b/72803478): Remove once existing crosstools have been migrated
-      buildVariables.addStringVariable("libs_to_link_dont_emit_objects_for_archiver", "");
     }
 
     buildVariables.addStringSequenceVariable(
@@ -214,23 +214,26 @@ public enum LinkBuildVariables {
         buildVariables.addStringVariable(THINLTO_PARAM_FILE.getVariableName(), thinltoParamFile);
       }
     }
-    boolean shouldGenerateInterfaceLibrary =
-        outputFile != null
-            && interfaceLibraryBuilder != null
-            && interfaceLibraryOutput != null
-            && !isLtoIndexing;
-    buildVariables.addStringVariable(
-        GENERATE_INTERFACE_LIBRARY.getVariableName(),
-        shouldGenerateInterfaceLibrary ? "yes" : "no");
-    buildVariables.addStringVariable(
-        INTERFACE_LIBRARY_BUILDER.getVariableName(),
-        shouldGenerateInterfaceLibrary ? interfaceLibraryBuilder : "ignored");
-    buildVariables.addStringVariable(
-        INTERFACE_LIBRARY_INPUT.getVariableName(),
-        shouldGenerateInterfaceLibrary ? outputFile : "ignored");
-    buildVariables.addStringVariable(
-        INTERFACE_LIBRARY_OUTPUT.getVariableName(),
-        shouldGenerateInterfaceLibrary ? interfaceLibraryOutput : "ignored");
+
+    if (addIfsoRelatedVariables) {
+      boolean shouldGenerateInterfaceLibrary =
+          outputFile != null
+              && interfaceLibraryBuilder != null
+              && interfaceLibraryOutput != null
+              && !isLtoIndexing;
+      buildVariables.addStringVariable(
+          GENERATE_INTERFACE_LIBRARY.getVariableName(),
+          shouldGenerateInterfaceLibrary ? "yes" : "no");
+      buildVariables.addStringVariable(
+          INTERFACE_LIBRARY_BUILDER.getVariableName(),
+          shouldGenerateInterfaceLibrary ? interfaceLibraryBuilder : "ignored");
+      buildVariables.addStringVariable(
+          INTERFACE_LIBRARY_INPUT.getVariableName(),
+          shouldGenerateInterfaceLibrary ? outputFile : "ignored");
+      buildVariables.addStringVariable(
+          INTERFACE_LIBRARY_OUTPUT.getVariableName(),
+          shouldGenerateInterfaceLibrary ? interfaceLibraryOutput : "ignored");
+    }
 
     if (defFile != null) {
       buildVariables.addStringVariable(DEF_FILE_PATH.getVariableName(), defFile);
@@ -326,7 +329,9 @@ public enum LinkBuildVariables {
       result.addAll(ccToolchainProvider.getTestOnlyLinkOptions());
     }
 
-    result.addAll(ccToolchainProvider.getLinkOptions());
+    if (!cppConfiguration.enableLinkoptsInUserLinkFlags()) {
+      result.addAll(ccToolchainProvider.getLinkOptions());
+    }
 
     // -pie is not compatible with shared and should be
     // removed when the latter is part of the link command. Should we need to further

@@ -18,7 +18,6 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.base.Suppliers;
-import com.google.common.base.Verify;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ClassToInstanceMap;
 import com.google.common.collect.ImmutableCollection;
@@ -38,8 +37,6 @@ import com.google.devtools.build.lib.actions.CommandLines.CommandLineLimits;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
-import com.google.devtools.build.lib.analysis.config.transitions.ConfigurationTransition;
-import com.google.devtools.build.lib.analysis.config.transitions.PatchTransition;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -49,7 +46,6 @@ import com.google.devtools.build.lib.concurrent.BlazeInterners;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
-import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TestTimeout;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkbuildapi.BuildConfigurationApi;
@@ -163,38 +159,6 @@ public class BuildConfiguration implements BuildConfigurationApi {
     public Map<String, Object> lateBoundOptionDefaults() {
       return ImmutableMap.of();
     }
-
-    /**
-     * Returns the transition that produces the "artifact owner" for this configuration, or null
-     * if this configuration is its own owner.
-     *
-     * <p>If multiple fragments return the same transition, that transition is only applied
-     * once. Multiple fragments may not return different non-null transitions.
-     *
-     * <p>Deprecated. The only known use of this is LIPO, which is on its deathbed.
-     */
-    @Nullable
-    @Deprecated
-    public PatchTransition getArtifactOwnerTransition() {
-      return null;
-    }
-
-    /**
-     * Returns an extra transition that should apply to top-level targets in this
-     * configuration. Returns null if no transition is needed.
-     *
-     * <p>Overriders should not change {@link FragmentOptions} not associated with their fragment.
-     *
-     * <p>If multiple fragments specify a transition, they're composed together in a
-     * deterministic but undocumented order (so don't write code expecting a specific order).
-     *
-     * <p>Deprecated. The only known use of this is LIPO, which is on its deathbed.
-     */
-    @Nullable
-    @Deprecated
-    public PatchTransition topLevelConfigurationHook(Target toTarget) {
-      return null;
-    }
   }
 
   public static final Label convertOptionsLabel(String input) throws OptionsParsingException {
@@ -205,7 +169,7 @@ public class BuildConfiguration implements BuildConfigurationApi {
       if (!input.startsWith("/") && !input.startsWith("@")) {
         input = "//" + input;
       }
-      return Label.parseAbsolute(input);
+      return Label.parseAbsolute(input, ImmutableMap.of());
     } catch (LabelSyntaxException e) {
       throw new OptionsParsingException(e.getMessage());
     }
@@ -372,7 +336,6 @@ public class BuildConfiguration implements BuildConfigurationApi {
    * for semantically identical option values. The simplest way to ensure that is to return the
    * input string.
    */
-  @AutoCodec(strategy = AutoCodec.Strategy.PUBLIC_FIELDS)
   public static class Options extends FragmentOptions implements Cloneable {
     @Option(
       name = "experimental_separate_genfiles_directory",
@@ -455,6 +418,17 @@ public class BuildConfiguration implements BuildConfigurationApi {
               + "disabled."
     )
     public boolean strictFilesets;
+
+    @Option(
+        name = "experimental_strict_fileset_output",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
+        effectTags = {OptionEffectTag.EXECUTION},
+        help =
+            "If this option is enabled, filesets will treat all output artifacts as regular files. "
+              + "They will not traverse directories or be sensitive to symlinks."
+    )
+    public boolean strictFilesetOutput;
 
     @Option(
       name = "stamp",
@@ -800,18 +774,17 @@ public class BuildConfiguration implements BuildConfigurationApi {
     public boolean isHost;
 
     @Option(
-      name = "features",
-      allowMultiple = true,
-      defaultValue = "",
-      documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
-      effectTags = {OptionEffectTag.CHANGES_INPUTS, OptionEffectTag.AFFECTS_OUTPUTS},
-      help =
-          "The given features will be enabled or disabled by default for all packages. "
-              + "Specifying -<feature> will disable the feature globally. "
-              + "Negative features always override positive ones. "
-              + "This flag is used to enable rolling out default feature changes without a "
-              + "Blaze release."
-    )
+        name = "features",
+        allowMultiple = true,
+        defaultValue = "",
+        documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+        effectTags = {OptionEffectTag.CHANGES_INPUTS, OptionEffectTag.AFFECTS_OUTPUTS},
+        help =
+            "The given features will be enabled or disabled by default for all packages. "
+                + "Specifying -<feature> will disable the feature globally. "
+                + "Negative features always override positive ones. "
+                + "This flag is used to enable rolling out default feature changes without a "
+                + "Bazel release.")
     public List<String> defaultFeatures;
 
     @Option(
@@ -942,6 +915,7 @@ public class BuildConfiguration implements BuildConfigurationApi {
       host.enforceConstraints = enforceConstraints;
       host.separateGenfilesDirectory = separateGenfilesDirectory;
       host.cpu = hostCpu;
+      host.deferParamFiles = deferParamFiles;
 
       // === Runfiles ===
       host.buildRunfilesManifests = buildRunfilesManifests;
@@ -1075,10 +1049,6 @@ public class BuildConfiguration implements BuildConfigurationApi {
 
   private final boolean separateGenfilesDirectory;
 
-  // Cache this value for quicker access. We don't cache it inside BuildOptions because BuildOptions
-  // is mutable, so a cached value there could fall out of date when it's updated.
-  private final boolean actionsEnabled;
-
   /**
    * The global "make variables" such as "$(TARGET_CPU)"; these get applied to all rules analyzed in
    * this configuration.
@@ -1121,7 +1091,6 @@ public class BuildConfiguration implements BuildConfigurationApi {
         // "bazel-out/arm-linux-fastbuild/bin" while the parent bindir is
         // "bazel-out/android-arm-linux-fastbuild/bin". That's pretty awkward to check here.
         //      && outputRoots.equals(other.outputRoots)
-                && actionsEnabled == other.actionsEnabled
                 && fragments.values().containsAll(other.fragments.values())
                 && buildOptions.getOptions().containsAll(other.buildOptions.getOptions()));
   }
@@ -1139,17 +1108,15 @@ public class BuildConfiguration implements BuildConfigurationApi {
       return false;
     }
     BuildConfiguration otherConfig = (BuildConfiguration) other;
-    return actionsEnabled == otherConfig.actionsEnabled
-        && fragments.values().equals(otherConfig.fragments.values())
+    return fragments.values().equals(otherConfig.fragments.values())
         && buildOptions.equals(otherConfig.buildOptions);
   }
 
   private int computeHashCode() {
-    return Objects.hash(isActionsEnabled(), fragments, buildOptions.getOptions());
+    return Objects.hash(fragments, buildOptions.getOptions());
   }
 
   public void describe(StringBuilder sb) {
-    sb.append(isActionsEnabled()).append('\n');
     for (Fragment fragment : fragments.values()) {
       sb.append(fragment.getClass().getName()).append('\n');
     }
@@ -1243,7 +1210,6 @@ public class BuildConfiguration implements BuildConfigurationApi {
     this.skylarkVisibleFragments = buildIndexOfSkylarkVisibleFragments();
     this.buildOptions = buildOptions.clone();
     this.buildOptionsDiff = buildOptionsDiff;
-    this.actionsEnabled = buildOptions.enableActions();
     this.options = buildOptions.get(Options.class);
     this.separateGenfilesDirectory = options.separateGenfilesDirectory;
     this.mainRepositoryName = mainRepositoryName;
@@ -1521,6 +1487,10 @@ public class BuildConfiguration implements BuildConfigurationApi {
     return options.strictFilesets;
   }
 
+  public boolean isStrictFilesetOutput() {
+    return options.strictFilesetOutput;
+  }
+
   public String getMainRepositoryName() {
     return mainRepositoryName.strippedName();
   }
@@ -1744,11 +1714,6 @@ public class BuildConfiguration implements BuildConfigurationApi {
     return options.experimentalJavaCoverage;
   }
 
-  /** If false, AnalysisEnvironment doesn't register any actions created by the ConfiguredTarget. */
-  public boolean isActionsEnabled() {
-    return actionsEnabled;
-  }
-
   public RunUnder getRunUnder() {
     return options.runUnder;
   }
@@ -1773,7 +1738,7 @@ public class BuildConfiguration implements BuildConfigurationApi {
   }
 
   public List<Label> getActionListeners() {
-    return isActionsEnabled() ? options.actionListeners : ImmutableList.<Label>of();
+    return options.actionListeners;
   }
 
   /**
@@ -1853,28 +1818,6 @@ public class BuildConfiguration implements BuildConfigurationApi {
   }
 
   /**
-   * Returns the transition that produces the "artifact owner" for this configuration, or null
-   * if this configuration is its own owner.
-   */
-  @Nullable
-  public PatchTransition getArtifactOwnerTransition() {
-    PatchTransition ownerTransition = null;
-    for (Fragment fragment : fragments.values()) {
-      PatchTransition fragmentTransition = fragment.getArtifactOwnerTransition();
-      if (fragmentTransition != null) {
-        if (ownerTransition != null) {
-          Verify.verify(ownerTransition == fragmentTransition,
-              String.format(
-                  "cannot determine owner transition: fragments returning both %s and %s",
-                  ownerTransition.toString(), fragmentTransition.toString()));
-        }
-        ownerTransition = fragmentTransition;
-      }
-    }
-    return ownerTransition;
-  }
-
-  /**
    * @return the list of default features used for all packages.
    */
   public List<String> getDefaultFeatures() {
@@ -1903,27 +1846,6 @@ public class BuildConfiguration implements BuildConfigurationApi {
 
   public ImmutableCollection<String> getSkylarkFragmentNames() {
     return skylarkVisibleFragments.keySet();
-  }
-
-  /**
-   * Returns an extra transition that should apply to top-level targets in this
-   * configuration. Returns null if no transition is needed.
-   */
-  @Nullable
-  public ConfigurationTransition topLevelConfigurationHook(Target toTarget) {
-    ConfigurationTransition currentTransition = null;
-    for (Fragment fragment : fragments.values()) {
-      PatchTransition fragmentTransition = fragment.topLevelConfigurationHook(toTarget);
-      if (fragmentTransition == null) {
-        continue;
-      } else if (currentTransition == null) {
-        currentTransition = fragmentTransition;
-      } else {
-        currentTransition =
-            TransitionResolver.composeTransitions(currentTransition, fragmentTransition);
-      }
-    }
-    return currentTransition;
   }
 
   public BuildEventId getEventId() {

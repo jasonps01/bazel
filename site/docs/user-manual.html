@@ -262,16 +262,9 @@ title: User Manual
   with an underscore ('_') to avoid unintentional name sharing.
 </p>
 <p>
-  The expansion behavior for these <code>--config=foo</code> options has
-  changed. The legacy behavior, still the default, is to expand these in a
-  fixed point expansion after all default rc options are loaded. This is
-  unintuitive and has caused debugging difficulties in the past. The new
-  behavior is to expand <code>--config=foo</code> to the options it expands to
+  <code>--config=foo</code> expands to the options defined in the rc files
   "in-place" so that the options specified for the config have the same
-  precedence that the <code>--config=foo</code> option had. This is more
-  intuitive, and can be enabled using the startup flag
-  <code>--expand_configs_in_place</code>, which can be included in a bazelrc
-  file on a <code>startup</code> line.
+  precedence that the <code>--config=foo</code> option had.
 </p>
 
 <h5>Example</h5>
@@ -1079,11 +1072,6 @@ $ bazel fetch //...
 
 <h3>Options that affect how packages are located</h3>
 
-<p>
-  See also the <a href='#flag--show_package_location'><code class='flag'>--show_package_location</code></a>
-  option.
-</p>
-
 <h4 id='flag--package_path'><code class='flag'>--package_path</code></h4>
 <p>
   This option specifies the set of directories that are searched to
@@ -1781,31 +1769,22 @@ The default is <code>armeabi-v7a</code>.
 
 <h4 id='flag--javabase'><code class='flag'>--javabase (<var>label</var>)</code></h4>
 <p>
-  This option sets the <i>label</i> of the base Java installation to
-  use for running JavaBuilder, SingleJar, for <i>bazel run</i> and <i>bazel
-  test</i>, and for Java binaries built by <code>java_binary</code> and <code>java_test</code>
-  rules.
-  The various  <a href='be/make-variables.html'>"Make" variables</a> for
-  Java (<code>JAVABASE</code>, <code>JAVA</code>, <code>JAVAC</code> and
-  <code>JAR</code>) are derived from this option.
+  This option sets the <i>label</i> of the base Java installation to use for <i>bazel run</i>,
+  <i>bazel test</i>, and for Java binaries built by <code>java_binary</code> and
+  <code>java_test</code> rules. The <code>JAVABASE</code> and <code>JAVA</code>
+  <a href='be/make-variables.html'>"Make" variables</a> are derived from this option.
 </p>
 
 <h4 id='flag--host_javabase'><code class='flag'>--host_javabase <var>label</var></code></h4>
 <p>
-  If not specified, bazel uses the value of <code class='flag'>--javabase</code>
-  in the host configuration, i.e., for Java-based tools that run during the build.
-  The main purpose of this flag is to enable cross-compilation.
+  This option sets the <i>label</i> of the base Java installation to use in the host configuration,
+  for example for host build tools including JavaBuilder and Singlejar.
 </p>
-
 <p>
   This does not select the Java compiler that is used to compile Java
   source files. The compiler can be selected by settings the
   <a href="#flag--java_toolchain"><code class='flag'>--java_toolchain</code></a>
   option.
-</p>
-<p>
-  This option should not be confused with the startup option
-  <a href='#startup_flag--host_javabase'>--host_javabase</a>.
 </p>
 
 <h3 id='strategy-options'>Build strategy options</h3>
@@ -2350,6 +2329,12 @@ either to the terminal, or to additional log files.
 </p>
 
 <p>
+  <code class='flag'>--subcommands=pretty_print</code> may be passed to print
+  the arguments of the command as a list rather than as a single line. This may
+  help make long command lines more readable.
+</p>
+
+<p>
   See also <a href="#flag--verbose_failures">--verbose_failures</a>, below.
 </p>
 
@@ -2484,6 +2469,61 @@ echo "STABLE_USER_NAME $USER"
   0</code> or <code>stamp = 1</code>, the <code class='flag'>--[no]stamp</code> option
   selects whether stamping is enabled. Bazel never stamps binaries that are
   built for the host configuration, regardless of the stamp attribute.
+</p>
+
+<h3 id='platform_build_options'>Platform options</h3>
+
+<p>
+  Use these options to control the host and target platforms that configure how builds work, and to
+  control what execution platforms and toolchains are available to Bazel rules.
+</p>
+
+<p>
+  Please see background information on
+  <a href="platforms.html">Platforms</a> and <a href="toolchains.html">Toolchains</a>.
+</p>
+
+<h4 id="flag--platforms"><code class='flag'>--platforms <var>labels</var></code></h4>
+<p>
+  The labels of the platform rules describing the target platforms for the
+  current command.
+</p>
+
+<h4 id="flag--host_platform"><code class='flag'>--host_platform <var>label</var></code></h4>
+<p>
+  The label of a platform rule that describes the host system.
+</p>
+
+<h4 id="flag--extra_execution_platforms"><code class='flag'>--extra_execution_platforms <var>labels</var></code></h4>
+<p>
+  The platforms that are available as execution platforms to run actions.
+  Platforms can be specified by exact target, or as a target pattern. These
+  platforms will be considered before those declared in the WORKSPACE file by
+  <a href="https://docs.bazel.build/versions/master/skylark/lib/globals.html#register_execution_platforms">
+  register_execution_platforms()</a>.
+</p>
+
+<h4 id="flag--extra_toolchains"><code class='flag'>--extra_toolchains <var>labels</var></code></h4>
+<p>
+  The toolchain rules to be considered during toolchain resolution. Toolchains
+  can be specified by exact target, or as a target pattern. These toolchains will
+  be considered before those declared in the WORKSPACE file by
+  <a href="https://docs.bazel.build/versions/master/skylark/lib/globals.html#register_toolchains">
+  register_toolchains()</a>.
+</p>
+
+<h4 id="flag--toolchain_resolution_debug"><code class='flag'>--toolchain_resolution_debug=false</code></h4>
+<p>
+  Print debug information while finding toolchains for a rule. This might help
+  developers of Bazel or Skylark rules with debugging failures due to missing
+  toolchains.
+</p>
+
+<h4 id="flag--enabled_toolchain_types"><code class='flag'>--enabled_toolchain_types <var>labels</var></code></h4>
+<p>
+  Enable toolchain resolution for the given toolchain type, if the rules used support that.
+  This does not directly change the core Bazel machinery, but is a signal to participating rule
+  implementations that toolchain resolution should be used.
 </p>
 
 <h3 id='misc_build_options'>Miscellaneous options</h3>
@@ -3537,20 +3577,27 @@ adb -s deadbeef install ...
   base) if there is a better location in your filesystem layout.
 </p>
 
-<h4 id='startup_flag--host_javabase'><code class='flag'>--host_javabase=<var>dir</var></code></h4>
+<a name="startup_flag--host_javabase"></a>
+<h4 id='startup_flag--server_javabase'><code class='flag'>--server_javabase=<var>dir</var></code></h4>
 <p>
   Specifies the Java virtual machine in which <i>Bazel itself</i> runs. The value must be a path to
   the directory containing a JDK or JRE. It should not be a label.
   This option should appear before any bazel command, and not be confused with the build option
-  <a href='#flag--host_javabase'>--host_javabase</a>, for example:
+  <a href='#flag--server_javabase'>--server_javabase</a>, for example:
 </p>
 <pre>
-  % bazel --host_javabase=/usr/local/buildtools/java/jdk9 build //foo
+  % bazel --server_javabase=/usr/local/buildtools/java/jdk9 build //foo
 </pre>
 <p>
   This flag does <i>not</i> affect the JVMs used by Bazel subprocesses such as applications, tests,
   tools, and so on. Use build options <a href='#flag--javabase'>--javabase</a> or
   <a href='#flag--host_javabase'>--host_javabase</a> instead.
+</p>
+<p>
+  This flag was previously named <code>--host_javabase</code> (sometimes referred to as the
+  'left-hand side' <code>--host_javabase</code>), but was renamed to avoid confusion with the
+  build flag <a href='#flag--host_javabase'>--host_javabase</a> (sometimes referred to as the
+  'right-hand side' <code>--host_javabase</code>).
 </p>
 
 <h4 id='flag--host_jvm_args'><code class='flag'>--host_jvm_args=<var>string</var></code></h4>
@@ -3809,9 +3856,8 @@ Bazel execution can result in following exit codes:
 <b>For <code>bazel run</code>:</b>
 <ul>
   <li><code>1</code> - Build failed.</li>
-  <li><code>6</code> - Run command failure. The executed subprocess returned a
-                       non-zero exit code. The actual subprocess exit code is
-                       given in stderr.</li>
+  <li>If the build succeeds but the executed subprocess returns a non-zero exit code it will be the
+    exit code of the command as well.</li>
 </ul>
 
 

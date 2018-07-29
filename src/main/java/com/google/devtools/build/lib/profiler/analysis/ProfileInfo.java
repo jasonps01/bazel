@@ -35,6 +35,7 @@ import com.google.devtools.build.lib.vfs.Path;
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
@@ -443,6 +444,7 @@ public class ProfileInfo {
   private static final AggregateAttr ZERO = new AggregateAttr(0, 0);
 
   public final String comment;
+  private long minTaskStartTime = Long.MAX_VALUE;
   private boolean corruptedOrIncomplete = false;
 
   // TODO(bazel-team): (2010) In one case, this list took 277MB of heap. Ideally it should be
@@ -474,6 +476,7 @@ public class ProfileInfo {
 
   private void addTask(Task task) {
     allTasksById.add(task);
+    minTaskStartTime = Math.min(minTaskStartTime, task.startTime);
   }
 
   /**
@@ -621,6 +624,16 @@ public class ProfileInfo {
       }
     }
     return new AggregateAttr(count, totalTime);
+  }
+
+  /**
+   * Returns the minimum task start time, that is, when the profile actually started.
+   *
+   * <p>This should be very close to zero except that some Blaze versions contained a bug that made
+   * them not subtract the current time from task start times in the profile.</p>
+   */
+  public long getMinTaskStartTime() {
+    return minTaskStartTime;
   }
 
   /**
@@ -882,23 +895,22 @@ public class ProfileInfo {
   /**
    * Loads and parses Blaze profile file.
    *
-   * @param profileFile profile file path
+   * @param profileStream profile file path
    *
    * @return ProfileInfo object with some fields populated (call calculateStats()
    *         and analyzeRelationships() to populate the remaining fields)
    * @throws UnsupportedEncodingException if the file format is invalid
    * @throws IOException if the file can't be read
    */
-  public static ProfileInfo loadProfile(Path profileFile)
-      throws IOException {
-    // It is extremely important to wrap InflaterInputStream using
-    // BufferedInputStream because majority of reads would be done using
-    // readInt()/readLong() methods and InflaterInputStream is very inefficient
-    // in handling small read requests (performance difference with 1MB buffer
-    // used below is almost 10x).
-    DataInputStream in = new DataInputStream(
-        new BufferedInputStream(new InflaterInputStream(
-        profileFile.getInputStream(), new Inflater(false), 65536), 1024 * 1024));
+  public static ProfileInfo loadProfile(InputStream profileStream) throws IOException {
+    // It is extremely important to wrap InflaterInputStream using BufferedInputStream because
+    // the majority of reads would be done using readInt()/readLong() methods and
+    // InflaterInputStream is very inefficient in handling small read requests (performance
+    // difference with 1MB buffer used below is almost 10x).
+    DataInputStream in =
+        new DataInputStream(
+            new BufferedInputStream(
+                new InflaterInputStream(profileStream, new Inflater(false), 65536), 1024 * 1024));
 
     if (in.readInt() != Profiler.MAGIC) {
       in.close();
@@ -995,7 +1007,10 @@ public class ProfileInfo {
   public static ProfileInfo loadProfileVerbosely(Path profileFile, InfoListener reporter)
       throws IOException {
     reporter.info("Loading " + profileFile.getPathString());
-    ProfileInfo profileInfo = ProfileInfo.loadProfile(profileFile);
+    ProfileInfo profileInfo;
+    try (InputStream in = profileFile.getInputStream()) {
+      profileInfo = ProfileInfo.loadProfile(in);
+    }
     if (profileInfo.isCorruptedOrIncomplete()) {
       reporter.warn("Profile file is incomplete or corrupted - not all records were parsed");
     }

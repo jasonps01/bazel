@@ -69,20 +69,20 @@ bind(
 
 new_local_repository(
     name = "com_google_protobuf",
-    build_file = "./third_party/protobuf/3.4.0/BUILD",
-    path = "./third_party/protobuf/3.4.0/",
+    build_file = "./third_party/protobuf/3.6.0/BUILD",
+    path = "./third_party/protobuf/3.6.0/",
 )
 
 new_local_repository(
     name = "com_google_protobuf_cc",
-    build_file = "./third_party/protobuf/3.4.0/BUILD",
-    path = "./third_party/protobuf/3.4.0/",
+    build_file = "./third_party/protobuf/3.6.0/BUILD",
+    path = "./third_party/protobuf/3.6.0/",
 )
 
 new_local_repository(
     name = "com_google_protobuf_java",
-    build_file = "./third_party/protobuf/3.4.0/com_google_protobuf_java.BUILD",
-    path = "./third_party/protobuf/3.4.0/",
+    build_file = "./third_party/protobuf/3.6.0/com_google_protobuf_java.BUILD",
+    path = "./third_party/protobuf/3.6.0/",
 )
 
 new_local_repository(
@@ -93,66 +93,60 @@ new_local_repository(
 
 http_archive(
     name = "desugar_jdk_libs",
-    url = "https://github.com/google/desugar_jdk_libs/archive/f5e6d80c6b4ec6b0a46603f72b015d45cf3c11cd.zip",
+    url = "https://github.com/google/desugar_jdk_libs/archive/fd937f4180c1b557805219af4482f1a27eb0ff2b.zip",
     # Computed using "shasum -a 256 <zip>"
-    sha256 = "c80f3f3d442d8a6ca7adc83f90ecd638c3864087fdd6787ffac070b6f1cc8f9b",
-    strip_prefix = "desugar_jdk_libs-f5e6d80c6b4ec6b0a46603f72b015d45cf3c11cd",
+    sha256 = "43b8fcc56a180e178d498f375fbeb95e8b65b9bf6c2da91ae3ae0332521a1a12",
+    strip_prefix = "desugar_jdk_libs-fd937f4180c1b557805219af4482f1a27eb0ff2b",
 )
 
 load("//:distdir.bzl", "distdir_tar")
 distdir_tar(
     name = "additional_distfiles",
     dirname = "derived/distdir",
-    archives = ["f5e6d80c6b4ec6b0a46603f72b015d45cf3c11cd.zip"],
+    archives = ["fd937f4180c1b557805219af4482f1a27eb0ff2b.zip"],
     urls = {
-        "f5e6d80c6b4ec6b0a46603f72b015d45cf3c11cd.zip" :
-        ["https://github.com/google/desugar_jdk_libs/archive/f5e6d80c6b4ec6b0a46603f72b015d45cf3c11cd.zip"],
+        "fd937f4180c1b557805219af4482f1a27eb0ff2b.zip" :
+        ["https://github.com/google/desugar_jdk_libs/archive/fd937f4180c1b557805219af4482f1a27eb0ff2b.zip"],
     },
     sha256 = {
-        "f5e6d80c6b4ec6b0a46603f72b015d45cf3c11cd.zip" :
-        "c80f3f3d442d8a6ca7adc83f90ecd638c3864087fdd6787ffac070b6f1cc8f9b",
+        "fd937f4180c1b557805219af4482f1a27eb0ff2b.zip" :
+        "43b8fcc56a180e178d498f375fbeb95e8b65b9bf6c2da91ae3ae0332521a1a12",
   },
 )
 
 # OpenJDK distributions used to create a version of Bazel bundled with the OpenJDK.
 http_file(
     name = "openjdk_linux",
-    sha256 = "85b81652b3fe8cfb0a2cfb835988672bde7844f613dae5b9487b5b44921a1afd",
+    sha256 = "57fad3602e74c79587901d6966d3b54ef32cb811829a2552163185d5064fe9b5",
     urls = [
-        "https://mirror.bazel.build/openjdk/azul-zulu-8.28.0.1-jdk8.0.163/zulu8.28.0.1-jdk8.0.163-linux_x64.tar.gz",
-        "https://bazel-mirror.storage.googleapis.com/openjdk/azul-zulu-8.28.0.1-jdk8.0.163/zulu8.28.0.1-jdk8.0.163-linux_x64.tar.gz",
-        "https://cdn.azul.com/zulu/bin/zulu8.28.0.1-jdk8.0.163-linux_x64.tar.gz",
+        "https://mirror.bazel.build/openjdk/azul-zulu10.2%2B3-jdk10.0.1/zulu10.2%2B3-jdk10.0.1-linux_x64-allmodules.tar.gz",
     ],
 )
 
 http_file(
     name = "openjdk_macos",
-    sha256 = "292a44695e708a8822b3d0a462faf32887ddb80b56aa91e7598fd4b6f6341f69",
+    sha256 = "e669c9a897413d855b550b4e39d79614392e6fb96f494e8ef99a34297d9d85d3",
     urls = [
-        "https://mirror.bazel.build/openjdk/azul-zulu-8.28.0.1-jdk8.0.163/zulu8.28.0.1-jdk8.0.163-macosx_x64.tar.gz",
-        "https://bazel-mirror.storage.googleapis.com/openjdk/azul-zulu-8.28.0.1-jdk8.0.163/zulu8.28.0.1-jdk8.0.163-macosx_x64.tar.gz",
-        "https://cdn.azul.com/zulu/bin/zulu8.28.0.1-jdk8.0.163-macosx_x64.tar.gz",
+        "https://mirror.bazel.build/openjdk/azul-zulu10.2%2B3-jdk10.0.1/zulu10.2%2B3-jdk10.0.1-macosx_x64-allmodules.tar.gz",
     ],
 )
 
 http_file(
     name = "openjdk_win",
-    sha256 = "0c5ea3634ae7d7851630cf61fdd6344cce110cf9246593345e49fc430bb39442",
+    sha256 = "c39e7700a8d41794d60985df5a20352435196e78ecbc6a2b30df7be8637bffd5",
     urls = [
-        "https://mirror.bazel.build/openjdk/azul-zulu-8.28.0.1-jdk8.0.163/zulu8.28.0.1-jdk8.0.163-win_x64.zip",
-        "https://bazel-mirror.storage.googleapis.com/openjdk/azul-zulu-8.28.0.1-jdk8.0.163/zulu8.28.0.1-jdk8.0.163-win_x64.zip",
-        "https://cdn.azul.com/zulu/bin/zulu8.28.0.1-jdk8.0.163-win_x64.zip",
+        "https://mirror.bazel.build/openjdk/azul-zulu10.2%2B3-jdk10.0.1/zulu10.2%2B3-jdk10.0.1-win_x64-allmodules.zip",
     ],
 )
 
 http_archive(
   name = "bazel_toolchains",
   urls = [
-    "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/09c850dbb8e785ded3d23a7003e9a0168fe1fb2f.tar.gz",
-    "https://github.com/bazelbuild/bazel-toolchains/archive/09c850dbb8e785ded3d23a7003e9a0168fe1fb2f.tar.gz",
+    "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/e76b1031eba14c16d72f5837ae7cb7630a2322e2.tar.gz",
+    "https://github.com/bazelbuild/bazel-toolchains/archive/e76b1031eba14c16d72f5837ae7cb7630a2322e2.tar.gz",
   ],
-  strip_prefix = "bazel-toolchains-09c850dbb8e785ded3d23a7003e9a0168fe1fb2f",
-  sha256 = "08e521cf2d0998e3d27a16c2e2542ebf4d3857b3ddadcfd145d128140754d7bd",
+  strip_prefix = "bazel-toolchains-e76b1031eba14c16d72f5837ae7cb7630a2322e2",
+  sha256 = "259ec05a457bc93aec2aee7e4e67fb4bc1724a183b67baaf5dd6a08be6d6a84a",
 )
 
 # We're pinning to a commit because this project does not have a recent release.
@@ -170,4 +164,5 @@ http_archive(
 http_file(
   name = 'mount_path_toolchain',
   url = 'https://asci-toolchain.appspot.com.storage.googleapis.com/toolchain-testing/mount_path_toolchain.tar.gz',
+  sha256 = "dd8088d3543a86fd91a9ccde6e40102aff6eaf3d048aa73cc18eff05cc2053d5",
 )

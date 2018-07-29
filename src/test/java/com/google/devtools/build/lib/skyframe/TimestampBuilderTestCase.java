@@ -18,7 +18,6 @@ import static com.google.devtools.build.lib.actions.util.ActionCacheTestHelper.A
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
-import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -41,6 +40,7 @@ import com.google.devtools.build.lib.actions.Actions;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
+import com.google.devtools.build.lib.actions.ArtifactSkyKey;
 import com.google.devtools.build.lib.actions.BasicActionLookupValue;
 import com.google.devtools.build.lib.actions.BuildFailedException;
 import com.google.devtools.build.lib.actions.Executor;
@@ -55,6 +55,7 @@ import com.google.devtools.build.lib.actions.cache.ActionCache;
 import com.google.devtools.build.lib.actions.cache.Protos.ActionCacheStatistics;
 import com.google.devtools.build.lib.actions.cache.Protos.ActionCacheStatistics.MissReason;
 import com.google.devtools.build.lib.actions.util.DummyExecutor;
+import com.google.devtools.build.lib.actions.util.InjectedActionLookupKey;
 import com.google.devtools.build.lib.actions.util.TestAction;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
@@ -118,7 +119,7 @@ import org.junit.Before;
 public abstract class TimestampBuilderTestCase extends FoundationTestCase {
   @AutoCodec
   protected static final ActionLookupValue.ActionLookupKey ACTION_LOOKUP_KEY =
-      new SingletonActionLookupKey();
+      new InjectedActionLookupKey("action_lookup_key");
 
   protected static final Predicate<Action> ALWAYS_EXECUTE_FILTER = Predicates.alwaysTrue();
   protected static final String CYCLE_MSG = "Yarrrr, there be a cycle up in here";
@@ -136,8 +137,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
     tsgm = new TimestampGranularityMonitor(clock);
     ResourceManager.instance().setAvailableResources(ResourceSet.createWithRamCpuIo(100, 1, 1));
     actions = new HashSet<>();
-    actionTemplateExpansionFunction =
-        new ActionTemplateExpansionFunction(actionKeyContext, Suppliers.ofInstance(false));
+    actionTemplateExpansionFunction = new ActionTemplateExpansionFunction(actionKeyContext);
   }
 
   protected void clearActions() {
@@ -192,8 +192,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
         new SkyframeActionExecutor(
             actionKeyContext,
             new AtomicReference<>(statusReporter),
-            /*sourceRootSupplier=*/ () -> ImmutableList.of(),
-            /*usesActionFileSystem=*/ () -> false);
+            /*sourceRootSupplier=*/ () -> ImmutableList.of());
 
     Path actionOutputBase = scratch.dir("/usr/local/google/_blaze_jrluser/FAKEMD5/action_out/");
     skyframeActionExecutor.setActionLogBufferPathGenerator(
@@ -211,7 +210,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
                 .put(Artifact.ARTIFACT, new ArtifactFunction())
                 .put(
                     SkyFunctions.ACTION_EXECUTION,
-                    new ActionExecutionFunction(skyframeActionExecutor, tsgmRef))
+                    new ActionExecutionFunction(skyframeActionExecutor, directories, tsgmRef))
                 .put(
                     SkyFunctions.PACKAGE,
                     new PackageFunction(null, null, null, null, null, null, null))
@@ -252,8 +251,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
                   ACTION_LOOKUP_KEY,
                   new BasicActionLookupValue(
                       Actions.filterSharedActionsAndThrowActionConflict(
-                          actionKeyContext, ImmutableList.copyOf(actions)),
-                      false)));
+                          actionKeyContext, ImmutableList.copyOf(actions)))));
         }
       }
 
@@ -514,13 +512,6 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
     @Override
     public void resetStatistics() {
       // Not needed for these tests.
-    }
-  }
-
-  static class SingletonActionLookupKey extends ActionLookupValue.ActionLookupKey {
-    @Override
-    public SkyFunctionName functionName() {
-      return SkyFunctions.CONFIGURED_TARGET;
     }
   }
 

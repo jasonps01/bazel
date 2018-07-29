@@ -576,7 +576,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
   }
 
   @Test
-  public void testCannotSpecifyRunfilesWithDataOrDefaultRunfiles() throws Exception {
+  public void testCannotSpecifyRunfilesWithDataOrDefaultRunfiles_struct() throws Exception {
     scratch.file(
         "test/skylark/extension.bzl",
         "def custom_rule_impl(ctx):",
@@ -593,6 +593,54 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
         "load('//test/skylark:extension.bzl', 'custom_rule')",
         "",
         "custom_rule(name = 'cr')");
+  }
+
+  @Test
+  public void testCannotSpecifyRunfilesWithDataOrDefaultRunfiles_defaultInfo() throws Exception {
+    scratch.file(
+        "test/skylark/extension.bzl",
+        "def custom_rule_impl(ctx):",
+        "  rf = ctx.runfiles()",
+        "  return struct(DefaultInfo(runfiles = rf, default_runfiles = rf))",
+        "",
+        "custom_rule = rule(implementation = custom_rule_impl)");
+
+    checkError(
+        "test/skylark",
+        "cr",
+        "Cannot specify the provider 'runfiles' together with "
+            + "'data_runfiles' or 'default_runfiles'",
+        "load('//test/skylark:extension.bzl', 'custom_rule')",
+        "",
+        "custom_rule(name = 'cr')");
+  }
+
+  @Test
+  public void testDefaultInfoWithRunfilesConstructor() throws Exception {
+    scratch.file(
+        "pkg/BUILD",
+        "sh_binary(name = 'tryme',",
+        "          srcs = [':tryme.sh'],",
+        "          visibility = ['//visibility:public'],",
+        ")");
+
+    scratch.file(
+        "src/rulez.bzl",
+        "def  _impl(ctx):",
+        "   info = DefaultInfo(runfiles = ctx.runfiles(files=[ctx.executable.dep]))",
+        "   if info.default_runfiles.files.to_list()[0] != ctx.executable.dep:",
+        "       fail('expected runfile to be in info.default_runfiles')",
+        "   return [info]",
+        "r = rule(_impl,",
+        "         attrs = {",
+        "            'dep' : attr.label(executable = True, mandatory = True, cfg = 'host'),",
+        "         }",
+        ")");
+
+    scratch.file(
+        "src/BUILD", "load(':rulez.bzl', 'r')", "r(name = 'r_tools', dep = '//pkg:tryme')");
+
+    assertThat(getConfiguredTarget("//src:r_tools")).isNotNull();
   }
 
   @Test
@@ -1137,6 +1185,25 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
   }
 
   @Test
+  public void testConflictingProviderKeys() throws Exception {
+    scratch.file(
+        "test/extension.bzl",
+        "my_provider = provider()",
+        "other_provider = provider()",
+        "def _impl(ctx):",
+        "   return struct(providers = [my_provider(x = 1), other_provider(), my_provider()])",
+        "my_rule = rule(_impl)"
+    );
+
+    checkError(
+        "test",
+        "r",
+        "Multiple conflicting returned providers with key my_provider",
+        "load(':extension.bzl', 'my_rule')",
+        "my_rule(name = 'r')");
+  }
+
+  @Test
   public void testRecursionDetection() throws Exception {
     reporter.removeHandler(failFastHandler);
     scratch.file(
@@ -1591,7 +1658,8 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
         "my_dep_rule(name = 'yyy', dep = ':xxx')"
     );
 
-    SkylarkKey pInfoKey = new SkylarkKey(Label.parseAbsolute("//test:rule.bzl"), "PInfo");
+    SkylarkKey pInfoKey =
+        new SkylarkKey(Label.parseAbsolute("//test:rule.bzl", ImmutableMap.of()), "PInfo");
 
     ConfiguredTarget targetXXX = getConfiguredTarget("//test:xxx");
     assertThat(targetXXX.get(pInfoKey).getValue("s"))

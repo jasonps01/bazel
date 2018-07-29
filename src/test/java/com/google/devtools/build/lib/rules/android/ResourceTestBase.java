@@ -220,7 +220,6 @@ public abstract class ResourceTestBase extends AndroidBuildViewTestCase {
     RuleContext dummy = getRuleContext(dummyTarget);
 
     ExtendedEventHandler eventHandler = new StoredEventHandler();
-    assertThat(targetConfig.isActionsEnabled()).isTrue();
     return view.getRuleContextForTesting(
         eventHandler,
         dummyTarget,
@@ -232,7 +231,7 @@ public abstract class ResourceTestBase extends AndroidBuildViewTestCase {
             targetConfig.extendedSanityChecks(),
             eventHandler,
             null,
-            targetConfig.isActionsEnabled()),
+            /*sourceDependencyListener=*/ unused -> {}),
         new BuildConfigurationCollection(
             ImmutableList.of(dummy.getConfiguration()), dummy.getHostConfiguration()));
   }

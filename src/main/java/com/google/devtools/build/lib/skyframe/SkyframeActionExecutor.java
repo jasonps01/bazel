@@ -13,8 +13,6 @@
 // limitations under the License.
 package com.google.devtools.build.lib.skyframe;
 
-import static com.google.devtools.build.lib.vfs.FileSystemUtils.createDirectoryAndParents;
-
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -36,6 +34,7 @@ import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionExecutionStatusReporter;
 import com.google.devtools.build.lib.actions.ActionGraph;
 import com.google.devtools.build.lib.actions.ActionInput;
+import com.google.devtools.build.lib.actions.ActionInputMap;
 import com.google.devtools.build.lib.actions.ActionInputPrefetcher;
 import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionLogBufferPathGenerator;
@@ -51,6 +50,7 @@ import com.google.devtools.build.lib.actions.AlreadyReportedActionExecutionExcep
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
 import com.google.devtools.build.lib.actions.Artifact.OwnerlessArtifactWrapper;
+import com.google.devtools.build.lib.actions.ArtifactPathResolver;
 import com.google.devtools.build.lib.actions.ArtifactPrefixConflictException;
 import com.google.devtools.build.lib.actions.CachedActionEvent;
 import com.google.devtools.build.lib.actions.EnvironmentalExecException;
@@ -58,6 +58,7 @@ import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.FilesetOutputSymlink;
 import com.google.devtools.build.lib.actions.MapBasedActionGraph;
+import com.google.devtools.build.lib.actions.MetadataConsumer;
 import com.google.devtools.build.lib.actions.MetadataProvider;
 import com.google.devtools.build.lib.actions.MutableActionGraph;
 import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
@@ -76,10 +77,13 @@ import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
+import com.google.devtools.build.lib.profiler.SilentCloseable;
+import com.google.devtools.build.lib.rules.cpp.IncludeScannable;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.vfs.FileSystem;
+import com.google.devtools.build.lib.vfs.OutputService;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
@@ -104,7 +108,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
-import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
@@ -161,17 +164,14 @@ public final class SkyframeActionExecutor {
   private final AtomicReference<ActionExecutionStatusReporter> statusReporterRef;
   private OutputService outputService;
   private final Supplier<ImmutableList<Root>> sourceRootSupplier;
-  private final BooleanSupplier usesActionFileSystem;
 
   SkyframeActionExecutor(
       ActionKeyContext actionKeyContext,
       AtomicReference<ActionExecutionStatusReporter> statusReporterRef,
-      Supplier<ImmutableList<Root>> sourceRootSupplier,
-      BooleanSupplier usesActionFileSystem) {
+      Supplier<ImmutableList<Root>> sourceRootSupplier) {
     this.actionKeyContext = actionKeyContext;
     this.statusReporterRef = statusReporterRef;
     this.sourceRootSupplier = sourceRootSupplier;
-    this.usesActionFileSystem = usesActionFileSystem;
   }
 
   /**
@@ -365,20 +365,33 @@ public final class SkyframeActionExecutor {
     this.clientEnv = clientEnv;
   }
 
-  public FileSystem getExecutorFileSystem() {
-    return executorEngine.getFileSystem();
+  boolean usesActionFileSystem() {
+    return outputService != null && outputService.supportsActionFileSystem();
   }
 
-  public Path getExecRoot() {
+  Path getExecRoot() {
     return executorEngine.getExecRoot();
   }
 
-  public ImmutableList<Root> getSourceRoots() {
-    return sourceRootSupplier.get();
+  /** REQUIRES: {@link usesActionFileSystem} is true */
+  FileSystem createActionFileSystem(
+      String relativeOutputPath,
+      ActionInputMap inputArtifactData,
+      Iterable<Artifact> allowedInputs,
+      Iterable<Artifact> outputArtifacts) {
+    return outputService.createActionFileSystem(
+        executorEngine.getFileSystem(),
+        executorEngine.getExecRoot().asFragment(),
+        relativeOutputPath,
+        sourceRootSupplier.get(),
+        inputArtifactData,
+        allowedInputs,
+        outputArtifacts);
   }
 
-  public boolean usesActionFileSystem() {
-    return usesActionFileSystem.getAsBoolean();
+  void updateActionFileSystemContext(
+      FileSystem actionFileSystem, Environment env, MetadataConsumer consumer) {
+    outputService.updateActionFileSystemContext(actionFileSystem, env, consumer);
   }
 
   void executionOver() {
@@ -514,15 +527,15 @@ public final class SkyframeActionExecutor {
    * tasks related to that action.
    */
   public ActionExecutionContext getContext(
-      MetadataProvider graphFileCache,
       MetadataHandler metadataHandler,
       Map<Artifact, Collection<Artifact>> expandedInputs,
       ImmutableMap<PathFragment, ImmutableList<FilesetOutputSymlink>> inputFilesetMappings,
-      @Nullable ActionFileSystem actionFileSystem) {
-    FileOutErr fileOutErr = actionLogBufferPathGenerator.generate();
+      @Nullable FileSystem actionFileSystem) {
+    FileOutErr fileOutErr = actionLogBufferPathGenerator.generate(
+        ArtifactPathResolver.createPathResolver(actionFileSystem, executorEngine.getExecRoot()));
     return new ActionExecutionContext(
         executorEngine,
-        createFileCache(graphFileCache, actionFileSystem),
+        createFileCache(metadataHandler, actionFileSystem),
         actionInputPrefetcher,
         actionKeyContext,
         metadataHandler,
@@ -546,11 +559,16 @@ public final class SkyframeActionExecutor {
       long actionStartTime,
       Iterable<Artifact> resolvedCacheArtifacts,
       Map<String, String> clientEnv) {
-    startProfileAction(ProfilerTask.ACTION_CHECK, action);
-    Token token =
-        actionCacheChecker.getTokenIfNeedToExecute(
-            action, resolvedCacheArtifacts, clientEnv, explain ? reporter : null, metadataHandler);
-    profiler.completeTask(ProfilerTask.ACTION_CHECK);
+    Token token;
+    try (SilentCloseable c = profiler.profile(ProfilerTask.ACTION_CHECK, action.describe())) {
+      token =
+          actionCacheChecker.getTokenIfNeedToExecute(
+              action,
+              resolvedCacheArtifacts,
+              clientEnv,
+              explain ? reporter : null,
+              metadataHandler);
+    }
     if (token == null) {
       boolean eventPosted = false;
       // Notify BlazeRuntimeStatistics about the action middleman 'execution'.
@@ -637,19 +655,19 @@ public final class SkyframeActionExecutor {
    */
   Iterable<Artifact> discoverInputs(
       Action action,
-      PerActionFileCache graphFileCache,
       MetadataHandler metadataHandler,
       Environment env,
-      @Nullable ActionFileSystem actionFileSystem)
+      @Nullable FileSystem actionFileSystem)
       throws ActionExecutionException, InterruptedException {
     ActionExecutionContext actionExecutionContext =
         ActionExecutionContext.forInputDiscovery(
             executorEngine,
-            createFileCache(graphFileCache, actionFileSystem),
+            createFileCache(metadataHandler, actionFileSystem),
             actionInputPrefetcher,
             actionKeyContext,
             metadataHandler,
-            actionLogBufferPathGenerator.generate(),
+            actionLogBufferPathGenerator.generate(ArtifactPathResolver.createPathResolver(
+                actionFileSystem, executorEngine.getExecRoot())),
             clientEnv,
             env,
             actionFileSystem);
@@ -667,9 +685,9 @@ public final class SkyframeActionExecutor {
   }
 
   private MetadataProvider createFileCache(
-      MetadataProvider graphFileCache, @Nullable ActionFileSystem actionFileSystem) {
-    if (actionFileSystem != null) {
-      return actionFileSystem;
+      MetadataProvider graphFileCache, @Nullable FileSystem actionFileSystem) {
+    if (actionFileSystem instanceof MetadataProvider) {
+      return (MetadataProvider) actionFileSystem;
     }
     return new DelegatingPairFileCache(graphFileCache, perBuildFileCache);
   }
@@ -702,10 +720,6 @@ public final class SkyframeActionExecutor {
     this.actionInputPrefetcher = actionInputPrefetcher;
   }
 
-  private void startProfileAction(ProfilerTask task, Action action) {
-    profiler.startTask(task, action.describe());
-  }
-
   private class ActionRunner implements Callable<ActionExecutionValue> {
     private final ExtendedEventHandler eventHandler;
     private final Action action;
@@ -731,8 +745,7 @@ public final class SkyframeActionExecutor {
 
     @Override
     public ActionExecutionValue call() throws ActionExecutionException, InterruptedException {
-      startProfileAction(ProfilerTask.ACTION, action);
-      try {
+      try (SilentCloseable c = profiler.profile(ProfilerTask.ACTION, action.describe())) {
         if (actionCacheChecker.isActionExecutionProhibited(action)) {
           // We can't execute an action (e.g. because --check_???_up_to_date option was used). Fail
           // the build instead.
@@ -761,31 +774,34 @@ public final class SkyframeActionExecutor {
                 + " in an action which is not a SkyframeAwareAction. Action: %s\n symlinks:%s",
             action,
             actionExecutionContext.getOutputSymlinks());
-        return new ActionExecutionValue(
+        return ActionExecutionValue.create(
             metadataHandler.getOutputArtifactData(),
             metadataHandler.getOutputTreeArtifactData(),
             metadataHandler.getAdditionalOutputData(),
-            actionExecutionContext.getOutputSymlinks());
-      } finally {
-        profiler.completeTask(ProfilerTask.ACTION);
+            actionExecutionContext.getOutputSymlinks(),
+            (action instanceof IncludeScannable)
+                ? ((IncludeScannable) action).getDiscoveredModules()
+                : null,
+            action instanceof NotifyOnActionCacheHit);
       }
     }
   }
 
-  private void createOutputDirectories(Action action) throws ActionExecutionException {
+  private void createOutputDirectories(Action action, ActionExecutionContext context)
+      throws ActionExecutionException {
     try {
       Set<Path> done = new HashSet<>(); // avoid redundant calls for the same directory.
       for (Artifact outputFile : action.getOutputs()) {
         Path outputDir;
         if (outputFile.isTreeArtifact()) {
-          outputDir = outputFile.getPath();
+          outputDir = context.getPathResolver().toPath(outputFile);
         } else {
-          outputDir = outputFile.getPath().getParentDirectory();
+          outputDir = context.getPathResolver().toPath(outputFile).getParentDirectory();
         }
 
         if (done.add(outputDir)) {
           try {
-            createDirectoryAndParents(outputDir);
+            outputDir.createDirectoryAndParents();
             continue;
           } catch (IOException e) {
             /* Fall through to plan B. */
@@ -838,7 +854,7 @@ public final class SkyframeActionExecutor {
 
               p = p.getParentDirectory();
             }
-            createDirectoryAndParents(outputDir);
+            outputDir.createDirectoryAndParents();
           } catch (IOException e) {
             throw new ActionExecutionException(
                 "failed to create output directory '" + outputDir + "'", e, action, false);
@@ -879,17 +895,25 @@ public final class SkyframeActionExecutor {
       long actionStartTime,
       ActionLookupData actionLookupData)
       throws ActionExecutionException, InterruptedException {
-    // ActionFileSystem constructs directories implicitly, so no need to delete the old outputs
-    // and ensure directories exist in this case.
-    if (!usesActionFileSystem()) {
-      // Delete the outputs before executing the action, just to ensure that
-      // the action really does produce the outputs.
-      try {
+    // Delete the outputs before executing the action, just to ensure that
+    // the action really does produce the outputs.
+    try {
+      if (!usesActionFileSystem()) {
         action.prepare(context.getFileSystem(), context.getExecRoot());
-        createOutputDirectories(action);
-      } catch (IOException e) {
-        reportError("failed to delete output files before executing action", e, action, null);
+      } else {
+        try {
+          context.getFileOutErr().getOutputPath().getParentDirectory().createDirectoryAndParents();
+          context.getFileOutErr().getErrorPath().getParentDirectory().createDirectoryAndParents();
+        } catch (IOException e) {
+          throw new ActionExecutionException(
+              "failed to create output directory for output streams'"
+                  + context.getFileOutErr().getErrorPath() + "'",
+              e, action, false);
+        }
       }
+      createOutputDirectories(action, context);
+    } catch (IOException e) {
+      reportError("failed to delete output files before executing action", e, action, null);
     }
 
     eventHandler.post(new ActionStartedEvent(action, actionStartTime));
@@ -960,12 +984,11 @@ public final class SkyframeActionExecutor {
       Action action,
       ActionExecutionContext actionExecutionContext)
           throws ActionExecutionException, InterruptedException {
-    startProfileAction(ProfilerTask.ACTION_EXECUTE, action);
     // ActionExecutionExceptions that occur as the thread is interrupted are
     // assumed to be a result of that, so we throw InterruptedException
     // instead.
     FileOutErr outErrBuffer = actionExecutionContext.getFileOutErr();
-    try {
+    try (SilentCloseable c = profiler.profile(ProfilerTask.ACTION_EXECUTE, action.describe())) {
       ActionResult actionResult = action.execute(actionExecutionContext);
       if (actionResult != ActionResult.EMPTY) {
         eventHandler.post(new ActionResultReceivedEvent(action, actionResult));
@@ -983,8 +1006,6 @@ public final class SkyframeActionExecutor {
       // Defer reporting action success until outputs are checked
     } catch (ActionExecutionException e) {
       throw processAndThrow(eventHandler, e, action, outErrBuffer, ErrorTiming.AFTER_EXECUTION);
-    } finally {
-      profiler.completeTask(ProfilerTask.ACTION_EXECUTE);
     }
     return false;
   }
@@ -999,14 +1020,11 @@ public final class SkyframeActionExecutor {
       Preconditions.checkState(action.inputsDiscovered(),
           "Action %s successfully executed, but inputs still not known", action);
 
-      startProfileAction(ProfilerTask.ACTION_COMPLETE, action);
-      try {
+      try (SilentCloseable c = profiler.profile(ProfilerTask.ACTION_COMPLETE, action.describe())) {
         if (!checkOutputs(action, metadataHandler)) {
           reportError("not all outputs were created or valid", null, action,
               outputAlreadyDumped ? null : fileOutErr);
         }
-      } finally {
-        profiler.completeTask(ProfilerTask.ACTION_COMPLETE);
       }
 
       if (outputService != null) {

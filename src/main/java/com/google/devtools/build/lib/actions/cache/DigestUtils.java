@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.actions.cache;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -58,6 +59,11 @@ public class DigestUtils {
   // Object to synchronize on when serializing large file reads.
   private static final Object DIGEST_LOCK = new Object();
   private static final AtomicBoolean MULTI_THREADED_DIGEST = new AtomicBoolean(false);
+
+  // Files of this size or less are assumed to be readable in one seek.
+  // (This is the default readahead window on Linux.)
+  @VisibleForTesting // the unittest is in a different package!
+  public static final int MULTI_THREADED_DIGEST_MAX_FILE_SIZE = 128 * 1024;
 
   // The time that a digest computation has to take at least in order to be considered a slow-read.
   private static final long SLOW_READ_MILLIS = 5000L;
@@ -158,11 +164,17 @@ public class DigestUtils {
     long startTime = BlazeClock.nanoTime();
     byte[] digest = path.getDigest();
 
-    long millis = (BlazeClock.nanoTime() - startTime) / 1000000;
-    if (millis > SLOW_READ_MILLIS && (path.getFileSize() / millis) < SLOW_READ_THROUGHPUT) {
-      System.err.println("Slow read: a " + path.getFileSize() + "-byte read from " + path
-          + " took " +  millis + "ms.");
+    // When using multi-threaded digesting, it makes no sense to use the throughput of a single
+    // digest operation to determine whether a read was abnormally slow (as the scheduler might just
+    // have preferred other reads).
+    if (!MULTI_THREADED_DIGEST.get()) {
+      long millis = (BlazeClock.nanoTime() - startTime) / 1000000;
+      if (millis > SLOW_READ_MILLIS && (path.getFileSize() / millis) < SLOW_READ_THROUGHPUT) {
+        System.err.printf(
+            "Slow read: a %d-byte read from %s took %d ms.%n", path.getFileSize(), path, millis);
+      }
     }
+
     return digest;
   }
 
@@ -238,13 +250,11 @@ public class DigestUtils {
 
     // All right, we have neither a fast nor a cached digest. Let's go through the costly process of
     // computing it from the file contents.
-    if (fileSize > 4096 && !MULTI_THREADED_DIGEST.get()) {
-      // We'll have to read file content in order to calculate the digest. In that case
-      // it would be beneficial to serialize those calculations since there is a high
-      // probability that MD5 will be requested for multiple output files simultaneously.
-      // Exception is made for small (<=4K) files since they will not likely to introduce
-      // significant delays (at worst they will result in two extra disk seeks by
-      // interrupting other reads).
+    if (fileSize > MULTI_THREADED_DIGEST_MAX_FILE_SIZE && !MULTI_THREADED_DIGEST.get()) {
+      // We'll have to read file content in order to calculate the digest.
+      // We avoid overlapping this process for multiple large files, as
+      // seeking back and forth between them will result in an overall loss of
+      // throughput.
       digest = getDigestInExclusiveMode(path);
     } else {
       digest = getDigestInternal(path);

@@ -29,6 +29,7 @@ import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.Mutability.Freezable;
 import com.google.devtools.build.lib.syntax.Mutability.MutabilityException;
+import com.google.devtools.build.lib.syntax.Parser.ParsingLevel;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.SpellChecker;
@@ -463,7 +464,7 @@ public final class Environment implements Freezable, Debuggable {
     final BaseFunction function;
 
     /** The {@link FuncallExpression} to which this Continuation will return. */
-    final FuncallExpression caller;
+    @Nullable final FuncallExpression caller;
 
     /** The next Continuation after this Continuation. */
     @Nullable final Continuation continuation;
@@ -478,12 +479,12 @@ public final class Environment implements Freezable, Debuggable {
     @Nullable final LinkedHashSet<String> knownGlobalVariables;
 
     Continuation(
-        Continuation continuation,
+        @Nullable Continuation continuation,
         BaseFunction function,
-        FuncallExpression caller,
+        @Nullable FuncallExpression caller,
         LexicalFrame lexicalFrame,
         GlobalFrame globalFrame,
-        LinkedHashSet<String> knownGlobalVariables) {
+        @Nullable LinkedHashSet<String> knownGlobalVariables) {
       this.continuation = continuation;
       this.function = function;
       this.caller = caller;
@@ -719,13 +720,17 @@ public final class Environment implements Freezable, Debuggable {
 
   /**
    * Enters a scope by saving state to a new Continuation
+   *
    * @param function the function whose scope to enter
    * @param lexical the lexical frame to use
    * @param caller the source AST node for the caller
    * @param globals the global Frame that this function closes over from its definition Environment
    */
   void enterScope(
-      BaseFunction function, LexicalFrame lexical, FuncallExpression caller, GlobalFrame globals) {
+      BaseFunction function,
+      LexicalFrame lexical,
+      @Nullable FuncallExpression caller,
+      GlobalFrame globals) {
     continuation =
         new Continuation(
             continuation, function, caller, lexicalFrame, globalFrame, knownGlobalVariables);
@@ -889,14 +894,6 @@ public final class Environment implements Freezable, Debuggable {
 
     Builder(Mutability mutability) {
       this.mutability = mutability;
-    }
-
-    /**
-     * Obsolete, doesn't do anything.
-     * TODO(laurentlb): To be removed once call-sites have been updated
-     */
-    public Builder setSkylark() {
-      return this;
     }
 
     /** Enables loading or workspace phase only functions in this Environment. */
@@ -1165,15 +1162,31 @@ public final class Environment implements Freezable, Debuggable {
   }
 
   @Override
-  public Object evaluate(String expression) throws EvalException, InterruptedException {
-    ParserInputSource inputSource =
-        ParserInputSource.create(expression, PathFragment.create("<debug eval>"));
+  public Object evaluate(String contents) throws EvalException, InterruptedException {
+    ParserInputSource input =
+        ParserInputSource.create(contents, PathFragment.create("<debug eval>"));
     EvalEventHandler eventHandler = new EvalEventHandler();
-    Expression expr = Parser.parseExpression(inputSource, eventHandler);
+    Statement statement = Parser.parseStatement(input, eventHandler, ParsingLevel.LOCAL_LEVEL);
     if (!eventHandler.messages.isEmpty()) {
-      throw new EvalException(expr.getLocation(), eventHandler.messages.get(0));
+      throw new EvalException(statement.getLocation(), eventHandler.messages.get(0));
     }
-    return expr.eval(this);
+    // TODO(bazel-team): move statement handling code to Eval
+    // deal with the most common case first
+    if (statement.kind() == Statement.Kind.EXPRESSION) {
+      return ((ExpressionStatement) statement).getExpression().doEval(this);
+    }
+    // all other statement types are executed directly
+    Eval.fromEnvironment(this).exec(statement);
+    switch (statement.kind()) {
+      case ASSIGNMENT:
+      case AUGMENTED_ASSIGNMENT:
+        return ((AssignmentStatement) statement).getLValue().getExpression().doEval(this);
+      case RETURN:
+        Expression expr = ((ReturnStatement) statement).getReturnExpression();
+        return expr != null ? expr.doEval(this) : Runtime.NONE;
+      default:
+        return Runtime.NONE;
+    }
   }
 
   @Override
@@ -1194,7 +1207,8 @@ public final class Environment implements Freezable, Debuggable {
               .build());
 
       currentFrame = currentContinuation.lexicalFrame;
-      currentLocation = currentContinuation.caller.getLocation();
+      currentLocation =
+          currentContinuation.caller != null ? currentContinuation.caller.getLocation() : null;
       currentContinuation = currentContinuation.continuation;
     }
 

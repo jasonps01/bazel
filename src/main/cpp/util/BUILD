@@ -107,7 +107,10 @@ cc_library(
     srcs = ["logging.cc"],
     hdrs = ["logging.h"],
     visibility = ["//visibility:public"],
-    deps = [":blaze_exit_code"],
+    deps = [
+        ":blaze_exit_code",
+        ":strings",
+    ],
 )
 
 cc_library(
@@ -142,6 +145,26 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [":blaze_exit_code"],
+)
+
+cc_library(
+    name = "profiler",
+    srcs = [
+        "profiler.cc",
+    ] + select({
+        "//src/conditions:windows": ["profiler_windows.cc"],
+        "//conditions:default": ["profiler_posix.cc"],
+    }),
+    hdrs = ["profiler.h"],
+    visibility = [
+        "//src/main/cpp:__pkg__",
+        "//src/test/cpp/util:__pkg__",
+    ],
+    deps = [
+        ":blaze_exit_code",
+        ":errors",
+        ":logging",
+    ],
 )
 
 cc_library(

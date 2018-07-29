@@ -13,12 +13,15 @@
 // limitations under the License.
 package com.google.devtools.build.lib.bazel.commands;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
+import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.pkgcache.PackageCacheOptions;
+import com.google.devtools.build.lib.rules.repository.RepositoryDelegatorFunction;
 import com.google.devtools.build.lib.rules.repository.RepositoryDirectoryValue;
 import com.google.devtools.build.lib.runtime.BlazeCommand;
 import com.google.devtools.build.lib.runtime.BlazeCommandResult;
@@ -26,6 +29,7 @@ import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.runtime.KeepGoingOption;
 import com.google.devtools.build.lib.skyframe.PackageLookupValue;
+import com.google.devtools.build.lib.skyframe.PrecomputedValue;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.WorkspaceFileValue;
 import com.google.devtools.build.lib.util.AbruptExitException;
@@ -50,11 +54,24 @@ public final class SyncCommand implements BlazeCommand {
   @Override
   public void editOptions(OptionsParser optionsParser) {}
 
+  private static void reportError(CommandEnvironment env, EvaluationResult<SkyValue> value) {
+    if (value.getError().getException() != null) {
+      env.getReporter().handle(Event.error(value.getError().getException().getMessage()));
+    } else {
+      env.getReporter().handle(Event.error(value.getError().toString()));
+    }
+  }
+
   @Override
   public BlazeCommandResult exec(CommandEnvironment env, OptionsProvider options) {
     try {
       env.setupPackageCache(options, env.getRuntime().getDefaultsPackageContent());
       SkyframeExecutor skyframeExecutor = env.getSkyframeExecutor();
+      skyframeExecutor.injectExtraPrecomputedValues(
+          ImmutableList.of(
+              PrecomputedValue.injected(
+                  RepositoryDelegatorFunction.DEPENDENCY_FOR_UNCONDITIONAL_FETCHING,
+                  env.getCommandId().toString())));
 
       // Obtain the key for the top-level WORKSPACE file
       SkyKey packageLookupKey = PackageLookupValue.key(Label.EXTERNAL_PACKAGE_IDENTIFIER);
@@ -64,6 +81,7 @@ public final class SyncCommand implements BlazeCommand {
               SkyframeExecutor.DEFAULT_THREAD_COUNT,
               env.getReporter());
       if (packageLookupValue.hasError()) {
+        reportError(env, packageLookupValue);
         return BlazeCommandResult.exitCode(ExitCode.ANALYSIS_FAILURE);
       }
       RootedPath workspacePath =
@@ -80,6 +98,7 @@ public final class SyncCommand implements BlazeCommand {
                 SkyframeExecutor.DEFAULT_THREAD_COUNT,
                 env.getReporter());
         if (value.hasError()) {
+          reportError(env, value);
           return BlazeCommandResult.exitCode(ExitCode.ANALYSIS_FAILURE);
         }
         fileValue = (WorkspaceFileValue) value.get(workspace);
@@ -106,11 +125,13 @@ public final class SyncCommand implements BlazeCommand {
               SkyframeExecutor.DEFAULT_THREAD_COUNT,
               env.getReporter());
       if (fetchValue.hasError()) {
+        reportError(env, fetchValue);
         return BlazeCommandResult.exitCode(ExitCode.ANALYSIS_FAILURE);
       }
     } catch (InterruptedException e) {
       return BlazeCommandResult.exitCode(ExitCode.INTERRUPTED);
     } catch (AbruptExitException e) {
+      env.getReporter().handle(Event.error(e.getMessage()));
       return BlazeCommandResult.exitCode(ExitCode.LOCAL_ENVIRONMENTAL_ERROR);
     }
 

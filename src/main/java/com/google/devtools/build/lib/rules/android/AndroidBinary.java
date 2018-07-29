@@ -29,6 +29,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
+import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.CommandLine;
 import com.google.devtools.build.lib.actions.FailAction;
 import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
@@ -50,8 +51,8 @@ import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorAr
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate;
+import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate.OutputPathMapper;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
-import com.google.devtools.build.lib.analysis.whitelisting.Whitelist;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
@@ -80,6 +81,7 @@ import com.google.devtools.build.lib.rules.java.ProguardHelper.ProguardOutput;
 import com.google.devtools.build.lib.rules.java.ProguardSpecProvider;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.vfs.PathFragment;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -117,11 +119,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
     javaSemantics.checkRule(ruleContext, javaCommon);
     javaSemantics.checkForProtoLibraryAndJavaProtoLibraryOnSameProto(ruleContext, javaCommon);
 
-    AndroidCommon androidCommon =
-        new AndroidCommon(
-            javaCommon,
-            /* asNeverLink= */ true,
-            /* exportDeps= */ Whitelist.isAvailable(ruleContext, "export_deps"));
+    AndroidCommon androidCommon = new AndroidCommon(javaCommon, /* asNeverLink= */ true);
     ResourceDependencies resourceDeps =
         ResourceDependencies.fromRuleDeps(ruleContext, /* neverlink= */ false);
     RuleConfiguredTargetBuilder builder =
@@ -409,7 +407,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
                     .list()
                 : ImmutableList.<Artifact>of(),
             ruleContext.getPrerequisiteArtifacts(":extra_proguard_specs", Mode.TARGET).list(),
-            ruleContext.getPrerequisites("deps", Mode.TARGET, ProguardSpecProvider.class));
+            ruleContext.getPrerequisites("deps", Mode.TARGET, ProguardSpecProvider.PROVIDER));
 
     // TODO(bazel-team): Verify that proguard spec files don't contain -printmapping directions
     // which this -printmapping command line flag will override.
@@ -612,9 +610,8 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
         /* isLibrary = */ false);
 
     if (dexPostprocessingOutput.proguardMap() != null) {
-      builder.addProvider(
-          ProguardMappingProvider.class,
-          ProguardMappingProvider.create(dexPostprocessingOutput.proguardMap()));
+      builder.addNativeDeclaredProvider(
+          new ProguardMappingProvider(dexPostprocessingOutput.proguardMap()));
     }
 
     if (oneVersionEnforcementArtifact != null) {
@@ -659,9 +656,8 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
                 androidCommon.getInstrumentedJar(),
                 applicationManifest.getManifest(),
                 AndroidCommon.getApkDebugSigningKey(ruleContext)))
-        .addProvider(AndroidPreDexJarProvider.class, AndroidPreDexJarProvider.create(jarToDex))
-        .addProvider(
-            AndroidFeatureFlagSetProvider.class,
+        .addNativeDeclaredProvider(new AndroidPreDexJarProvider(jarToDex))
+        .addNativeDeclaredProvider(
             AndroidFeatureFlagSetProvider.create(
                 AndroidFeatureFlagSetProvider.getAndValidateFlagMapFromRuleContext(ruleContext)))
         .addOutputGroup("android_deploy_info", deployInfo);
@@ -670,7 +666,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
   private static NestedSet<Artifact> getLibraryResourceJars(RuleContext ruleContext) {
     Iterable<AndroidLibraryResourceClassJarProvider> libraryResourceJarProviders =
         AndroidCommon.getTransitivePrerequisites(
-            ruleContext, Mode.TARGET, AndroidLibraryResourceClassJarProvider.class);
+            ruleContext, Mode.TARGET, AndroidLibraryResourceClassJarProvider.PROVIDER);
 
     NestedSetBuilder<Artifact> libraryResourceJarsBuilder = NestedSetBuilder.naiveLinkOrder();
     for (AndroidLibraryResourceClassJarProvider provider : libraryResourceJarProviders) {
@@ -1370,7 +1366,8 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
         new SpawnActionTemplate.Builder(inputTree, outputTree)
             .setExecutable(ruleContext.getExecutablePrerequisite("$dexmerger", Mode.HOST))
             .setMnemonics("DexShardsToMerge", "DexMerger")
-            .setOutputPathMapper(input -> input.getParentRelativePath());
+            .setOutputPathMapper(
+                (OutputPathMapper & Serializable) TreeFileArtifact::getParentRelativePath);
     CustomCommandLine.Builder commandLine =
         CustomCommandLine.builder()
             .addPlaceholderTreeArtifactExecPath("--input", inputTree)
@@ -1839,7 +1836,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
   /**
    * List of Android SDKs that contain runtimes that do not support the native multidexing
    * introduced in Android L. If someone tries to build an android_binary that has multidex=native
-   * set with an old SDK, we will exit with an error to alert the developer that his application
+   * set with an old SDK, we will exit with an error to alert the developer that their application
    * might not run on devices that the used SDK still supports.
    */
   private static final ImmutableSet<String> RUNTIMES_THAT_DONT_SUPPORT_NATIVE_MULTIDEXING =
@@ -1887,7 +1884,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
     Artifact filterJar =
         ruleContext
             .getPrerequisite("instruments", Mode.TARGET)
-            .getProvider(AndroidPreDexJarProvider.class)
+            .get(AndroidPreDexJarProvider.PROVIDER)
             .getPreDexJar();
     Artifact filteredDeployJar =
         ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_TEST_FILTERED_JAR);

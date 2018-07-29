@@ -33,6 +33,7 @@ import com.google.devtools.build.lib.actions.Artifact.SpecialArtifactType;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
 import com.google.devtools.build.lib.actions.ArtifactRoot;
+import com.google.devtools.build.lib.actions.ArtifactSkyKey;
 import com.google.devtools.build.lib.actions.BasicActionLookupValue;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.FileValue;
@@ -106,10 +107,8 @@ public class ArtifactFunctionTest extends ArtifactFunctionTestCase {
     setupRoot(
         new CustomInMemoryFs() {
           @Override
-          public byte[] getDigest(Path path, HashFunction hf) throws IOException {
-            return path.getBaseName().equals("unreadable")
-                ? expectedDigest
-                : super.getDigest(path, hf);
+          public byte[] getDigest(Path path) throws IOException {
+            return path.getBaseName().equals("unreadable") ? expectedDigest : super.getDigest(path);
           }
         });
 
@@ -378,8 +377,7 @@ public class ArtifactFunctionTest extends ArtifactFunctionTestCase {
               ALL_OWNER,
               new BasicActionLookupValue(
                   Actions.filterSharedActionsAndThrowActionConflict(
-                      actionKeyContext, ImmutableList.copyOf(actions)),
-                  false)));
+                      actionKeyContext, ImmutableList.copyOf(actions)))));
     }
   }
 
@@ -426,8 +424,13 @@ public class ArtifactFunctionTest extends ArtifactFunctionTestCase {
       } catch (IOException e) {
         throw new IllegalStateException(e);
       }
-      return new ActionExecutionValue(
-          artifactData, treeArtifactData, additionalOutputData, /*outputSymlinks=*/ null);
+      return ActionExecutionValue.create(
+          artifactData,
+          treeArtifactData,
+          additionalOutputData,
+          /*outputSymlinks=*/ null,
+          /*discoveredModules=*/ null,
+          /*notifyOnActionCacheHitAction=*/ false);
     }
 
     @Override

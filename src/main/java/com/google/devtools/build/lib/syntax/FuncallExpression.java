@@ -36,7 +36,6 @@ import com.google.devtools.build.lib.syntax.EvalException.EvalExceptionWithJavaC
 import com.google.devtools.build.lib.syntax.Runtime.NoneType;
 import com.google.devtools.build.lib.syntax.SkylarkList.Tuple;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.util.StringUtilities;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -59,16 +58,75 @@ import javax.annotation.Nullable;
 public final class FuncallExpression extends Expression {
 
   /**
-   * A value class to store Methods with their corresponding SkylarkCallable annotations.
-   * This is needed because the annotation is sometimes in a superclass.
+   * A tuple of Param annotation to the skylark type it represents. While the type can be
+   * inferred completely by the Param annotation, this tuple allows for the type of a given
+   * parameter to be determined only once, as it is an expensive operation.
+   */
+  private static final class ParamInfo {
+    private final Param param;
+    private final SkylarkType type;
+
+    public ParamInfo(Param param) {
+      this.param = param;
+      this.type = getSkylarkType(param);
+    }
+
+    private static SkylarkType getSkylarkType(Param param) {
+      SkylarkType result = SkylarkType.BOTTOM;
+      if (param.allowedTypes().length > 0) {
+        Preconditions.checkState(Object.class.equals(param.type()));
+        for (ParamType paramType : param.allowedTypes()) {
+          SkylarkType t =
+              paramType.generic1() != Object.class
+                  ? SkylarkType.of(paramType.type(), paramType.generic1())
+                  : SkylarkType.of(paramType.type());
+          result = SkylarkType.Union.of(result, t);
+        }
+      } else {
+        result =
+            param.generic1() != Object.class
+                ? SkylarkType.of(param.type(), param.generic1())
+                : SkylarkType.of(param.type());
+      }
+
+      if (param.noneable()) {
+        result = SkylarkType.Union.of(result, SkylarkType.NONE);
+      }
+      return result;
+    }
+
+    public Param getParam() {
+      return param;
+    }
+
+    public SkylarkType getType() {
+      return type;
+    }
+  }
+
+  /**
+   * A value class to store Methods with their corresponding SkylarkCallable annotations and some
+   * information about the method.
    */
   public static final class MethodDescriptor {
+
     private final Method method;
+    private final ParamInfo[] methodParams;
     private final SkylarkCallable annotation;
 
     private MethodDescriptor(Method method, SkylarkCallable annotation) {
       this.method = method;
+      this.methodParams = methodParams(annotation);
       this.annotation = annotation;
+    }
+
+    private static ParamInfo[] methodParams(SkylarkCallable annotation) {
+      Param[] annotationParameters = annotation.parameters();
+      ParamInfo[] paramInfoArr = new ParamInfo[annotationParameters.length];
+      for (int i = 0; i < paramInfoArr.length; i++) {
+        paramInfoArr[i] = new ParamInfo(annotationParameters[i]);
+      }
+      return paramInfoArr;
     }
 
     Method getMethod() {
@@ -80,6 +138,13 @@ public final class FuncallExpression extends Expression {
      */
     public SkylarkCallable getAnnotation() {
       return annotation;
+    }
+
+    /**
+     * Returns an array of objects describing the parameters of this method.
+     */
+    public ParamInfo[] getMethodParams() {
+      return methodParams;
     }
   }
 
@@ -132,9 +197,6 @@ public final class FuncallExpression extends Expression {
                       continue;
                     }
                     String name = callable.name();
-                    if (name.isEmpty()) {
-                      name = StringUtilities.toPythonStyleFunctionName(method.getName());
-                    }
                     if (methodMap.containsKey(name)) {
                       methodMap.get(name).add(new MethodDescriptor(method, callable));
                     } else {
@@ -168,11 +230,6 @@ public final class FuncallExpression extends Expression {
                   for (MethodDescriptor fieldMethod : fieldMethods) {
                     SkylarkCallable callable = fieldMethod.getAnnotation();
                     String name = callable.name();
-                    if (name.isEmpty()) {
-                      name =
-                          StringUtilities.toPythonStyleFunctionName(
-                              fieldMethod.getMethod().getName());
-                    }
                     // TODO(b/72113542): Validate with annotation processor instead of at runtime.
                     if (!fieldNamesForCollisions.add(name)) {
                       throw new IllegalArgumentException(
@@ -411,6 +468,9 @@ public final class FuncallExpression extends Expression {
   /**
    * Invokes the given structField=true method and returns the result.
    *
+   * <p>The given method must <b>not</b> require extra-interpreter parameters, such as
+   * {@link Environment}. This method throws {@link IllegalArgumentException} for violations.</p>
+   *
    * @param methodDescriptor the descriptor of the method to invoke
    * @param fieldName the name of the struct field
    * @param obj the object on which to invoke the method
@@ -420,7 +480,12 @@ public final class FuncallExpression extends Expression {
   public static Object invokeStructField(
       MethodDescriptor methodDescriptor, String fieldName, Object obj)
       throws EvalException, InterruptedException {
-    Preconditions.checkArgument(methodDescriptor.getAnnotation().structField());
+    Preconditions.checkArgument(methodDescriptor.getAnnotation().structField(),
+        "Can only be invoked on structField callables");
+    Preconditions.checkArgument(!methodDescriptor.getAnnotation().useEnvironment()
+        || !methodDescriptor.getAnnotation().useSkylarkSemantics()
+        || !methodDescriptor.getAnnotation().useLocation(),
+        "Cannot be invoked on structField callables with extra interpreter params");
     return callMethod(methodDescriptor, fieldName, obj, new Object[0], Location.BUILTIN, null);
   }
 
@@ -494,8 +559,12 @@ public final class FuncallExpression extends Expression {
     if (methods != null) {
       for (MethodDescriptor method : methods) {
         if (method.getAnnotation().structField()) {
-          // TODO(cparsons): Allow structField methods to accept interpreter-supplied arguments.
-          return new Pair<>(method, null);
+          // This indicates a built-in structField which returns a function which may have
+          // one or more arguments itself. For example, foo.bar('baz'), where foo.bar is a
+          // structField returning a function. Calling the "bar" callable of foo should
+          // not have 'baz' propagated, though extra interpreter arguments should be supplied.
+          return new Pair<>(method,
+              extraInterpreterArgs(method.getAnnotation(), null, getLocation(), environment));
         } else {
           argumentListConversionResult = convertArgumentList(args, kwargs, method, environment);
           if (argumentListConversionResult.getArguments() != null) {
@@ -538,32 +607,38 @@ public final class FuncallExpression extends Expression {
     return matchingMethod;
   }
 
-  private static SkylarkType getType(Param param) {
-    SkylarkType result = SkylarkType.BOTTOM;
-    if (param.allowedTypes().length > 0) {
-      Preconditions.checkState(Object.class.equals(param.type()));
-      for (ParamType paramType : param.allowedTypes()) {
-        SkylarkType t =
-            paramType.generic1() != Object.class
-                ? SkylarkType.of(paramType.type(), paramType.generic1())
-                : SkylarkType.of(paramType.type());
-        result = SkylarkType.Union.of(result, t);
-      }
-    } else {
-      result =
-          param.generic1() != Object.class
-              ? SkylarkType.of(param.type(), param.generic1())
-              : SkylarkType.of(param.type());
-    }
-
-    if (param.noneable()) {
-      result = SkylarkType.Union.of(result, SkylarkType.NONE);
-    }
-    return result;
-  }
-
   private static boolean isParamNamed(Param param) {
     return param.named() || param.legacyNamed();
+  }
+
+  /**
+   * Returns the extra interpreter arguments for the given {@link SkylarkCallable}, to be added
+   * at the end of the argument list for the callable.
+   *
+   * <p>This method accepts null {@code ast} only if {@code callable.useAst()} is false. It is
+   * up to the caller to validate this invariant.</p>
+   */
+  public static List<Object> extraInterpreterArgs(SkylarkCallable callable,
+      @Nullable FuncallExpression ast, Location loc, Environment env) {
+
+    ImmutableList.Builder<Object> builder = ImmutableList.builder();
+
+    if (callable.useLocation()) {
+      builder.add(loc);
+    }
+    if (callable.useAst()) {
+      if (ast == null) {
+        throw new IllegalArgumentException("Callable expects to receive ast: " + callable.name());
+      }
+      builder.add(ast);
+    }
+    if (callable.useEnvironment()) {
+      builder.add(env);
+    }
+    if (callable.useSkylarkSemantics()) {
+      builder.add(env.getSemantics());
+    }
+    return builder.build();
   }
 
   /**
@@ -581,54 +656,17 @@ public final class FuncallExpression extends Expression {
     ImmutableMap.Builder<String, Object> extraKwargsBuilder = ImmutableMap.builder();
     boolean acceptsExtraArgs = !callable.extraPositionals().name().isEmpty();
     boolean acceptsExtraKwargs = !callable.extraKeywords().name().isEmpty();
-    Class<?>[] javaMethodSignatureParams = method.getMethod().getParameterTypes();
-    int numExtraInterpreterParams = 0;
-    numExtraInterpreterParams += acceptsExtraArgs ? 1 : 0;
-    numExtraInterpreterParams += acceptsExtraKwargs ? 1 : 0;
-    numExtraInterpreterParams += callable.useLocation() ? 1 : 0;
-    numExtraInterpreterParams += callable.useAst() ? 1 : 0;
-    numExtraInterpreterParams += callable.useEnvironment() ? 1 : 0;
-    numExtraInterpreterParams += callable.useSkylarkSemantics() ? 1 : 0;
 
-    int mandatoryPositionals = callable.mandatoryPositionals();
-    if (mandatoryPositionals < 0) {
-      if (callable.parameters().length > 0) {
-        mandatoryPositionals = 0;
-      } else {
-        mandatoryPositionals = javaMethodSignatureParams.length - numExtraInterpreterParams;
-      }
-    }
-    if (mandatoryPositionals > args.size()) {
-      return ArgumentListConversionResult.fromError("too few arguments");
-    }
-
-    // First process the legacy positional parameters.
     int argIndex = 0;
-    if (mandatoryPositionals > 0) {
-      for (Class<?> param : javaMethodSignatureParams) {
-        Object value = args.get(argIndex);
-        if (!param.isAssignableFrom(value.getClass())) {
-          return ArgumentListConversionResult.fromError(
-              String.format(
-                  "Cannot convert parameter at position %d from type %s to type %s",
-                  argIndex, EvalUtils.getDataTypeName(value), param.toString()));
-        }
-        builder.add(value);
-        argIndex++;
-        if (argIndex >= mandatoryPositionals) {
-          // Stops for specified parameters instead.
-          break;
-        }
-      }
-    }
 
-    // Then process parameters specified in callable.parameters()
+    // Process parameters specified in callable.parameters()
     Set<String> keys = new LinkedHashSet<>(kwargs.keySet());
     // Positional parameters are always enumerated before non-positional parameters,
     // And default-valued positional parameters are always enumerated after other positional
     // parameters. These invariants are validated by the SkylarkCallable annotation processor.
-    for (Param param : callable.parameters()) {
-      SkylarkType type = getType(param);
+    for (ParamInfo paramInfo : method.getMethodParams()) {
+      SkylarkType type = paramInfo.getType();
+      Param param = paramInfo.getParam();
       Object value = null;
 
       if (argIndex < args.size() && param.positional()) { // Positional args and params remain.
@@ -702,18 +740,7 @@ public final class FuncallExpression extends Expression {
     if (acceptsExtraKwargs) {
       builder.add(SkylarkDict.copyOf(environment, extraKwargsBuilder.build()));
     }
-    if (callable.useLocation()) {
-      builder.add(getLocation());
-    }
-    if (callable.useAst()) {
-      builder.add(this);
-    }
-    if (callable.useEnvironment()) {
-      builder.add(environment);
-    }
-    if (callable.useSkylarkSemantics()) {
-      builder.add(environment.getSemantics());
-    }
+    builder.addAll(extraInterpreterArgs(callable, this, getLocation(), environment));
 
     return ArgumentListConversionResult.fromArgumentList(builder.build());
   }
@@ -852,16 +879,14 @@ public final class FuncallExpression extends Expression {
             : positionals.subList(1, positionals.size());
 
     if (function != null) {
-      return function.call(
-          positionalArgs, ImmutableMap.copyOf(keyWordArgs), call, env);
+      return function.call(positionalArgs, keyWordArgs, call, env);
     } else if (fieldValue != null) {
       if (!(fieldValue instanceof BaseFunction)) {
         throw new EvalException(
             location, String.format("struct field '%s' is not a function", method));
       }
       function = (BaseFunction) fieldValue;
-      return function.call(
-          positionalArgs, ImmutableMap.copyOf(keyWordArgs), call, env);
+      return function.call(positionalArgs, keyWordArgs, call, env);
     } else {
       // When calling a Java method, the name is not in the Environment,
       // so evaluating 'function' would fail.

@@ -24,6 +24,7 @@ import static com.google.devtools.build.lib.rules.java.proto.StrictDepsUtils.cre
 
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredAspectFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
@@ -72,23 +73,26 @@ public class JavaLiteProtoAspect extends NativeAspectClass implements Configured
 
   @Nullable private final String jacocoLabel;
   private final String defaultProtoToolchainLabel;
-  private final LabelLateBoundDefault<?> hostJdkAttribute;
+  private final LabelLateBoundDefault<JavaConfiguration> hostJdkAttribute;
+  private final LabelLateBoundDefault<JavaConfiguration> javaToolchainAttribute;
 
   public JavaLiteProtoAspect(
       JavaSemantics javaSemantics,
       @Nullable String jacocoLabel,
       String defaultProtoToolchainLabel,
-      LabelLateBoundDefault<?> hostJdkAttribute) {
+      LabelLateBoundDefault<JavaConfiguration> hostJdkAttribute,
+      LabelLateBoundDefault<JavaConfiguration> javaToolchainAttribute) {
     this.javaSemantics = javaSemantics;
     this.jacocoLabel = jacocoLabel;
     this.defaultProtoToolchainLabel = defaultProtoToolchainLabel;
     this.hostJdkAttribute = hostJdkAttribute;
+    this.javaToolchainAttribute = javaToolchainAttribute;
   }
 
   @Override
   public ConfiguredAspect create(
       ConfiguredTargetAndData ctadBase, RuleContext ruleContext, AspectParameters parameters)
-      throws InterruptedException {
+      throws InterruptedException, ActionConflictException {
     ConfiguredAspect.Builder aspect = new ConfiguredAspect.Builder(this, parameters, ruleContext);
 
     // Get SupportData, which is provided by the proto_library rule we attach to.
@@ -119,15 +123,16 @@ public class JavaLiteProtoAspect extends NativeAspectClass implements Configured
                         ImmutableList.<Class<? extends TransitiveInfoProvider>>of(
                             ProtoLangToolchainProvider.class))
                     .value(getProtoToolchainLabel(defaultProtoToolchainLabel)))
-            .add(attr(":host_jdk", LABEL)
-                .cfg(HostTransition.INSTANCE)
-                .value(hostJdkAttribute)
-                .mandatoryProviders(JavaRuntimeInfo.PROVIDER.id()))
+            .add(
+                attr(":host_jdk", LABEL)
+                    .cfg(HostTransition.INSTANCE)
+                    .value(hostJdkAttribute)
+                    .mandatoryProviders(JavaRuntimeInfo.PROVIDER.id()))
             .add(
                 attr(":java_toolchain", LABEL)
                     .useOutputLicenses()
                     .allowedRuleClasses("java_toolchain")
-                    .value(JavaSemantics.JAVA_TOOLCHAIN));
+                    .value(javaToolchainAttribute));
 
     Attribute.Builder<Label> jacocoAttr =
         attr("$jacoco_instrumentation", LABEL).cfg(HostTransition.INSTANCE);
@@ -247,6 +252,7 @@ public class JavaLiteProtoAspect extends NativeAspectClass implements Configured
           supportData.getTransitiveImports(),
           supportData.getProtosInDirectDeps(),
           supportData.getTransitiveProtoPathFlags(),
+          supportData.getDirectProtoSourceRoots(),
           ruleContext.getLabel(),
           ImmutableList.of(sourceJar),
           "JavaLite",

@@ -61,31 +61,26 @@ import com.google.devtools.build.lib.packages.NoSuchThingException;
 import com.google.devtools.build.lib.packages.Package;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.Target;
-import com.google.devtools.build.lib.pkgcache.FilteringPolicy;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
-import com.google.devtools.build.lib.pkgcache.RecursivePackageProvider;
 import com.google.devtools.build.lib.pkgcache.TargetPatternEvaluator;
 import com.google.devtools.build.lib.profiler.AutoProfiler;
 import com.google.devtools.build.lib.query2.engine.AllRdepsFunction;
 import com.google.devtools.build.lib.query2.engine.Callback;
-import com.google.devtools.build.lib.query2.engine.FunctionExpression;
 import com.google.devtools.build.lib.query2.engine.KeyExtractor;
 import com.google.devtools.build.lib.query2.engine.MinDepthUniquifier;
 import com.google.devtools.build.lib.query2.engine.OutputFormatterCallback;
 import com.google.devtools.build.lib.query2.engine.QueryEvalResult;
 import com.google.devtools.build.lib.query2.engine.QueryException;
 import com.google.devtools.build.lib.query2.engine.QueryExpression;
+import com.google.devtools.build.lib.query2.engine.QueryExpressionContext;
 import com.google.devtools.build.lib.query2.engine.QueryExpressionMapper;
 import com.google.devtools.build.lib.query2.engine.QueryUtil.MinDepthUniquifierImpl;
 import com.google.devtools.build.lib.query2.engine.QueryUtil.MutableKeyExtractorBackedMapImpl;
 import com.google.devtools.build.lib.query2.engine.QueryUtil.ThreadSafeMutableKeyExtractorBackedSetImpl;
 import com.google.devtools.build.lib.query2.engine.QueryUtil.UniquifierImpl;
-import com.google.devtools.build.lib.query2.engine.RdepsFunction;
 import com.google.devtools.build.lib.query2.engine.StreamableQueryEnvironment;
-import com.google.devtools.build.lib.query2.engine.TargetLiteral;
 import com.google.devtools.build.lib.query2.engine.ThreadSafeOutputFormatterCallback;
 import com.google.devtools.build.lib.query2.engine.Uniquifier;
-import com.google.devtools.build.lib.query2.engine.VariableContext;
 import com.google.devtools.build.lib.skyframe.BlacklistedPackagePrefixesValue;
 import com.google.devtools.build.lib.skyframe.ContainingPackageLookupFunction;
 import com.google.devtools.build.lib.skyframe.GraphBackedRecursivePackageProvider;
@@ -270,20 +265,11 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
             new ThreadFactoryBuilder().setNameFormat("QueryEnvironment %d").build()));
     }
     resolver =
-        createTargetPatternResolver(
+        new RecursivePackageProviderBackedTargetPatternResolver(
             graphBackedRecursivePackageProvider,
             eventHandler,
             TargetPatternEvaluator.DEFAULT_FILTERING_POLICY,
             packageSemaphore);
-  }
-
-  protected RecursivePackageProviderBackedTargetPatternResolver createTargetPatternResolver(
-      RecursivePackageProvider graphBackedRecursivePackageProvider,
-      ExtendedEventHandler eventHandler,
-      FilteringPolicy policy,
-      MultisetSemaphore<PackageIdentifier> packageSemaphore) {
-    return new RecursivePackageProviderBackedTargetPatternResolver(
-        graphBackedRecursivePackageProvider, eventHandler, policy, packageSemaphore);
   }
 
   protected MultisetSemaphore<PackageIdentifier> makeFreshPackageMultisetSemaphore() {
@@ -317,41 +303,6 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
             universeScope,
             result.getError());
       }
-    }
-  }
-
-  /**
-   * A {@link QueryExpressionMapper} that transforms each occurrence of an expression of the form
-   * {@literal 'rdeps(<universeScope>, <T>)'} to {@literal 'allrdeps(<T>)'}. The latter is more
-   * efficient.
-   */
-  protected static class RdepsToAllRdepsQueryExpressionMapper extends QueryExpressionMapper<Void> {
-    protected final TargetPattern.Parser targetPatternParser;
-    private final String absoluteUniverseScopePattern;
-
-    protected RdepsToAllRdepsQueryExpressionMapper(
-        TargetPattern.Parser targetPatternParser,
-        String universeScopePattern) {
-      this.targetPatternParser = targetPatternParser;
-      this.absoluteUniverseScopePattern = targetPatternParser.absolutize(universeScopePattern);
-    }
-
-    @Override
-    public QueryExpression visit(FunctionExpression functionExpression, Void context) {
-      if (functionExpression.getFunction().getName().equals(new RdepsFunction().getName())) {
-        List<Argument> args = functionExpression.getArgs();
-        QueryExpression universeExpression = args.get(0).getExpression();
-        if (universeExpression instanceof TargetLiteral) {
-          TargetLiteral literalUniverseExpression = (TargetLiteral) universeExpression;
-          String absolutizedUniverseExpression =
-              targetPatternParser.absolutize(literalUniverseExpression.getPattern());
-          if (absolutizedUniverseExpression.equals(absoluteUniverseScopePattern)) {
-            List<Argument> argsTail = args.subList(1, functionExpression.getArgs().size());
-            return new FunctionExpression(new AllRdepsFunction(), argsTail);
-          }
-        }
-      }
-      return super.visit(functionExpression, context);
     }
   }
 
@@ -482,7 +433,8 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   }
 
   @Override
-  public ThreadSafeMutableSet<Target> getFwdDeps(Iterable<Target> targets)
+  public ThreadSafeMutableSet<Target> getFwdDeps(
+      Iterable<Target> targets, QueryExpressionContext<Target> context)
       throws InterruptedException {
     Map<SkyKey, Target> targetsByKey = Maps.newHashMapWithExpectedSize(Iterables.size(targets));
     for (Target target : targets) {
@@ -506,20 +458,20 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   /**
    * Returns deps in the form of {@link SkyKey}s.
    *
-   * <p>The implementation of this method does not filter deps, therefore it is expected to be used
-   * only when {@link SkyQueryEnvironment#dependencyFilter} is set to {@link
-   * DependencyFilter#ALL_DEPS}.
+   * <p>The implementation of this method does not filter out deps due to disallowed edges,
+   * therefore callers are responsible for doing the right thing themselves.
    */
-  public Multimap<SkyKey, SkyKey> getDirectDepsOfSkyKeys(Iterable<SkyKey> keys)
+  public Multimap<SkyKey, SkyKey> getUnfilteredDirectDepsOfSkyKeys(Iterable<SkyKey> keys)
       throws InterruptedException {
-    Preconditions.checkState(dependencyFilter == DependencyFilter.ALL_DEPS, dependencyFilter);
     ImmutableMultimap.Builder<SkyKey, SkyKey> builder = ImmutableMultimap.builder();
     graph.getDirectDeps(keys).forEach(builder::putAll);
     return builder.build();
   }
 
   @Override
-  public Collection<Target> getReverseDeps(Iterable<Target> targets) throws InterruptedException {
+  public Collection<Target> getReverseDeps(
+      Iterable<Target> targets, QueryExpressionContext<Target> context)
+      throws InterruptedException {
     return getReverseDepsOfTransitiveTraversalKeys(Iterables.transform(targets, TARGET_TO_SKY_KEY));
   }
 
@@ -571,16 +523,18 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   }
 
   @Override
-  public ThreadSafeMutableSet<Target> getTransitiveClosure(ThreadSafeMutableSet<Target> targets)
+  public ThreadSafeMutableSet<Target> getTransitiveClosure(
+      ThreadSafeMutableSet<Target> targets, QueryExpressionContext<Target> context)
       throws InterruptedException {
     return SkyQueryUtils.getTransitiveClosure(
-        targets, this::getFwdDeps, createThreadSafeMutableSet());
+        targets, targets1 -> getFwdDeps(targets1, context), createThreadSafeMutableSet());
   }
 
   @Override
-  public ImmutableList<Target> getNodesOnPath(Target from, Target to)
-      throws InterruptedException {
-    return SkyQueryUtils.getNodesOnPath(from, to, this::getFwdDeps, Target::getLabel);
+  public ImmutableList<Target> getNodesOnPath(
+      Target from, Target to, QueryExpressionContext<Target> context) throws InterruptedException {
+    return SkyQueryUtils.getNodesOnPath(
+        from, to, targets -> getFwdDeps(targets, context), Target::getLabel);
   }
 
   private <R> ListenableFuture<R> safeSubmit(Callable<R> callable) {
@@ -603,7 +557,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   @Override
   public QueryTaskFuture<Void> eval(
       final QueryExpression expr,
-      final VariableContext<Target> context,
+      final QueryExpressionContext<Target> context,
       final Callback<Target> callback) {
     // TODO(bazel-team): As in here, use concurrency for the async #eval of other QueryEnvironment
     // implementations.
@@ -644,13 +598,13 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
 
   @Override
   public <V> MutableMap<Target, V> createMutableMap() {
-    return new MutableKeyExtractorBackedMapImpl<Target, Label, V>(TargetKeyExtractor.INSTANCE);
+    return new MutableKeyExtractorBackedMapImpl<>(TargetKeyExtractor.INSTANCE);
   }
 
   @ThreadSafe
   @Override
   public Uniquifier<Target> createUniquifier() {
-    return createTargetUniquifier();
+    return new UniquifierImpl<>(TargetKeyExtractor.INSTANCE);
   }
 
   @ThreadSafe
@@ -665,13 +619,8 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   }
 
   @ThreadSafe
-  Uniquifier<Target> createTargetUniquifier() {
-    return new UniquifierImpl<>(TargetKeyExtractor.INSTANCE, DEFAULT_THREAD_COUNT);
-  }
-
-  @ThreadSafe
   public Uniquifier<SkyKey> createSkyKeyUniquifier() {
-    return new UniquifierImpl<>(SkyKeyKeyExtractor.INSTANCE, DEFAULT_THREAD_COUNT);
+    return new UniquifierImpl<>(SkyKeyKeyExtractor.INSTANCE);
   }
 
   private ImmutableSet<PathFragment> getBlacklistedExcludes(TargetPatternKey targetPatternKey)
@@ -739,7 +688,11 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   @ThreadSafe
   @Override
   public ThreadSafeMutableSet<Target> getBuildFiles(
-      QueryExpression caller, ThreadSafeMutableSet<Target> nodes, boolean buildFiles, boolean loads)
+      QueryExpression caller,
+      ThreadSafeMutableSet<Target> nodes,
+      boolean buildFiles,
+      boolean loads,
+      QueryExpressionContext<Target> context)
       throws QueryException, InterruptedException {
     ThreadSafeMutableSet<Target> dependentFiles = createThreadSafeMutableSet();
     Set<PackageIdentifier> seenPackages = new HashSet<>();
@@ -1166,8 +1119,8 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     // memory. We should have a threshold for when to invoke the callback with a batch, and also a
     // separate, larger, bound on the number of targets being processed at the same time.
     private final ThreadSafeOutputFormatterCallback<Target> callback;
-    private final Uniquifier<Target> uniquifier =
-        new UniquifierImpl<>(TargetKeyExtractor.INSTANCE, DEFAULT_THREAD_COUNT);
+    private final UniquifierImpl<Target, ?> uniquifier =
+        new UniquifierImpl<>(TargetKeyExtractor.INSTANCE);
     private final Object pendingLock = new Object();
     private List<Target> pending = new ArrayList<>();
     private int batchThreshold;
@@ -1220,7 +1173,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   @Override
   public QueryTaskFuture<Void> getAllRdepsUnboundedParallel(
       QueryExpression expression,
-      VariableContext<Target> context,
+      QueryExpressionContext<Target> context,
       Callback<Target> callback) {
     return ParallelSkyQueryUtils.getAllRdepsUnboundedParallel(
         this, expression, context, callback, packageSemaphore);
@@ -1231,15 +1184,14 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   public QueryTaskFuture<Void> getAllRdepsBoundedParallel(
       QueryExpression expression,
       int depth,
-      VariableContext<Target> context,
+      QueryExpressionContext<Target> context,
       Callback<Target> callback) {
     return ParallelSkyQueryUtils.getAllRdepsBoundedParallel(
         this, expression, depth, context, callback, packageSemaphore);
   }
 
-  protected QueryTaskFuture<Predicate<SkyKey>> getUniverseDTCSkyKeyPredicateFuture(
-      QueryExpression universe,
-      VariableContext<Target> context) {
+  protected QueryTaskFuture<Predicate<SkyKey>> getUnfilteredUniverseDTCSkyKeyPredicateFuture(
+      QueryExpression universe, QueryExpressionContext<Target> context) {
     return ParallelSkyQueryUtils.getDTCSkyKeyPredicateFuture(
         this,
         universe,
@@ -1253,18 +1205,18 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   public QueryTaskFuture<Void> getRdepsUnboundedParallel(
       QueryExpression expression,
       QueryExpression universe,
-      VariableContext<Target> context,
+      QueryExpressionContext<Target> context,
       Callback<Target> callback) {
     return transformAsync(
-        getUniverseDTCSkyKeyPredicateFuture(universe, context),
-        universePredicate -> ParallelSkyQueryUtils.getRdepsInUniverseUnboundedParallel(
-            this, expression, universePredicate, context, callback, packageSemaphore));
+        getUnfilteredUniverseDTCSkyKeyPredicateFuture(universe, context),
+        unfilteredUniversePredicate -> ParallelSkyQueryUtils.getRdepsInUniverseUnboundedParallel(
+            this, expression, unfilteredUniversePredicate, context, callback, packageSemaphore));
   }
 
   @Override
   public QueryTaskFuture<Void> getDepsUnboundedParallel(
       QueryExpression expression,
-      VariableContext<Target> context,
+      QueryExpressionContext<Target> context,
       Callback<Target> callback,
       Callback<Target> errorReporter) {
     return ParallelSkyQueryUtils.getDepsUnboundedParallel(
@@ -1283,10 +1235,10 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       QueryExpression expression,
       int depth,
       QueryExpression universe,
-      VariableContext<Target> context,
+      QueryExpressionContext<Target> context,
       Callback<Target> callback) {
     return transformAsync(
-        getUniverseDTCSkyKeyPredicateFuture(universe, context),
+        getUnfilteredUniverseDTCSkyKeyPredicateFuture(universe, context),
         universePredicate -> ParallelSkyQueryUtils.getRdepsInUniverseBoundedParallel(
             this, expression, depth, universePredicate, context, callback, packageSemaphore));
   }
@@ -1316,34 +1268,6 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       if (!e.getKind().equals(EventKind.ERROR)) {
         super.handle(e);
       }
-    }
-  }
-
-  /** Pair of a key and a depth, useful for driving usages of {@link MinDepthUniquifier}. */
-  public static class KeyAtDepth {
-    public final SkyKey key;
-    public final int depth;
-
-    public KeyAtDepth(SkyKey key, int depth) {
-      this.key = key;
-      this.depth = depth;
-    }
-
-    @Override
-    public int hashCode() {
-      // N.B. - We deliberately use a garbage-free hashCode implementation (rather than e.g.
-      // Objects#hash). This method is very hot during large visitations done by
-      // ParallelSkyQueryUtils.
-      return 31 * key.hashCode() + Integer.hashCode(depth);
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-      if (!(obj instanceof KeyAtDepth)) {
-        return false;
-      }
-      KeyAtDepth other = (KeyAtDepth) obj;
-      return key.equals(other.key) && depth == other.depth;
     }
   }
 }

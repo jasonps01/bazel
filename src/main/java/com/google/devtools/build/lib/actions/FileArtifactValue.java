@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.actions;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
+import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
 import com.google.devtools.build.lib.actions.cache.DigestUtils;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
@@ -179,12 +180,14 @@ public abstract class FileArtifactValue implements SkyValue {
     return create(artifact.getPath());
   }
 
-  @VisibleForTesting
   public static FileArtifactValue create(Path path) throws IOException {
     // Caution: there's a race condition between stating the file and computing the
     // digest. We need to stat first, since we're using the stat to detect changes.
     // We follow symlinks here to be consistent with getDigest.
-    FileStatus stat = path.stat(Symlinks.FOLLOW);
+    return create(path, path.stat(Symlinks.FOLLOW));
+  }
+
+  public static FileArtifactValue create(Path path, FileStatus stat) throws IOException {
     return create(path, stat.isFile(), stat.getSize(), FileContentsProxy.create(stat), null);
   }
 
@@ -395,6 +398,10 @@ public abstract class FileArtifactValue implements SkyValue {
     public InlineFileArtifactValue(byte[] data, byte[] digest) {
       this.data = Preconditions.checkNotNull(data);
       this.digest = Preconditions.checkNotNull(digest);
+    }
+
+    public InlineFileArtifactValue(byte[] bytes) {
+      this(bytes, Hashing.md5().hashBytes(bytes).asBytes());
     }
 
     public ByteArrayInputStream getInputStream() {

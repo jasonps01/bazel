@@ -23,7 +23,6 @@ import com.google.devtools.build.lib.testutil.MoreAsserts;
 import com.google.devtools.build.lib.testutil.TestUtils;
 import com.google.devtools.build.lib.unix.NativePosixFiles;
 import com.google.devtools.build.lib.util.Fingerprint;
-import com.google.devtools.build.lib.vfs.FileSystem.HashFunction;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -58,7 +57,6 @@ public abstract class FileSystemTest {
 
   @Before
   public final void createDirectories() throws Exception  {
-    executeBeforeCreatingDirectories();
     testFS = getFreshFileSystem();
     workingDir = testFS.getPath(getTestTmpDir());
     cleanUpWorkingDirectory(workingDir);
@@ -80,11 +78,6 @@ public abstract class FileSystemTest {
     xNonEmptyDirectory.createDirectory();
     FileSystemUtils.createEmptyFile(xNonEmptyDirectoryFoo);
     xEmptyDirectory.createDirectory();
-  }
-
-  protected void executeBeforeCreatingDirectories() throws Exception {
-    // This method exists because LazyDigestFileSystemTest requires some code to be run before
-    // createDirectories().
   }
 
   @After
@@ -1305,7 +1298,7 @@ public abstract class FileSystemTest {
     Fingerprint fp = new Fingerprint();
     fp.addBytes(new byte[0]);
     assertThat(fp.hexDigestAndReset())
-        .isEqualTo(BaseEncoding.base16().lowerCase().encode(xFile.getDigest(HashFunction.MD5)));
+        .isEqualTo(BaseEncoding.base16().lowerCase().encode(xFile.getDigest()));
   }
 
   @Test
@@ -1318,7 +1311,7 @@ public abstract class FileSystemTest {
     Fingerprint fp = new Fingerprint();
     fp.addBytes(buffer);
     assertThat(fp.hexDigestAndReset())
-        .isEqualTo(BaseEncoding.base16().lowerCase().encode(xFile.getDigest(HashFunction.MD5)));
+        .isEqualTo(BaseEncoding.base16().lowerCase().encode(xFile.getDigest()));
   }
 
   @Test

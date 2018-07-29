@@ -27,6 +27,7 @@ import com.google.devtools.common.options.Converters;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionEffectTag;
+import com.google.devtools.common.options.OptionMetadataTag;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParsingException;
 import java.util.List;
@@ -59,38 +60,24 @@ public class PackageCacheOptions extends OptionsBase {
   }
 
   @Option(
-    name = "package_path",
-    defaultValue = "%workspace%",
-    converter = Converters.ColonSeparatedOptionListConverter.class,
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    help =
-        "A colon-separated list of where to look for packages. "
-            + "Elements beginning with '%workspace%' are relative to the enclosing "
-            + "workspace. If omitted or empty, the default is the output of "
-            + "'blaze info default-package-path'."
-  )
+      name = "package_path",
+      defaultValue = "%workspace%",
+      converter = Converters.ColonSeparatedOptionListConverter.class,
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      help =
+          "A colon-separated list of where to look for packages. "
+              + "Elements beginning with '%workspace%' are relative to the enclosing "
+              + "workspace. If omitted or empty, the default is the output of "
+              + "'bazel info default-package-path'.")
   public List<String> packagePath;
 
   @Option(
-    name = "show_package_location",
-    defaultValue = "false",
-    deprecationWarning = "This flag is no longer supported and will go away soon.",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    help =
-        "If enabled, causes Blaze to print the location on the --package_path "
-            + "from which each package was loaded."
-  )
-  public boolean showPackageLocation;
-
-  @Option(
-    name = "show_loading_progress",
-    defaultValue = "true",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    help = "If enabled, causes Blaze to print \"Loading package:\" messages."
-  )
+      name = "show_loading_progress",
+      defaultValue = "true",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      help = "If enabled, causes Bazel to print \"Loading package:\" messages.")
   public boolean showLoadingProgress;
 
   @Option(
@@ -163,6 +150,17 @@ public class PackageCacheOptions extends OptionsBase {
             + "this flag to false to see the effect on incremental build times."
   )
   public boolean checkOutputFiles;
+
+  @Option(
+      name = "experimental_enable_tools_defaults_package",
+      defaultValue = "true",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help =
+          "If true, Blaze constructs an in-memory //tools/defaults package based on the command"
+              + " line options. If false, //tools/defaults is resolved as a regular package.")
+  public boolean experimentalInMemoryToolsDefaultsPackage;
 
   /**
    * A converter from strings containing comma-separated names of packages to lists of strings.

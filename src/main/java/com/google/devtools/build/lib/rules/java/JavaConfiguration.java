@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Fragment
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.StrictDepsMode;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
+import com.google.devtools.build.lib.analysis.skylark.annotations.SkylarkConfigurationField;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
@@ -38,6 +39,7 @@ import javax.annotation.Nullable;
 @AutoCodec
 @Immutable
 public final class JavaConfiguration extends Fragment implements JavaConfigurationApi {
+
   /** Values for the --java_classpath option */
   public enum JavaClasspathMode {
     /** Use full transitive classpaths, the default behavior. */
@@ -151,6 +153,7 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
   private final boolean headerCompilationDisableJavacFallback;
   private final boolean generateJavaDeps;
   private final boolean strictDepsJavaProtos;
+  private final boolean protoGeneratedStrictDeps;
   private final OneVersionEnforcementLevel enforceOneVersion;
   private final boolean enforceOneVersionOnJavaTests;
   private final ImportDepsCheckingLevel importDepsCheckingLevel;
@@ -200,6 +203,7 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     this.javaOptimizationMode = javaOptions.javaOptimizationMode;
     this.useLegacyBazelJavaTest = javaOptions.legacyBazelJavaTest;
     this.strictDepsJavaProtos = javaOptions.strictDepsJavaProtos;
+    this.protoGeneratedStrictDeps = javaOptions.protoGeneratedStrictDeps;
     this.enforceOneVersion = javaOptions.enforceOneVersion;
     this.enforceOneVersionOnJavaTests = javaOptions.enforceOneVersionOnJavaTests;
     this.importDepsCheckingLevel = javaOptions.importDepsCheckingLevel;
@@ -211,7 +215,7 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     ImmutableList.Builder<Label> translationsBuilder = ImmutableList.builder();
     for (String s : javaOptions.translationTargets) {
       try {
-        Label label = Label.parseAbsolute(s);
+        Label label = Label.parseAbsolute(s, ImmutableMap.of());
         translationsBuilder.add(label);
       } catch (LabelSyntaxException e) {
         throw new InvalidConfigurationException("Invalid translations target '" + s + "', make " +
@@ -241,6 +245,7 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
       boolean headerCompilationDisableJavacFallback,
       boolean generateJavaDeps,
       boolean strictDepsJavaProtos,
+      boolean protoGeneratedStrictDeps,
       OneVersionEnforcementLevel enforceOneVersion,
       boolean enforceOneVersionOnJavaTests,
       ImportDepsCheckingLevel importDepsCheckingLevel,
@@ -270,6 +275,7 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     this.headerCompilationDisableJavacFallback = headerCompilationDisableJavacFallback;
     this.generateJavaDeps = generateJavaDeps;
     this.strictDepsJavaProtos = strictDepsJavaProtos;
+    this.protoGeneratedStrictDeps = protoGeneratedStrictDeps;
     this.enforceOneVersion = enforceOneVersion;
     this.enforceOneVersionOnJavaTests = enforceOneVersionOnJavaTests;
     this.importDepsCheckingLevel = importDepsCheckingLevel;
@@ -312,11 +318,6 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
       reporter.handle(Event.error("Translations enabled, but no message translations specified. " +
           "Use '--message_translations' to select the message translations to use"));
     }
-  }
-
-  @Override
-  public void addGlobalMakeVariables(ImmutableMap.Builder<String, String> globalMakeEnvBuilder) {
-    globalMakeEnvBuilder.put("JAVA_TRANSLATIONS", buildTranslations() ? "1" : "0");
   }
 
   /**
@@ -385,9 +386,11 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     return javaLauncherLabel;
   }
 
-  /**
-   * Returns the label provided with --proguard_top, if any.
-   */
+  /** Returns the label provided with --proguard_top, if any. */
+  @SkylarkConfigurationField(
+      name = "proguard_top",
+      doc = "Returns the label provided with --proguard_top, if any.",
+      defaultInToolRepository = true)
   @Nullable
   public Label getProguardBinary() {
     return proguardBinary;
@@ -421,9 +424,12 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     return bundleTranslations == TriState.NO;
   }
 
-  /**
-   * Returns the label of the default java_toolchain rule
-   */
+  /** Returns the label of the default java_toolchain rule */
+  @SkylarkConfigurationField(
+      name = "java_toolchain",
+      doc = "Returns the label of the default java_toolchain rule.",
+      defaultLabel = "//tools/jdk:toolchain",
+      defaultInToolRepository = true)
   public Label getToolchainLabel() {
     return toolchainLabel;
   }
@@ -500,6 +506,10 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
 
   public boolean strictDepsJavaProtos() {
     return strictDepsJavaProtos;
+  }
+
+  public boolean isProtoGeneratedStrictDeps() {
+    return protoGeneratedStrictDeps;
   }
 
   public boolean jplPropagateCcLinkParamsStore() {

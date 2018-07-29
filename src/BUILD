@@ -1,6 +1,7 @@
 # Packaging
 
 load(":embedded_tools.bzl", "srcsfile")
+load(":rule_size_test.bzl", "rule_size_test")
 
 md5_cmd = "set -e -o pipefail && cat $(SRCS) | sort | %s | awk '{ print $$1; }' > $@"
 
@@ -39,7 +40,7 @@ filegroup(
     }),
 ) for suffix, embedded_tools_target in {
     "": [":embedded_tools"],
-    "_with_jdk": [":embedded_tools_with_jdk"],
+    "_nojdk": [":embedded_tools_nojdk"],
     "_notools": [],
 }.items()]
 
@@ -48,9 +49,9 @@ filegroup(
 # so we cannot get it from the command-line options.
 genquery(
     name = "java_toolchain_content",
-    expression = "kind(java_toolchain, deps(//tools/defaults:java_toolchain))",
+    expression = "kind(java_toolchain, deps(@bazel_tools//tools/jdk:current_java_toolchain))",
     opts = ["--output=xml"],
-    scope = ["//tools/defaults:java_toolchain"],
+    scope = ["@bazel_tools//tools/jdk:current_java_toolchain"],
 )
 
 # Create dummy tools so we can do select to prevent building iOS target on
@@ -171,9 +172,30 @@ py_binary(
             "//src/java_tools/singlejar:SingleJar_deploy.jar",
         ],
         "//conditions:default": [
-            "//src/tools/singlejar:singlejar",
+            "//src/tools/singlejar:singlejar_local",
         ],
-    }) + (select({
+    }) + ([":embedded_jdk"] if (suffix == "") else []),
+    visibility = [
+        "//src/test:__subpackages__",  # For integration tests
+    ],
+) for suffix in [
+    "",
+    "_nojdk",
+]]
+
+rule_size_test(
+    name = "embedded_tools_size_test",
+    src = ":embedded_tools_srcs",
+    # WARNING: Only adjust the number in `expect` if you are intentionally
+    # adding or removing embedded tools. Know that the more embedded tools there
+    # are in Bazel, the bigger the binary becomes and the slower Bazel starts.
+    expect = 503,
+    margin = 5,  # percentage
+)
+
+filegroup(
+    name = "embedded_jdk",
+    srcs = select({
         "//src/conditions:darwin": [
             "@openjdk_macos//file",
         ],
@@ -186,14 +208,9 @@ py_binary(
         "//conditions:default": [
             "@openjdk_linux//file",
         ],
-    }) if (suffix == "_with_jdk") else []),
-    visibility = [
-        "//src/test:__subpackages__",  # For integration tests
-    ],
-) for suffix in [
-    "",
-    "_with_jdk",
-]]
+    }),
+    visibility = ["//src/test/shell/bazel:__pkg__"],
+)
 
 [srcsfile(
     name = "embedded_tools" + suffix + "_params",
@@ -201,7 +218,7 @@ py_binary(
     out = "embedded_tools" + suffix + ".params",
 ) for suffix in [
     "",
-    "_with_jdk",
+    "_nojdk",
 ]]
 
 genrule(
@@ -216,13 +233,13 @@ genrule(
 )
 
 genrule(
-    name = "embedded_tools_with_jdk",
+    name = "embedded_tools_nojdk",
     srcs = [
-        ":embedded_tools_with_jdk_params",
-        ":embedded_tools_with_jdk_srcs",
+        ":embedded_tools_nojdk_params",
+        ":embedded_tools_nojdk_srcs",
     ],
-    outs = ["embedded_tools_with_jdk.zip"],
-    cmd = "$(location :create_embedded_tools) \"$@\" $(location :embedded_tools_with_jdk_params)",
+    outs = ["embedded_tools_nojdk.zip"],
+    cmd = "$(location :create_embedded_tools) \"$@\" $(location :embedded_tools_nojdk_params)",
     tools = [":create_embedded_tools"],
 )
 
@@ -247,7 +264,7 @@ genrule(
 ) for suffix, embed in [
     ("", True),
     ("_notools", False),
-    ("_with_jdk", True),
+    ("_nojdk", True),
 ]]
 
 [genrule(
@@ -272,7 +289,7 @@ genrule(
 ) for suffix in [
     "",
     "_notools",
-    "_with_jdk",
+    "_nojdk",
 ]]
 
 # Build an executable named `bazel.exe`.
@@ -293,7 +310,7 @@ genrule(
 ) for suffix in [
     "",
     "_notools",
-    "_with_jdk",
+    "_nojdk",
 ]]
 
 filegroup(
@@ -307,6 +324,7 @@ filegroup(
         "//src/main/cpp:srcs",
         "//src/main/java/com/google/devtools/build/docgen:srcs",
         "//src/main/java/com/google/devtools/build/lib:srcs",
+        "//src/main/java/com/google/devtools/build/skydoc:srcs",
         "//src/main/java/com/google/devtools/build/skyframe:srcs",
         "//src/main/java/com/google/devtools/common/options:srcs",
         "//src/main/java/com/google/devtools/skylark:srcs",
@@ -323,11 +341,13 @@ filegroup(
         "//src/test/java/com/google/devtools/build/docgen:srcs",
         "//src/test/java/com/google/devtools/build/lib:srcs",
         "//src/test/java/com/google/devtools/build/lib/shell:srcs",
+        "//src/test/java/com/google/devtools/build/skydoc:srcs",
         "//src/test/java/com/google/devtools/build/skyframe:srcs",
         "//src/test/java/com/google/devtools/common/options:srcs",
         "//src/test/py/bazel:srcs",
         "//src/test/shell:srcs",
         "//src/tools/android/java/com/google/devtools/build/android:srcs",
+        "//src/tools/execlog:srcs",
         "//src/tools/launcher:srcs",
         "//src/tools/runfiles:srcs",
         "//src/tools/package_printer/java/com/google/devtools/build/packageprinter:srcs",
@@ -351,6 +371,7 @@ genrule(
     srcs = [
         "//src/main/protobuf:dist_jars",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:dist_jars",
+        "//src/main/java/com/google/devtools/build/lib/bazel/debug:dist_jars",
         "//src/main/java/com/google/devtools/build/lib/skylarkdebug/proto:dist_jars",
         "@googleapis//:dist_jars",
     ],

@@ -13,7 +13,6 @@
 // limitations under the License.
 package com.google.devtools.build.lib.skyframe;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
@@ -28,6 +27,7 @@ import com.google.devtools.build.lib.actions.ActionLookupValue.ActionLookupKey;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
+import com.google.devtools.build.lib.actions.ArtifactSkyKey;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.FileValue;
 import com.google.devtools.build.lib.actions.MissingInputFileException;
@@ -43,6 +43,7 @@ import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Nullable;
@@ -271,6 +272,7 @@ class ArtifactFunction implements SkyFunction {
     return FileArtifactValue.createNormalFile(data);
   }
 
+  @Nullable
   private static AggregatingArtifactValue createAggregatingValue(
       Artifact artifact,
       ActionAnalysisMetadata action,
@@ -282,7 +284,9 @@ class ArtifactFunction implements SkyFunction {
     for (Map.Entry<SkyKey, SkyValue> entry : env.getValues(action.getInputs()).entrySet()) {
       Artifact input = ArtifactSkyKey.artifact(entry.getKey());
       SkyValue inputValue = entry.getValue();
-      Preconditions.checkNotNull(inputValue, "%s has null dep %s", artifact, input);
+      if (inputValue == null) {
+        return null;
+      }
       if (inputValue instanceof FileArtifactValue) {
         inputs.add(Pair.of(input, (FileArtifactValue) inputValue));
       } else if (inputValue instanceof TreeArtifactValue) {
@@ -294,7 +298,10 @@ class ArtifactFunction implements SkyFunction {
       }
     }
     return (action.getActionType() == MiddlemanType.AGGREGATING_MIDDLEMAN)
-        ? new AggregatingArtifactValue(inputs.build(), value)
+        ? new AggregatingArtifactValue(
+            ImmutableList.sortedCopyOf(
+                Comparator.comparing(pair -> pair.first.getExecPathString()), inputs.build()),
+            value)
         : new RunfilesArtifactValue(inputs.build(), value);
   }
 
@@ -318,7 +325,6 @@ class ArtifactFunction implements SkyFunction {
     return Label.print(ArtifactSkyKey.artifact(skyKey).getOwner());
   }
 
-  @VisibleForTesting
   static ActionLookupKey getActionLookupKey(Artifact artifact) {
     ArtifactOwner artifactOwner = artifact.getArtifactOwner();
 
@@ -327,7 +333,7 @@ class ArtifactFunction implements SkyFunction {
   }
 
   @Nullable
-  private static ActionLookupValue getActionLookupValue(
+  static ActionLookupValue getActionLookupValue(
       SkyKey actionLookupKey, SkyFunction.Environment env, Artifact artifact)
       throws InterruptedException {
     ActionLookupValue value = (ActionLookupValue) env.getValue(actionLookupKey);

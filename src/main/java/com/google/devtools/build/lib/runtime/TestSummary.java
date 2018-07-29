@@ -23,6 +23,7 @@ import com.google.common.collect.MultimapBuilder;
 import com.google.devtools.build.lib.analysis.AliasProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.buildeventstream.BuildEvent.LocalFile.LocalFileType;
 import com.google.devtools.build.lib.buildeventstream.BuildEventContext;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
@@ -490,6 +491,18 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
   }
 
   @Override
+  public ImmutableList<LocalFile> referencedLocalFiles() {
+    ImmutableList.Builder<LocalFile> localFiles = ImmutableList.builder();
+    for (Path path : getFailedLogs()) {
+      localFiles.add(new LocalFile(path, LocalFileType.FAILED_TEST_OUTPUT));
+    }
+    for (Path path : getPassedLogs()) {
+      localFiles.add(new LocalFile(path, LocalFileType.SUCCESSFUL_TEST_OUTPUT));
+    }
+    return localFiles.build();
+  }
+
+  @Override
   public BuildEventStreamProtos.BuildEvent asStreamProto(BuildEventContext converters) {
     PathConverter pathConverter = converters.pathConverter();
     BuildEventStreamProtos.TestSummary.Builder summaryBuilder =
@@ -498,12 +511,16 @@ public class TestSummary implements Comparable<TestSummary>, BuildEventWithOrder
             .setTotalNumCached(getNumCached())
             .setTotalRunCount(totalRuns());
     for (Path path : getFailedLogs()) {
-      summaryBuilder.addFailed(
-          BuildEventStreamProtos.File.newBuilder().setUri(pathConverter.apply(path)).build());
+      String uri = pathConverter.apply(path);
+      if (uri != null) {
+        summaryBuilder.addFailed(BuildEventStreamProtos.File.newBuilder().setUri(uri).build());
+      }
     }
     for (Path path : getPassedLogs()) {
-      summaryBuilder.addPassed(
-          BuildEventStreamProtos.File.newBuilder().setUri(pathConverter.apply(path)).build());
+      String uri = pathConverter.apply(path);
+      if (uri != null) {
+        summaryBuilder.addPassed(BuildEventStreamProtos.File.newBuilder().setUri(uri).build());
+      }
     }
     return GenericBuildEvent.protoChaining(this).setTestSummary(summaryBuilder.build()).build();
   }

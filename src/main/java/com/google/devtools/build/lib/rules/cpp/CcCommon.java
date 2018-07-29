@@ -37,7 +37,6 @@ import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleContext;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.LocalMetadataCollector;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
-import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProviderImpl;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -65,6 +64,7 @@ import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -81,6 +81,9 @@ public final class CcCommon {
 
   /** Name of the build variable for the path to the input file being processed. */
   public static final String INPUT_FILE_VARIABLE_NAME = "input_file";
+
+  /** Name of the build variable for the minimum_os_version being targeted. */
+  public static final String MINIMUM_OS_VERSION_VARIABLE_NAME = "minimum_os_version";
 
   public static final String PIC_CONFIGURATION_ERROR =
       "PIC compilation is requested but the toolchain does not support it";
@@ -106,14 +109,14 @@ public final class CcCommon {
   };
 
   private static final ImmutableList<PathFragment> WHITELISTED_PACKAGES =
-      ImmutableList.of(PathFragment.create("tools/build_defs"));
+      ImmutableList.of(
+          PathFragment.create("tools/build_defs"), PathFragment.create("experimental"));
 
   public static final ImmutableSet<String> ALL_COMPILE_ACTIONS =
       ImmutableSet.of(
           CppActionNames.C_COMPILE,
           CppActionNames.CPP_COMPILE,
           CppActionNames.CPP_HEADER_PARSING,
-          CppActionNames.CPP_HEADER_PREPROCESSING,
           CppActionNames.CPP_MODULE_COMPILE,
           CppActionNames.CPP_MODULE_CODEGEN,
           CppActionNames.ASSEMBLE,
@@ -206,6 +209,13 @@ public final class CcCommon {
       throws EvalException {
     RuleContext context = skylarkRuleContext.getRuleContext();
     Rule rule = context.getRule();
+    if (!context.getFragment(CppConfiguration.class).getEnableCcSkylarkApi()) {
+      throw new EvalException(
+          rule.getLocation(),
+          "Pass --experimental_enable_cc_skylark_api in "
+              + "order to use the C++ API. Beware that we will be making breaking "
+              + "changes to this API without prior warning.");
+    }
     RuleClass ruleClass = rule.getRuleClassObject();
     Label label = ruleClass.getRuleDefinitionEnvironmentLabel();
     if (label != null
@@ -246,7 +256,7 @@ public final class CcCommon {
     if (ourLinkopts != null) {
       boolean allowDashStatic =
           !cppConfiguration.forceIgnoreDashStatic()
-              && (CppHelper.getDynamicMode(cppConfiguration, ccToolchain) != DynamicMode.FULLY);
+              && (cppConfiguration.getDynamicModeFlag() != DynamicMode.FULLY);
       if (!allowDashStatic) {
         ourLinkopts = Iterables.filter(ourLinkopts, (v) -> !"-static".equals(v));
       }
@@ -301,25 +311,12 @@ public final class CcCommon {
       deps.add(CppHelper.mallocForTarget(ruleContext));
     }
 
-    return compilationOutputs == null // Possible in LIPO collection mode (see initializationHook).
-        ? DwoArtifactsCollector.emptyCollector()
-        : DwoArtifactsCollector.transitiveCollector(
-            compilationOutputs,
-            deps.build(),
-            generateDwo,
-            ltoBackendArtifactsUsePic,
-            ltoBackendArtifacts);
-  }
-
-  public TransitiveLipoInfoProvider collectTransitiveLipoLabels(CcCompilationOutputs outputs) {
-    if (fdoSupport.getFdoSupport().getFdoRoot() == null
-        || !cppConfiguration.isLipoContextCollector()) {
-      return TransitiveLipoInfoProvider.EMPTY;
-    }
-
-    NestedSetBuilder<IncludeScannable> scannableBuilder = NestedSetBuilder.stableOrder();
-    CppHelper.addTransitiveLipoInfoForCommonAttributes(ruleContext, outputs, scannableBuilder);
-    return new TransitiveLipoInfoProvider(scannableBuilder.build());
+    return DwoArtifactsCollector.transitiveCollector(
+        compilationOutputs,
+        deps.build(),
+        generateDwo,
+        ltoBackendArtifactsUsePic,
+        ltoBackendArtifacts);
   }
 
   /**
@@ -586,10 +583,10 @@ public final class CcCommon {
 
   /**
    * Determines a list of loose include directories that are only allowed to be referenced when
-   * headers checking is {@link HeadersCheckingMode#LOOSE} or {@link HeadersCheckingMode#WARN}.
+   * headers checking is {@link HeadersCheckingMode#LOOSE}.
    */
-  List<PathFragment> getLooseIncludeDirs() {
-    List<PathFragment> result = new ArrayList<>();
+  Set<PathFragment> getLooseIncludeDirs() {
+    ImmutableSet.Builder<PathFragment> result = ImmutableSet.builder();
     // The package directory of the rule contributes includes. Note that this also covers all
     // non-subpackage sub-directories.
     PathFragment rulePackage = ruleContext.getLabel().getPackageIdentifier()
@@ -600,9 +597,8 @@ public final class CcCommon {
     if (hasAttribute("srcs", BuildType.LABEL_LIST)) {
       for (TransitiveInfoCollection src :
           ruleContext.getPrerequisitesIf("srcs", Mode.TARGET, FileProvider.class)) {
-        PathFragment packageDir = src.getLabel().getPackageIdentifier().getPathUnderExecRoot();
+        result.add(src.getLabel().getPackageIdentifier().getPathUnderExecRoot());
         for (Artifact a : src.getProvider(FileProvider.class).getFilesToBuild()) {
-          result.add(packageDir);
           // Attempt to gather subdirectories that might contain include files.
           result.add(a.getRootRelativePath().getParentDirectory());
         }
@@ -616,7 +612,7 @@ public final class CcCommon {
       // For now, anything with an 'includes' needs a blanket declaration
       result.add(packageFragment.getRelative("**"));
     }
-    return result;
+    return result.build();
   }
 
   List<PathFragment> getSystemIncludeDirs() {
@@ -729,13 +725,14 @@ public final class CcCommon {
    */
   public InstrumentedFilesProvider getInstrumentedFilesProvider(Iterable<Artifact> files,
       boolean withBaselineCoverage) {
-    return cppConfiguration.isLipoContextCollector()
-        ? InstrumentedFilesProviderImpl.EMPTY
-        : InstrumentedFilesCollector.collect(
-            ruleContext, CppRuleClasses.INSTRUMENTATION_SPEC, CC_METADATA_COLLECTOR, files,
-            CppHelper.getGcovFilesIfNeeded(ruleContext, ccToolchain),
-            CppHelper.getCoverageEnvironmentIfNeeded(ruleContext, ccToolchain),
-            withBaselineCoverage);
+    return InstrumentedFilesCollector.collect(
+        ruleContext,
+        CppRuleClasses.INSTRUMENTATION_SPEC,
+        CC_METADATA_COLLECTOR,
+        files,
+        CppHelper.getGcovFilesIfNeeded(ruleContext, ccToolchain),
+        CppHelper.getCoverageEnvironmentIfNeeded(ruleContext, ccToolchain),
+        withBaselineCoverage);
   }
 
   public static ImmutableList<String> getCoverageFeatures(CcToolchainProvider toolchain) {
@@ -839,7 +836,6 @@ public final class CcCommon {
       // TODO(bazel-team): Remove once supports_header_parsing has been removed from the
       // cc_toolchain rule.
       unsupportedFeaturesBuilder.add(CppRuleClasses.PARSE_HEADERS);
-      unsupportedFeaturesBuilder.add(CppRuleClasses.PREPROCESS_HEADERS);
     }
     if (toolchain.getCcCompilationInfo().getCcCompilationContext().getCppModuleMap() == null) {
       unsupportedFeaturesBuilder.add(CppRuleClasses.MODULE_MAPS);
@@ -919,16 +915,6 @@ public final class CcCommon {
     }
     if (cppConfiguration.getFdoPrefetchHintsLabel() != null) {
       allRequestedFeaturesBuilder.add(CppRuleClasses.FDO_PREFETCH_HINTS);
-    }
-    if (cppConfiguration.isLipoOptimizationOrInstrumentation()) {
-      // Map LIPO to ThinLTO for LLVM builds.
-      if (toolchain.isLLVMCompiler() && fdoMode != FdoMode.OFF) {
-        if (!allUnsupportedFeatures.contains(CppRuleClasses.THIN_LTO)) {
-          allFeatures.add(CppRuleClasses.THIN_LTO);
-        }
-      } else {
-        allFeatures.add(CppRuleClasses.LIPO);
-      }
     }
 
     for (String feature : allFeatures.build()) {

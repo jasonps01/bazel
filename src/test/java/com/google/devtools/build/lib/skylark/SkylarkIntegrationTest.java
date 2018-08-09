@@ -1185,25 +1185,6 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
   }
 
   @Test
-  public void testConflictingProviderKeys() throws Exception {
-    scratch.file(
-        "test/extension.bzl",
-        "my_provider = provider()",
-        "other_provider = provider()",
-        "def _impl(ctx):",
-        "   return struct(providers = [my_provider(x = 1), other_provider(), my_provider()])",
-        "my_rule = rule(_impl)"
-    );
-
-    checkError(
-        "test",
-        "r",
-        "Multiple conflicting returned providers with key my_provider",
-        "load(':extension.bzl', 'my_rule')",
-        "my_rule(name = 'r')");
-  }
-
-  @Test
   public void testRecursionDetection() throws Exception {
     reporter.removeHandler(failFastHandler);
     scratch.file(
@@ -1748,6 +1729,39 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
     assertContainsEvent("ERROR /workspace/BUILD:3:1: in extrule rule //:test:");
     assertContainsEvent("he following directories were also declared as files:");
     assertContainsEvent("foo/bar/baz");
+  }
+
+  @Test
+  public void testEnvironmentConstraintsFromSkylarkRule() throws Exception {
+    scratch.file(
+        "buildenv/foo/BUILD",
+        "environment_group(name = 'env_group',",
+        "    defaults = [':default'],",
+        "    environments = ['default', 'other'])",
+        "environment(name = 'default')",
+        "environment(name = 'other')");
+    // The example skylark rule explicitly provides the MyProvider provider as a regression test
+    // for a bug where a skylark rule with unsatisfied constraints but explicit providers would
+    // result in Bazel throwing a null pointer exception.
+    scratch.file(
+        "test/skylark/extension.bzl",
+        "MyProvider = provider()",
+        "",
+        "def _impl(ctx):",
+        "  return struct(providers = [MyProvider(foo = 'bar')])",
+        "my_rule = rule(implementation = _impl,",
+        "    attrs = { 'deps' : attr.label_list() },",
+        "    provides = [MyProvider])");
+    scratch.file(
+        "test/skylark/BUILD",
+        "load('//test/skylark:extension.bzl',  'my_rule')",
+        "java_library(name = 'dep', srcs = ['a.java'], restricted_to = ['//buildenv/foo:other'])",
+        "my_rule(name='my', deps = [':dep'])");
+
+    reporter.removeHandler(failFastHandler);
+    assertThat(getConfiguredTarget("//test/skylark:my")).isNull();
+    assertContainsEvent(
+        "//test/skylark:dep doesn't support expected environment: //buildenv/foo:default");
   }
 
   /**

@@ -78,7 +78,6 @@ import com.google.devtools.build.skyframe.AbstractSkyFunctionEnvironment;
 import com.google.devtools.build.skyframe.BuildDriver;
 import com.google.devtools.build.skyframe.ErrorInfo;
 import com.google.devtools.build.skyframe.EvaluationResult;
-import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
 import com.google.devtools.build.skyframe.ValueOrUntypedException;
@@ -234,6 +233,7 @@ public final class ActionsTestUtil {
           result.put(key, ValueOrUntypedException.ofValueUntyped(value));
           continue;
         }
+        errorMightHaveBeenFound = true;
         ErrorInfo errorInfo = evaluationResult.getError(key);
         if (errorInfo == null || errorInfo.getException() == null) {
           result.put(key, ValueOrUntypedException.ofNull());
@@ -710,12 +710,7 @@ public final class ActionsTestUtil {
    */
   public static class FakeMetadataHandlerBase implements MetadataHandler {
     @Override
-    public FileArtifactValue getMetadata(ActionInput input) throws IOException {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public ActionInput getInput(String execPath) {
+    public FileArtifactValue getMetadata(Artifact artifact) throws IOException {
       throw new UnsupportedOperationException();
     }
 

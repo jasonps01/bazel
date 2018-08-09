@@ -62,8 +62,9 @@
 //    precedence over installed versions.)
 //
 // 2. Not older (at least as high version number).
-static void AddEntryToDictionary(XcodeVersionEntry *entry,
-                                 NSMutableDictionary *dict) {
+static void AddEntryToDictionary(
+  XcodeVersionEntry *entry,
+  NSMutableDictionary<NSString *, XcodeVersionEntry *> *dict) {
   BOOL inApplications =
       [entry.url.path rangeOfString:@"/Applications/"].location != NSNotFound;
   NSString *entryVersion = entry.version;
@@ -107,6 +108,132 @@ static NSString *ExpandVersion(NSString *version) {
   return version;
 }
 
+// Searches for all available Xcodes in the system and returns a dictionary that
+// maps version identifiers of any form (X, X.Y, and X.Y.Z) to the directory
+// where the Xcode bundle lives.
+//
+// If there is a problem locating the Xcodes, prints one or more error messages
+// and returns nil.
+static NSMutableDictionary<NSString *, XcodeVersionEntry *> *FindXcodes()
+  __attribute((ns_returns_retained)) {
+  CFStringRef bundleID = CFSTR("com.apple.dt.Xcode");
+
+  NSMutableDictionary<NSString *, XcodeVersionEntry *> *dict =
+      [[NSMutableDictionary alloc] init];
+  CFErrorRef cfError;
+  NSArray *array = CFBridgingRelease(LSCopyApplicationURLsForBundleIdentifier(
+      bundleID, &cfError));
+  if (array == nil) {
+    NSError *nsError = (__bridge NSError *)cfError;
+    fprintf(stderr, "error: %s\n", nsError.description.UTF8String);
+    return nil;
+  }
+
+  // Scan all bundles but delay returning in case of errors until we are
+  // done. This is to let us log details about all the bundles that were
+  // processed so that a faulty bundle doesn't hide useful information about
+  // other bundles that were found.
+  BOOL errors = NO;
+  for (NSURL *url in array) {
+    NSArray *contents = [
+      [NSFileManager defaultManager] contentsOfDirectoryAtURL:url
+                                   includingPropertiesForKeys:nil
+                                                      options:0
+                                                        error:nil];
+    NSLog(@"Found bundle %@ in %@; contents on disk: %@",
+          bundleID, url, contents);
+
+    NSBundle *bundle = [NSBundle bundleWithURL:url];
+    if (bundle == nil) {
+      NSLog(@"ERROR: Unable to open bundle at URL: %@\n", url);
+      errors = YES;
+      continue;
+    }
+
+    NSString *versionKey = @"CFBundleShortVersionString";
+    NSString *version = [bundle.infoDictionary objectForKey:versionKey];
+    if (version == nil) {
+      NSLog(@"ERROR: Cannot find %@ in info for bundle %@; info: %@\n",
+            versionKey, url, bundle.infoDictionary);
+      errors = YES;
+      continue;
+    }
+    NSString *expandedVersion = ExpandVersion(version);
+    NSLog(@"Version strings for %@: short=%@, expanded=%@",
+          url, version, expandedVersion);
+
+    NSURL *developerDir =
+        [url URLByAppendingPathComponent:@"Contents/Developer"];
+    XcodeVersionEntry *entry =
+        [[XcodeVersionEntry alloc] initWithVersion:expandedVersion
+                                               url:developerDir];
+    AddEntryToDictionary(entry, dict);
+  }
+  return errors ? nil : dict;
+}
+
+// Prints out the located Xcodes as a set of lines where each line contains the
+// list of versions for a given Xcode and its location on disk.
+static void DumpAsVersionsOnly(
+  FILE *output,
+  NSMutableDictionary<NSString *, XcodeVersionEntry *> *dict) {
+  NSSet<XcodeVersionEntry *> *distinctValues =
+      [[NSSet alloc] initWithArray:dict.allValues];
+  NSMutableDictionary<NSString *, NSMutableSet <NSString *> *> *aliasDict =
+      [[NSMutableDictionary alloc] init];
+  [dict enumerateKeysAndObjectsUsingBlock:^(NSString *aliasVersion,
+                                            XcodeVersionEntry *entry,
+                                            BOOL *stop) {
+    NSString *versionString = entry.version;
+    if (aliasDict[versionString] == nil) {
+      aliasDict[versionString] = [[NSMutableSet alloc] init];
+    }
+    [aliasDict[versionString] addObject:aliasVersion];
+  }];
+  for (NSString *version in aliasDict) {
+    XcodeVersionEntry *entry = dict[version];
+    fprintf(output, "%s:%s:%s\n",
+            version.UTF8String,
+            [[aliasDict[version] allObjects]
+                   componentsJoinedByString: @","].UTF8String,
+            entry.url.fileSystemRepresentation);
+  }
+}
+
+// Prints out the located Xcodes in JSON format.
+static void DumpAsJson(
+  FILE *output,
+  NSMutableDictionary<NSString *, XcodeVersionEntry *> *dict) {
+  fprintf(output, "{\n");
+  for (NSString *version in dict) {
+    XcodeVersionEntry *entry = dict[version];
+    fprintf(output, "\t\"%s\": \"%s\",\n",
+            version.UTF8String, entry.url.fileSystemRepresentation);
+  }
+  fprintf(output, "}\n");
+}
+
+// Dumps usage information.
+static void usage(FILE *output) {
+  fprintf(
+      output,
+      "xcode-locator [-v|<version_number>]"
+      "\n\n"
+      "Given a version number or partial version number in x.y.z format, "
+      "will attempt to return the path to the appropriate developer "
+      "directory."
+      "\n\n"
+      "Omitting a version number will list all available versions in JSON "
+      "format, alongside their paths."
+      "\n\n"
+      "Passing -v will list all available fully-specified version numbers "
+      "along with their possible aliases and their developer directory, "
+      "each on a new line. For example:"
+      "\n\n"
+      "7.3.1:7,7.3,7.3.1:/Applications/Xcode.app/Contents/Developer"
+      "\n");
+}
+
 int main(int argc, const char * argv[]) {
   @autoreleasepool {
     NSString *versionArg = nil;
@@ -129,55 +256,13 @@ int main(int argc, const char * argv[]) {
       }
     }
     if (versionArg == nil) {
-      fprintf(
-          stderr,
-          "xcode-locator [-v|<version_number>]"
-          "\n\n"
-          "Given a version number, or partial version number in x.y.z format, "
-          "will attempt to return the path to the appropriate developer "
-          "directory."
-          "\n"
-          "Omitting a version number will list all available versions in JSON "
-          "format, alongside their paths."
-          "\n"
-          "Passing -v will list all available fully-specified version numbers "
-          "along with their possible aliases and their developer directory, "
-          "each on a new line."
-          "\n"
-          "For example: "
-          "'7.3.1:7,7.3,7.3.1:/Applications/Xcode.app/Contents/Developer'."
-          "\n");
+      usage(stderr);
       return 1;
     }
 
-    NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-    CFErrorRef cfError;
-    NSArray *array = CFBridgingRelease(LSCopyApplicationURLsForBundleIdentifier(
-        CFSTR("com.apple.dt.Xcode"), &cfError));
-    if (array == nil) {
-      NSError *nsError = (__bridge NSError *)cfError;
-      fprintf(stderr, "error: %s\n", nsError.description.UTF8String);
+    NSMutableDictionary<NSString *, XcodeVersionEntry *> *dict = FindXcodes();
+    if (dict == nil) {
       return 1;
-    }
-    for (NSURL *url in array) {
-      NSBundle *bundle = [NSBundle bundleWithURL:url];
-      if (!bundle) {
-        fprintf(stderr, "error: Unable to open bundle at URL: %s\n",
-                url.description.UTF8String);
-        return 1;
-      }
-      NSString *version = bundle.infoDictionary[@"CFBundleShortVersionString"];
-      if (!version) {
-        fprintf(stderr, "error: Unable to extract CFBundleShortVersionString "
-                "from URL: %s\n", url.description.UTF8String);
-        return 1;
-      }
-      version = ExpandVersion(version);
-      NSURL *developerDir =
-          [url URLByAppendingPathComponent:@"Contents/Developer"];
-      XcodeVersionEntry *entry =
-          [[XcodeVersionEntry alloc] initWithVersion:version url:developerDir];
-      AddEntryToDictionary(entry, dict);
     }
 
     XcodeVersionEntry *entry = [dict objectForKey:versionArg];
@@ -187,33 +272,9 @@ int main(int argc, const char * argv[]) {
     }
 
     if (versionsOnly) {
-      NSSet *distinctValues = [[NSSet alloc] initWithArray:[dict allValues]];
-      NSMutableDictionary *aliasDict = [[NSMutableDictionary alloc] init];
-      for (XcodeVersionEntry *value in distinctValues) {
-        NSString *versionString = value.version;
-        if (aliasDict[versionString] == nil) {
-          aliasDict[versionString] = [[NSMutableSet alloc] init];
-        }
-        [aliasDict[versionString]
-            addObjectsFromArray:[dict allKeysForObject:value]];
-      }
-      for (NSString *version in aliasDict) {
-        XcodeVersionEntry *entry = dict[version];
-        printf("%s:%s:%s\n",
-               version.UTF8String,
-               [[aliasDict[version] allObjects]
-                   componentsJoinedByString: @","].UTF8String,
-               entry.url.fileSystemRepresentation);
-      }
+      DumpAsVersionsOnly(stdout, dict);
     } else {
-      // Print out list in json format.
-      printf("{\n");
-      for (NSString *version in dict) {
-        XcodeVersionEntry *entry = dict[version];
-        printf("\t\"%s\": \"%s\",\n",
-               version.UTF8String, entry.url.fileSystemRepresentation);
-      }
-      printf("}\n");
+      DumpAsJson(stdout, dict);
     }
     return ([@"" isEqualToString:versionArg] ? 0 : 1);
   }

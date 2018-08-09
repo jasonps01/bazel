@@ -92,6 +92,8 @@ StartupOptions::StartupOptions(const string &product_name,
       java_logging_formatter(
           "com.google.devtools.build.lib.util.SingleLineFormatter"),
       expand_configs_in_place(true),
+      digest_function(),
+      idle_server_tasks(true),
       original_startup_options_(std::vector<RcStartupFlag>()) {
   bool testing = !blaze::GetEnv("TEST_TMPDIR").empty();
   if (testing) {
@@ -132,11 +134,13 @@ StartupOptions::StartupOptions(const string &product_name,
   RegisterNullaryStartupFlag("experimental_oom_more_eagerly");
   RegisterNullaryStartupFlag("fatal_event_bus_exceptions");
   RegisterNullaryStartupFlag("host_jvm_debug");
+  RegisterNullaryStartupFlag("idle_server_tasks");
   RegisterNullaryStartupFlag("ignore_all_rc_files");
   RegisterNullaryStartupFlag("watchfs");
   RegisterNullaryStartupFlag("write_command_log");
   RegisterUnaryStartupFlag("command_port");
   RegisterUnaryStartupFlag("connect_timeout_secs");
+  RegisterUnaryStartupFlag("digest_function");
   RegisterUnaryStartupFlag("experimental_oom_more_eagerly_threshold");
   // TODO(b/5568649): remove this deprecated alias for server_javabase
   RegisterUnaryStartupFlag("host_javabase");
@@ -332,6 +336,12 @@ blaze_exit_code::ExitCode StartupOptions::ProcessArg(
   } else if (GetNullaryOption(arg, "--noexpand_configs_in_place")) {
     expand_configs_in_place = false;
     option_sources["expand_configs_in_place"] = rcfile;
+  } else if (GetNullaryOption(arg, "--idle_server_tasks")) {
+    idle_server_tasks = true;
+    option_sources["idle_server_tasks"] = rcfile;
+  } else if (GetNullaryOption(arg, "--noidle_server_tasks")) {
+    idle_server_tasks = false;
+    option_sources["idle_server_tasks"] = rcfile;
   } else if ((value = GetUnaryOption(arg, next_arg,
                                      "--connect_timeout_secs")) != NULL) {
     if (!blaze_util::safe_strto32(value, &connect_timeout_secs) ||
@@ -343,6 +353,10 @@ blaze_exit_code::ExitCode StartupOptions::ProcessArg(
       return blaze_exit_code::BAD_ARGV;
     }
     option_sources["connect_timeout_secs"] = rcfile;
+  } else if ((value = GetUnaryOption(arg, next_arg, "--digest_function")) !=
+             NULL) {
+    digest_function = value;
+    option_sources["digest_function"] = rcfile;
   } else if ((value = GetUnaryOption(arg, next_arg, "--command_port")) !=
              NULL) {
     if (!blaze_util::safe_strto32(value, &command_port) ||

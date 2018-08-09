@@ -37,3 +37,14 @@ filegroup(
     name = "srcs",
     srcs = glob(["**"]),
 )
+
+filegroup(
+    name = "embedded_tools",
+    srcs = [
+        "BUILD.tools",
+        "test-setup.sh",
+        "generate-xml.sh",
+        "collect_coverage.sh",
+    ] + glob(["LcovMerger/**"]),
+    visibility = ["//tools:__pkg__"],
+)

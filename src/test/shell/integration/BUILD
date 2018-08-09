@@ -50,27 +50,46 @@ sh_test(
 sh_test(
     name = "loading_phase_tests",
     size = "large",
-    srcs = ["loading_phase_tests.sh"],
-    data = [":test-deps"],
+    srcs = ["loading_phase_test.sh"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
     shard_count = 4,
-    tags = ["no_windows"],
+)
+
+sh_test(
+    name = "loading_phase_posix_tests",
+    size = "large",
+    srcs = ["loading_phase_posix_test.sh"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    tags = [
+        "no_windows",  # test uses symlinks and chmod
+    ],
 )
 
 sh_test(
     name = "execution_phase_tests",
     size = "large",
     srcs = ["execution_phase_tests.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
     name = "experimental_ui_test",
     size = "large",
     srcs = ["experimental_ui_test.sh"],
-    data = [":test-deps"],
-    shard_count = 11,
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    shard_count = 4,
 )
 
 sh_test(
@@ -93,8 +112,10 @@ sh_test(
     name = "startup_options_test",
     size = "medium",
     srcs = ["startup_options_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -126,16 +147,20 @@ sh_test(
     name = "output_filter_test",
     size = "large",
     srcs = ["output_filter_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
     name = "bazel_testjobs_test",
     srcs = ["bazel_testjobs_test.sh"],
-    data = [":test-deps"],
-    shard_count = 3,
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    shard_count = 2,
 )
 
 sh_test(
@@ -158,8 +183,10 @@ sh_test(
     name = "aquery_test",
     size = "large",
     srcs = ["aquery_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(

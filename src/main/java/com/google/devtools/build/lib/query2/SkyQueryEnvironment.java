@@ -1208,6 +1208,9 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       QueryExpressionContext<Target> context,
       Callback<Target> callback) {
     return transformAsync(
+        // Even if we need to do edge filtering, it's fine to construct the rdeps universe via an
+        // unfiltered DTC visitation; the subsequent rdeps visitation will perform the edge
+        // filtering.
         getUnfilteredUniverseDTCSkyKeyPredicateFuture(universe, context),
         unfilteredUniversePredicate -> ParallelSkyQueryUtils.getRdepsInUniverseUnboundedParallel(
             this, expression, unfilteredUniversePredicate, context, callback, packageSemaphore));
@@ -1217,16 +1220,14 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   public QueryTaskFuture<Void> getDepsUnboundedParallel(
       QueryExpression expression,
       QueryExpressionContext<Target> context,
-      Callback<Target> callback,
-      Callback<Target> errorReporter) {
+      Callback<Target> callback) {
     return ParallelSkyQueryUtils.getDepsUnboundedParallel(
         SkyQueryEnvironment.this,
         expression,
         context,
         callback,
         packageSemaphore,
-        /*depsNeedFiltering=*/ !dependencyFilter.equals(DependencyFilter.ALL_DEPS),
-        errorReporter);
+        /*depsNeedFiltering=*/ !dependencyFilter.equals(DependencyFilter.ALL_DEPS));
   }
 
   @ThreadSafe
@@ -1238,6 +1239,9 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       QueryExpressionContext<Target> context,
       Callback<Target> callback) {
     return transformAsync(
+        // Even if we need to do edge filtering, it's fine to construct the rdeps universe via an
+        // unfiltered DTC visitation; the subsequent rdeps visitation will perform the edge
+        // filtering.
         getUnfilteredUniverseDTCSkyKeyPredicateFuture(universe, context),
         universePredicate -> ParallelSkyQueryUtils.getRdepsInUniverseBoundedParallel(
             this, expression, depth, universePredicate, context, callback, packageSemaphore));

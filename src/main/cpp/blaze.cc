@@ -536,6 +536,16 @@ static vector<string> GetArgumentArray(
   } else {
     result.push_back("--noexpand_configs_in_place");
   }
+  if (!globals->options->digest_function.empty()) {
+    // Only include this if a value is requested - we rely on the empty case
+    // being "null" to set the programmatic default in the server.
+    result.push_back("--digest_function=" + globals->options->digest_function);
+  }
+  if (globals->options->idle_server_tasks) {
+    result.push_back("--idle_server_tasks");
+  } else {
+    result.push_back("--noidle_server_tasks");
+  }
   if (globals->options->oom_more_eagerly) {
     result.push_back("--experimental_oom_more_eagerly");
   } else {

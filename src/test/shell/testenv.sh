@@ -115,7 +115,7 @@ if [ "${MACHINE_TYPE}" = 's390x' ]; then
 fi
 
 # Requires //third_party/protobuf:protoc
-protoc_compiler="${BAZEL_RUNFILES}/third_party/protobuf/3.6.0/protoc"
+protoc_compiler="${BAZEL_RUNFILES}/third_party/protobuf/3.6.1/protoc"
 
 if [ -z ${RUNFILES_MANIFEST_ONLY+x} ]; then
   junit_jar="${BAZEL_RUNFILES}/third_party/junit/junit-*.jar"
@@ -386,8 +386,14 @@ function create_new_workspace() {
   [ -e third_party/java/jdk/langtools/javac-9+181-r4173-1.jar ] \
     || ln -s "${langtools_path}"  third_party/java/jdk/langtools/javac-9+181-r4173-1.jar
 
-  touch WORKSPACE
+  cat > WORKSPACE <<EOF
+new_local_repository(
+    name = 'bazel_skylib',
+    build_file_content = '',
+    path='$TEST_SRCDIR/io_bazel/external/bazel_skylib')
+EOF
 }
+
 
 # Set-up a clean default workspace.
 function setup_clean_workspace() {

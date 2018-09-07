@@ -36,7 +36,6 @@ import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.rules.cpp.CppConfigurationLoader.CppConfigurationParameters;
 import com.google.devtools.build.lib.rules.cpp.CrosstoolConfigurationLoader.CrosstoolFile;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkingMode;
-import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkbuildapi.cpp.CppConfigurationApi;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.syntax.EvalException;
@@ -79,7 +78,6 @@ import javax.annotation.Nullable;
  *       --compiler values, and construct the key as follows: <toolchain.cpu>|<toolchain.compiler>.
  * </ul>
  */
-@AutoCodec
 @Immutable
 public final class CppConfiguration extends BuildConfiguration.Fragment
     implements CppConfigurationApi<InvalidConfigurationException> {
@@ -91,22 +89,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
 
   /** String constant for CC_FLAGS make variable name */
   public static final String CC_FLAGS_MAKE_VARIABLE_NAME = "CC_FLAGS";
-
-  public boolean disableLegacyCrosstoolFields() {
-    return cppOptions.disableLegacyCrosstoolFields;
-  }
-
-  public boolean disableCompilationModeFlags() {
-    return cppOptions.disableCompilationModeFlags;
-  }
-
-  public boolean disableLinkingModeFlags() {
-    return cppOptions.disableLinkingModeFlags;
-  }
-
-  public boolean enableLinkoptsInUserLinkFlags() {
-    return cppOptions.enableLinkoptsInUserLinkFlags;
-  }
 
   /**
    * An enumeration of all the tools that comprise a toolchain.
@@ -236,7 +218,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
   private final CompilationMode compilationMode;
 
   private final boolean shouldProvideMakeVariables;
-  private final boolean dropFullyStaticLinkingMode;
 
   private final CppToolchainInfo cppToolchainInfo;
 
@@ -313,12 +294,10 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
                 && compilationMode == CompilationMode.FASTBUILD)),
         compilationMode,
         params.commonOptions.makeVariableSource == MakeVariableSource.CONFIGURATION,
-        cppOptions.dropFullyStaticLinkingMode,
         cppToolchainInfo);
   }
 
-  @AutoCodec.Instantiator
-  CppConfiguration(
+  private CppConfiguration(
       Label crosstoolTop,
       CrosstoolFile crosstoolFile,
       String desiredCpu,
@@ -346,7 +325,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
       boolean stripBinaries,
       CompilationMode compilationMode,
       boolean shouldProvideMakeVariables,
-      boolean dropFullyStaticLinkingMode,
       CppToolchainInfo cppToolchainInfo) {
     this.crosstoolTop = crosstoolTop;
     this.crosstoolFile = crosstoolFile;
@@ -375,7 +353,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
     this.stripBinaries = stripBinaries;
     this.compilationMode = compilationMode;
     this.shouldProvideMakeVariables = shouldProvideMakeVariables;
-    this.dropFullyStaticLinkingMode = dropFullyStaticLinkingMode;
     this.cppToolchainInfo = cppToolchainInfo;
   }
 
@@ -473,17 +450,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
   public String getTargetCpu() throws EvalException {
     checkForToolchainSkylarkApiAvailability();
     return cppToolchainInfo.getTargetCpu();
-  }
-
-  /**
-   * Unused, for compatibility with things internal to Google.
-   *
-   * <p>Deprecated: Use platforms.
-   */
-  // TODO(b/64384912): Remove once c++ platforms are in use.
-  @Deprecated
-  public String getTargetOS() {
-    return cppToolchainInfo.getTargetOS();
   }
 
   /**
@@ -689,13 +655,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
     }
   }
 
-  public boolean hasStaticLinkOption() {
-    if (dropFullyStaticLinkingMode()) {
-      return false;
-    }
-    return linkopts.contains("-static");
-  }
-
   public boolean hasSharedLinkOption() {
     return linkopts.contains("-shared");
   }
@@ -858,10 +817,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
     return stlLabel;
   }
 
-  public boolean dropFullyStaticLinkingMode() {
-    return dropFullyStaticLinkingMode;
-  }
-
   public boolean isFdo() {
     return cppOptions.isFdo();
   }
@@ -941,10 +896,6 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
   /** Returns true if --start_end_lib is set on this build. */
   public boolean startEndLibIsRequested() {
     return cppOptions.useStartEndLib;
-  }
-
-  public boolean forceIgnoreDashStatic() {
-    return cppOptions.forceIgnoreDashStatic;
   }
 
   public boolean legacyWholeArchive() {
@@ -1125,7 +1076,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
 
   @Override
   public void addGlobalMakeVariables(ImmutableMap.Builder<String, String> globalMakeEnvBuilder) {
-    if (!cppOptions.enableMakeVariables) {
+    if (cppOptions.disableMakeVariables || !cppOptions.enableMakeVariables) {
       return;
     }
 
@@ -1169,8 +1120,7 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
   public Map<String, Object> lateBoundOptionDefaults() {
     // --compiler initially defaults to null because its *actual* default isn't known
     // until it's read from the CROSSTOOL. Feed the CROSSTOOL defaults in here.
-    return ImmutableMap.<String, Object>of(
-        "compiler", cppToolchainInfo.getCompiler());
+    return ImmutableMap.of("compiler", cppToolchainInfo.getCompiler());
   }
 
   public String getFdoInstrument() {
@@ -1201,13 +1151,33 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
     return cppOptions.useLLVMCoverageMapFormat;
   }
 
-  /** Returns true if the deprecated CcDynamicLibrariesForRuntime class should be used */
-  public boolean enableCcDynamicLibrariesForRuntime() {
-    return cppOptions.enableCcDynamicLibrariesForRuntime;
+  public boolean disableLegacyCrosstoolFields() {
+    return cppOptions.disableLegacyCrosstoolFields;
+  }
+
+  public boolean disableCompilationModeFlags() {
+    return cppOptions.disableCompilationModeFlags;
+  }
+
+  public boolean disableLinkingModeFlags() {
+    return cppOptions.disableLinkingModeFlags;
+  }
+
+  public boolean disableMakeVariables() {
+    return cppOptions.disableMakeVariables || !cppOptions.enableMakeVariables;
+  }
+
+  public boolean enableLinkoptsInUserLinkFlags() {
+    return cppOptions.enableLinkoptsInUserLinkFlags;
+  }
+
+  public boolean disableEmittingStaticLibgcc() {
+    return cppOptions.disableEmittingStaticLibgcc;
   }
 
   private void checkForToolchainSkylarkApiAvailability() throws EvalException {
-    if (!cppOptions.enableLegacyToolchainSkylarkApi) {
+    if (cppOptions.disableLegacyToolchainSkylarkApi
+        || !cppOptions.enableLegacyToolchainSkylarkApi) {
       throw new EvalException(null, "Information about the C++ toolchain API is not accessible "
           + "anymore through ctx.fragments.cpp . Use CcToolchainInfo instead.");
     }
@@ -1239,5 +1209,16 @@ public final class CppConfiguration extends BuildConfiguration.Fragment
           "The built-in sysroot '" + builtInSysroot + "' is not normalized.");
     }
     return PathFragment.create(builtInSysroot);
+  }
+
+  boolean enableCcToolchainConfigInfoFromSkylark() {
+    return cppOptions.enableCcToolchainConfigInfoFromSkylark;
+  }
+
+  /**
+   * Returns the value of the libc top-level directory (--grte_top) as specified on the command line
+   */
+  public Label getLibcTopLabel() {
+    return cppOptions.libcTopLabel;
   }
 }

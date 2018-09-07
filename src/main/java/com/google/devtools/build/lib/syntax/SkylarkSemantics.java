@@ -57,6 +57,8 @@ public abstract class SkylarkSemantics {
 
   public abstract boolean incompatibleDisableObjcProviderResources();
 
+  public abstract boolean incompatibleDisallowConflictingProviders();
+
   public abstract boolean incompatibleDisallowDataTransition();
 
   public abstract boolean incompatibleDisallowDictPlus();
@@ -68,6 +70,8 @@ public abstract class SkylarkSemantics {
   public abstract boolean incompatibleDisallowOldStyleArgsAdd();
 
   public abstract boolean incompatibleDisallowSlashOperator();
+
+  public abstract boolean incompatibleExpandDirectories();
 
   public abstract boolean incompatibleGenerateJavaCommonSourceJar();
 
@@ -82,6 +86,8 @@ public abstract class SkylarkSemantics {
   public abstract boolean incompatibleRemoveNativeGitRepository();
 
   public abstract boolean incompatibleRemoveNativeHttpArchive();
+
+  public abstract boolean incompatibleStaticNameResolution();
 
   public abstract boolean incompatibleStringIsNotIterable();
 
@@ -110,19 +116,22 @@ public abstract class SkylarkSemantics {
           .incompatibleDepsetUnion(false)
           .incompatibleDisableDeprecatedAttrParams(false)
           .incompatibleDisableObjcProviderResources(false)
+          .incompatibleDisallowConflictingProviders(false)
           .incompatibleDisallowDataTransition(false)
           .incompatibleDisallowDictPlus(false)
           .incompatibleDisallowFileType(false)
           .incompatibleDisallowLegacyJavaInfo(false)
           .incompatibleDisallowOldStyleArgsAdd(false)
           .incompatibleDisallowSlashOperator(false)
+          .incompatibleExpandDirectories(false)
           .incompatibleGenerateJavaCommonSourceJar(false)
           .incompatibleNewActionsApi(false)
           .incompatibleNoSupportToolsInActionInputs(false)
-          .incompatiblePackageNameIsAFunction(false)
+          .incompatiblePackageNameIsAFunction(true)
           .incompatibleRangeType(false)
           .incompatibleRemoveNativeGitRepository(false)
           .incompatibleRemoveNativeHttpArchive(false)
+          .incompatibleStaticNameResolution(false)
           .incompatibleStringIsNotIterable(false)
           .internalSkylarkFlagTestCanary(false)
           .build();
@@ -148,6 +157,8 @@ public abstract class SkylarkSemantics {
 
     public abstract Builder incompatibleDisableObjcProviderResources(boolean value);
 
+    public abstract Builder incompatibleDisallowConflictingProviders(boolean value);
+
     public abstract Builder incompatibleDisallowDataTransition(boolean value);
 
     public abstract Builder incompatibleDisallowDictPlus(boolean value);
@@ -159,6 +170,8 @@ public abstract class SkylarkSemantics {
     public abstract Builder incompatibleDisallowOldStyleArgsAdd(boolean value);
 
     public abstract Builder incompatibleDisallowSlashOperator(boolean value);
+
+    public abstract Builder incompatibleExpandDirectories(boolean value);
 
     public abstract Builder incompatibleGenerateJavaCommonSourceJar(boolean value);
 
@@ -173,6 +186,8 @@ public abstract class SkylarkSemantics {
     public abstract Builder incompatibleRemoveNativeGitRepository(boolean value);
 
     public abstract Builder incompatibleRemoveNativeHttpArchive(boolean value);
+
+    public abstract Builder incompatibleStaticNameResolution(boolean value);
 
     public abstract Builder incompatibleStringIsNotIterable(boolean value);
 

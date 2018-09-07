@@ -48,7 +48,7 @@ import com.google.devtools.build.lib.actions.ActionStatusMessage;
 import com.google.devtools.build.lib.actions.Actions;
 import com.google.devtools.build.lib.actions.AlreadyReportedActionExecutionException;
 import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
+import com.google.devtools.build.lib.actions.Artifact.ArtifactExpanderImpl;
 import com.google.devtools.build.lib.actions.Artifact.OwnerlessArtifactWrapper;
 import com.google.devtools.build.lib.actions.ArtifactPathResolver;
 import com.google.devtools.build.lib.actions.ArtifactPrefixConflictException;
@@ -67,6 +67,7 @@ import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit.ActionCached
 import com.google.devtools.build.lib.actions.PackageRootResolver;
 import com.google.devtools.build.lib.actions.TargetOutOfDateException;
 import com.google.devtools.build.lib.actions.cache.MetadataHandler;
+import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ExecutorUtil;
 import com.google.devtools.build.lib.concurrent.Sharder;
@@ -79,9 +80,9 @@ import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
 import com.google.devtools.build.lib.profiler.SilentCloseable;
 import com.google.devtools.build.lib.rules.cpp.IncludeScannable;
+import com.google.devtools.build.lib.runtime.KeepGoingOption;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.io.FileOutErr;
-import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.OutputService;
 import com.google.devtools.build.lib.vfs.Path;
@@ -89,6 +90,7 @@ import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
 import com.google.devtools.build.lib.vfs.Symlinks;
 import com.google.devtools.build.skyframe.SkyFunction.Environment;
+import com.google.devtools.common.options.OptionsProvider;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Collection;
@@ -130,7 +132,6 @@ public final class SkyframeActionExecutor {
   private ActionLogBufferPathGenerator actionLogBufferPathGenerator;
   private ActionCacheChecker actionCacheChecker;
   private final Profiler profiler = Profiler.instance();
-  private boolean explain;
 
   // We keep track of actions already executed this build in order to avoid executing a shared
   // action twice. Note that we may still unnecessarily re-execute the action on a subsequent
@@ -153,7 +154,7 @@ public final class SkyframeActionExecutor {
   // thrown when execution of the action is requested. This field is set during each call to
   // findAndStoreArtifactConflicts, and is preserved across builds otherwise.
   private ImmutableMap<ActionAnalysisMetadata, ConflictException> badActionMap = ImmutableMap.of();
-  private boolean keepGoing;
+  private OptionsProvider options;
   private boolean hadExecutionError;
   private MetadataProvider perBuildFileCache;
   private ActionInputPrefetcher actionInputPrefetcher;
@@ -163,6 +164,7 @@ public final class SkyframeActionExecutor {
 
   private final AtomicReference<ActionExecutionStatusReporter> statusReporterRef;
   private OutputService outputService;
+  private boolean finalizeActions;
   private final Supplier<ImmutableList<Root>> sourceRootSupplier;
 
   SkyframeActionExecutor(
@@ -341,18 +343,23 @@ public final class SkyframeActionExecutor {
     };
   }
 
-  void prepareForExecution(Reporter reporter, Executor executor, boolean keepGoing,
-      boolean explain, ActionCacheChecker actionCacheChecker, OutputService outputService) {
+  void prepareForExecution(
+      Reporter reporter,
+      Executor executor,
+      OptionsProvider options,
+      ActionCacheChecker actionCacheChecker,
+      OutputService outputService) {
     this.reporter = Preconditions.checkNotNull(reporter);
     this.executorEngine = Preconditions.checkNotNull(executor);
 
     // Start with a new map each build so there's no issue with internal resizing.
     this.buildActionMap = Maps.newConcurrentMap();
-    this.keepGoing = keepGoing;
     this.hadExecutionError = false;
     this.actionCacheChecker = Preconditions.checkNotNull(actionCacheChecker);
     // Don't cache possibly stale data from the last build.
-    this.explain = explain;
+    this.options = options;
+    // Cache the finalizeActions value for performance, since we consult it on every action.
+    this.finalizeActions = options.getOptions(BuildRequestOptions.class).finalizeActions;
     this.outputService = outputService;
   }
 
@@ -362,7 +369,8 @@ public final class SkyframeActionExecutor {
   }
 
   public void setClientEnv(Map<String, String> clientEnv) {
-    this.clientEnv = clientEnv;
+    // Copy once here, instead of on every construction of ActionExecutionContext.
+    this.clientEnv = ImmutableMap.copyOf(clientEnv);
   }
 
   boolean usesActionFileSystem() {
@@ -373,7 +381,7 @@ public final class SkyframeActionExecutor {
     return executorEngine.getExecRoot();
   }
 
-  /** REQUIRES: {@link usesActionFileSystem} is true */
+  /** REQUIRES: {@link #usesActionFileSystem()} is true */
   FileSystem createActionFileSystem(
       String relativeOutputPath,
       ActionInputMap inputArtifactData,
@@ -388,8 +396,12 @@ public final class SkyframeActionExecutor {
   }
 
   void updateActionFileSystemContext(
-      FileSystem actionFileSystem, Environment env, MetadataConsumer consumer) {
-    outputService.updateActionFileSystemContext(actionFileSystem, env, consumer);
+      FileSystem actionFileSystem,
+      Environment env,
+      MetadataConsumer consumer,
+      ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> filesets)
+      throws IOException {
+    outputService.updateActionFileSystemContext(actionFileSystem, env, consumer, filesets);
   }
 
   void executionOver() {
@@ -491,24 +503,6 @@ public final class SkyframeActionExecutor {
     }
   }
 
-  private static class ArtifactExpanderImpl implements ArtifactExpander {
-    private final Map<Artifact, Collection<Artifact>> expandedInputs;
-
-    private ArtifactExpanderImpl(Map<Artifact, Collection<Artifact>> expandedInputMiddlemen) {
-      this.expandedInputs = expandedInputMiddlemen;
-    }
-
-    @Override
-    public void expand(Artifact artifact, Collection<? super Artifact> output) {
-      Preconditions.checkState(artifact.isMiddlemanArtifact() || artifact.isTreeArtifact(),
-          artifact);
-      Collection<Artifact> result = expandedInputs.get(artifact);
-      if (result != null) {
-        output.addAll(result);
-      }
-    }
-  }
-
   /**
    * Returns an ActionExecutionContext suitable for executing a particular action. The caller should
    * pass the returned context to {@link #executeAction}, and any other method that needs to execute
@@ -518,8 +512,10 @@ public final class SkyframeActionExecutor {
       MetadataProvider graphFileCache,
       MetadataHandler metadataHandler,
       Map<Artifact, Collection<Artifact>> expandedInputs,
-      ImmutableMap<PathFragment, ImmutableList<FilesetOutputSymlink>> inputFilesetMappings,
-      @Nullable FileSystem actionFileSystem) {
+      Map<Artifact, ImmutableList<FilesetOutputSymlink>> expandedFilesets,
+      ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> topLevelFilesets,
+      @Nullable FileSystem actionFileSystem,
+      @Nullable Object skyframeDepsResult) {
     FileOutErr fileOutErr = actionLogBufferPathGenerator.generate(
         ArtifactPathResolver.createPathResolver(actionFileSystem, executorEngine.getExecRoot()));
     return new ActionExecutionContext(
@@ -530,9 +526,10 @@ public final class SkyframeActionExecutor {
         metadataHandler,
         fileOutErr,
         clientEnv,
-        inputFilesetMappings,
-        new ArtifactExpanderImpl(expandedInputs),
-        actionFileSystem);
+        topLevelFilesets,
+        new ArtifactExpanderImpl(expandedInputs, expandedFilesets),
+        actionFileSystem,
+        skyframeDepsResult);
   }
 
   /**
@@ -555,7 +552,9 @@ public final class SkyframeActionExecutor {
               action,
               resolvedCacheArtifacts,
               clientEnv,
-              explain ? reporter : null,
+              options.getOptions(BuildRequestOptions.class).explanationPath != null
+                  ? reporter
+                  : null,
               metadataHandler);
     }
     if (token == null) {
@@ -703,7 +702,7 @@ public final class SkyframeActionExecutor {
    * </ul>
    */
   private boolean isBuilderAborting() {
-    return hadExecutionError && !keepGoing;
+    return hadExecutionError && !options.getOptions(KeepGoingOption.class).keepGoing;
   }
 
   void configure(MetadataProvider fileCache, ActionInputPrefetcher actionInputPrefetcher) {
@@ -1029,7 +1028,7 @@ public final class SkyframeActionExecutor {
         }
       }
 
-      if (outputService != null) {
+      if (outputService != null && finalizeActions) {
         try {
           outputService.finalizeAction(action, metadataHandler);
         } catch (EnvironmentalExecException | IOException e) {
@@ -1168,7 +1167,7 @@ public final class SkyframeActionExecutor {
    */
   private void printError(String message, Action action, FileOutErr actionOutput) {
     synchronized (reporter) {
-      if (keepGoing) {
+      if (options.getOptions(KeepGoingOption.class).keepGoing) {
         message = "Couldn't " + describeAction(action) + ": " + message;
       }
       Event event = Event.error(action.getOwner().getLocation(), message);
@@ -1210,20 +1209,20 @@ public final class SkyframeActionExecutor {
    * @param outErrBuffer The OutErr that recorded the actions output
    */
   private void dumpRecordedOutErr(Event prefixEvent, FileOutErr outErrBuffer) {
-    // Synchronize this on the reporter, so that the output from multiple
-    // actions will not be interleaved.
-    synchronized (reporter) {
-      // Only print the output if we're not winding down.
-      if (isBuilderAborting()) {
-        return;
-      }
+    // Only print the output if we're not winding down.
+    if (isBuilderAborting()) {
+      return;
+    }
+    if (outErrBuffer != null && outErrBuffer.hasRecordedOutput()) {
+      // Bind the output to the prefix event.
+      // Note: here we temporarily (until the event is handled by the UI) read all
+      // output into memory; as the output of regular actions (as opposed to test runs) usually is
+      // short, so this should not be a problem. If it does turn out to be a problem, we have to
+      // pass the outErrbuffer instead.
+      reporter.handle(
+          prefixEvent.withStdoutStderr(outErrBuffer.outAsLatin1(), outErrBuffer.errAsLatin1()));
+    } else {
       reporter.handle(prefixEvent);
-
-      if (outErrBuffer != null && outErrBuffer.hasRecordedOutput()) {
-        OutErr outErr = this.reporter.getOutErr();
-        outErrBuffer.dumpOutAsLatin1(outErr.getOutputStream());
-        outErrBuffer.dumpErrAsLatin1(outErr.getErrorStream());
-      }
     }
   }
 

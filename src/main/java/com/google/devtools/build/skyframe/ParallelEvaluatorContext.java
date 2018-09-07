@@ -13,7 +13,6 @@
 // limitations under the License.
 package com.google.devtools.build.skyframe;
 
-import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
@@ -25,7 +24,6 @@ import com.google.devtools.build.lib.events.ExtendedEventHandler.Postable;
 import com.google.devtools.build.skyframe.MemoizingEvaluator.EmittedEventState;
 import com.google.devtools.build.skyframe.QueryableGraph.Reason;
 import java.util.Map;
-import java.util.concurrent.ForkJoinPool;
 import javax.annotation.Nullable;
 
 /**
@@ -63,64 +61,19 @@ class ParallelEvaluatorContext {
    */
   private final Supplier<NodeEntryVisitor> visitorSupplier;
 
-  ParallelEvaluatorContext(
-      QueryableGraph graph,
-      Version graphVersion,
-      ImmutableMap<SkyFunctionName, ? extends SkyFunction> skyFunctions,
-      ExtendedEventHandler reporter,
-      EmittedEventState emittedEventState,
-      boolean keepGoing,
-      final DirtyTrackingProgressReceiver progressReceiver,
-      EventFilter storedEventFilter,
-      ErrorInfoManager errorInfoManager,
-      final Function<SkyKey, Runnable> runnableMaker,
-      GraphInconsistencyReceiver graphInconsistencyReceiver,
-      final int threadCount) {
-    this(
-        graph,
-        graphVersion,
-        skyFunctions,
-        reporter,
-        emittedEventState,
-        keepGoing,
-        progressReceiver,
-        storedEventFilter,
-        errorInfoManager,
-        graphInconsistencyReceiver,
-        () -> new NodeEntryVisitor(threadCount, progressReceiver, runnableMaker),
-        EvaluationVersionBehavior.MAX_CHILD_VERSIONS);
+  /**
+   * Returns a {@link Runnable} given a {@code key} to evaluate and an {@code evaluationPriority}
+   * indicating whether it should be scheduled for evaluation soon (higher is better). The returned
+   * {@link Runnable} is a {@link ComparableRunnable} so that it can be ordered by {@code
+   * evaluationPriority} in a priority queue if needed.
+   */
+  interface RunnableMaker {
+    ComparableRunnable make(SkyKey key, int evaluationPriority);
   }
 
-  ParallelEvaluatorContext(
-      QueryableGraph graph,
-      Version graphVersion,
-      ImmutableMap<SkyFunctionName, ? extends SkyFunction> skyFunctions,
-      ExtendedEventHandler reporter,
-      EmittedEventState emittedEventState,
-      boolean keepGoing,
-      final DirtyTrackingProgressReceiver progressReceiver,
-      EventFilter storedEventFilter,
-      ErrorInfoManager errorInfoManager,
-      final Function<SkyKey, Runnable> runnableMaker,
-      GraphInconsistencyReceiver graphInconsistencyReceiver,
-      final ForkJoinPool forkJoinPool,
-      EvaluationVersionBehavior evaluationVersionBehavior) {
-    this(
-        graph,
-        graphVersion,
-        skyFunctions,
-        reporter,
-        emittedEventState,
-        keepGoing,
-        progressReceiver,
-        storedEventFilter,
-        errorInfoManager,
-        graphInconsistencyReceiver,
-        () -> new NodeEntryVisitor(forkJoinPool, progressReceiver, runnableMaker),
-        evaluationVersionBehavior);
-  }
+  interface ComparableRunnable extends Runnable, Comparable<ComparableRunnable> {}
 
-  private ParallelEvaluatorContext(
+  public ParallelEvaluatorContext(
       QueryableGraph graph,
       Version graphVersion,
       ImmutableMap<SkyFunctionName, ? extends SkyFunction> skyFunctions,
@@ -174,7 +127,7 @@ class ParallelEvaluatorContext {
         for (SkyKey key : keys) {
           NodeEntry entry = Preconditions.checkNotNull(batch.get(key), key);
           if (entry.signalDep(version)) {
-            getVisitor().enqueueEvaluation(key);
+            getVisitor().enqueueEvaluation(key, Integer.MAX_VALUE);
           }
         }
         return;

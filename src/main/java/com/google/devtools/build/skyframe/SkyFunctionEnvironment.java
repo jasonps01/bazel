@@ -17,6 +17,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -103,9 +104,10 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
   private final Map<SkyKey, SkyValue> newlyRequestedDepsValues = new HashMap<>();
 
   /**
-   * Keys of dependencies registered via {@link #registerDependencies}.
+   * Keys of dependencies registered via {@link #registerDependencies} if not using {@link
+   * EvaluationVersionBehavior#MAX_CHILD_VERSIONS}.
    *
-   * <p>The {@link #registerDependencies} method is hacky. Deps registered through it will not have
+   * <p>The {@link #registerDependencies} method is hacky. Deps registered through it may not have
    * entries in {@link #newlyRequestedDepsValues}, but they are expected to be done. This set tracks
    * those keys so that they aren't removed when {@link #removeUndoneNewlyRequestedDeps} is called.
    */
@@ -264,9 +266,10 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
     Preconditions.checkState(building, skyKey);
   }
 
-  NestedSet<TaggedEvents> buildEvents(NodeEntry entry, boolean expectDoneDeps)
+  NestedSet<TaggedEvents> buildAndReportEvents(NodeEntry entry, boolean expectDoneDeps)
       throws InterruptedException {
-    if (!evaluatorContext.getStoredEventFilter().storeEventsAndPosts()) {
+    EventFilter eventFilter = evaluatorContext.getStoredEventFilter();
+    if (!eventFilter.storeEventsAndPosts()) {
       return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
     }
     NestedSetBuilder<TaggedEvents> eventBuilder = NestedSetBuilder.stableOrder();
@@ -277,16 +280,24 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
 
     GroupedList<SkyKey> depKeys = entry.getTemporaryDirectDeps();
     Collection<SkyValue> deps =
-        getDepValuesForDoneNodeFromErrorOrDepsOrGraph(depKeys, expectDoneDeps);
+        getDepValuesForDoneNodeFromErrorOrDepsOrGraph(
+            Iterables.filter(
+                depKeys.getAllElementsAsIterable(),
+                eventFilter.depEdgeFilterForEventsAndPosts(skyKey)),
+            expectDoneDeps,
+            depKeys.numElements());
     for (SkyValue value : deps) {
       eventBuilder.addTransitive(ValueWithMetadata.getEvents(value));
     }
-    return eventBuilder.build();
+    NestedSet<TaggedEvents> result = eventBuilder.build();
+    evaluatorContext.getReplayingNestedSetEventVisitor().visit(result);
+    return result;
   }
 
-  NestedSet<Postable> buildPosts(NodeEntry entry, boolean expectDoneDeps)
+  NestedSet<Postable> buildAndReportPostables(NodeEntry entry, boolean expectDoneDeps)
       throws InterruptedException {
-    if (!evaluatorContext.getStoredEventFilter().storeEventsAndPosts()) {
+    EventFilter eventFilter = evaluatorContext.getStoredEventFilter();
+    if (!eventFilter.storeEventsAndPosts()) {
       return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
     }
     NestedSetBuilder<Postable> postBuilder = NestedSetBuilder.stableOrder();
@@ -294,11 +305,18 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
 
     GroupedList<SkyKey> depKeys = entry.getTemporaryDirectDeps();
     Collection<SkyValue> deps =
-        getDepValuesForDoneNodeFromErrorOrDepsOrGraph(depKeys, expectDoneDeps);
+        getDepValuesForDoneNodeFromErrorOrDepsOrGraph(
+            Iterables.filter(
+                depKeys.getAllElementsAsIterable(),
+                eventFilter.depEdgeFilterForEventsAndPosts(skyKey)),
+            expectDoneDeps,
+            depKeys.numElements());
     for (SkyValue value : deps) {
       postBuilder.addTransitive(ValueWithMetadata.getPosts(value));
     }
-    return postBuilder.build();
+    NestedSet<Postable> result = postBuilder.build();
+    evaluatorContext.getReplayingNestedSetPostableVisitor().visit(result);
+    return result;
   }
 
   void setValue(SkyValue newValue) {
@@ -415,8 +433,7 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
    * <p>If {@code assertDone}, this asserts that all deps in {@code depKeys} are done.
    */
   private Collection<SkyValue> getDepValuesForDoneNodeFromErrorOrDepsOrGraph(
-      GroupedList<SkyKey> depKeys, boolean assertDone) throws InterruptedException {
-    int keySize = depKeys.numElements();
+      Iterable<SkyKey> depKeys, boolean assertDone, int keySize) throws InterruptedException {
     List<SkyValue> result = new ArrayList<>(keySize);
     // depKeys may contain keys in newlyRegisteredDeps whose values have not yet been retrieved from
     // the graph during this environment's lifetime.
@@ -424,7 +441,7 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
     ArrayList<SkyKey> missingKeys =
         expectedMissingKeys > 0 ? new ArrayList<>(expectedMissingKeys) : null;
 
-    for (SkyKey key : depKeys.getAllElementsAsIterable()) {
+    for (SkyKey key : depKeys) {
       SkyValue value = maybeGetValueFromErrorOrDeps(key);
       if (value == null) {
         if (key == ErrorTransienceValue.KEY) {
@@ -556,12 +573,6 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
 
       if (!previouslyRequestedDepsValues.containsKey(depKey)) {
         newlyRequestedDeps.add(depKey);
-        evaluatorContext
-            .getReplayingNestedSetPostableVisitor()
-            .visit(ValueWithMetadata.getPosts(depValue));
-        evaluatorContext
-            .getReplayingNestedSetEventVisitor()
-            .visit(ValueWithMetadata.getEvents(depValue));
       }
     }
     newlyRequestedDeps.endGroup();
@@ -708,8 +719,8 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
     // (2) value == null && enqueueParents happens for values that are found to have errors
     // during a --keep_going build.
 
-    NestedSet<Postable> posts = buildPosts(primaryEntry, /*expectDoneDeps=*/ true);
-    NestedSet<TaggedEvents> events = buildEvents(primaryEntry, /*expectDoneDeps=*/ true);
+    NestedSet<Postable> posts = buildAndReportPostables(primaryEntry, /*expectDoneDeps=*/ true);
+    NestedSet<TaggedEvents> events = buildAndReportEvents(primaryEntry, /*expectDoneDeps=*/ true);
 
     SkyValue valueWithMetadata;
     if (value == null) {
@@ -780,8 +791,6 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
     evaluatorContext.signalValuesAndEnqueueIfReady(
         skyKey, reverseDeps, currentVersion, enqueueParents);
 
-    evaluatorContext.getReplayingNestedSetPostableVisitor().visit(posts);
-    evaluatorContext.getReplayingNestedSetEventVisitor().visit(events);
     return enqueueParents == EnqueueParentBehavior.ENQUEUE ? null : reverseDeps;
   }
 
@@ -807,15 +816,28 @@ class SkyFunctionEnvironment extends AbstractSkyFunctionEnvironment {
   }
 
   @Override
-  public void registerDependencies(Iterable<SkyKey> keys) {
+  public void registerDependencies(Iterable<SkyKey> keys) throws InterruptedException {
+    if (EvaluationVersionBehavior.MAX_CHILD_VERSIONS.equals(
+        evaluatorContext.getEvaluationVersionBehavior())) {
+      // Need versions when doing MAX_CHILD_VERSIONS, so can't use optimization. To use the
+      // optimization, the caller would have to know the versions of the passed-in keys. Extensions
+      // of the SkyFunction.Environment interface to make that possible could happen.
+      Map<SkyKey, SkyValue> checkSizeMap = getValues(keys);
+      ImmutableSet<SkyKey> keysSet = ImmutableSet.copyOf(keys);
+      if (checkSizeMap.size() != keysSet.size()) {
+        throw new IllegalStateException(
+            "Missing keys when checking dependencies for "
+                + skyKey
+                + ": "
+                + Sets.difference(keysSet, checkSizeMap.keySet()));
+      }
+      return;
+    }
     newlyRequestedDeps.startGroup();
     for (SkyKey key : keys) {
       if (!previouslyRequestedDepsValues.containsKey(key)) {
         newlyRequestedDeps.add(key);
         newlyRegisteredDeps.add(key);
-        // Be conservative with these value-not-retrieved deps: assume they have the highest
-        // possible version.
-        maxChildVersion = evaluatorContext.getGraphVersion();
       }
     }
     newlyRequestedDeps.endGroup();

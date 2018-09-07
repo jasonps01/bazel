@@ -257,6 +257,7 @@ public abstract class ValueWithMetadata implements SkyValue {
     }
   }
 
+  @Nullable
   public static SkyValue justValue(SkyValue value) {
     if (value instanceof ValueWithMetadata) {
       return ((ValueWithMetadata) value).getValue();
@@ -279,7 +280,8 @@ public abstract class ValueWithMetadata implements SkyValue {
     return null;
   }
 
-  static NestedSet<TaggedEvents> getEvents(SkyValue value) {
+  @VisibleForTesting
+  public static NestedSet<TaggedEvents> getEvents(SkyValue value) {
     if (value instanceof ValueWithMetadata) {
       return ((ValueWithMetadata) value).getTransitiveEvents();
     }

@@ -30,10 +30,10 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.BuiltinProvider;
-import com.google.devtools.build.lib.packages.NativeInfo;
+import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.NativeProvider.WithLegacySkylarkName;
-import com.google.devtools.build.lib.rules.cpp.CcLinkParamsStore;
 import com.google.devtools.build.lib.rules.cpp.CcLinkingInfo;
 import com.google.devtools.build.lib.rules.cpp.CppModuleMap;
 import com.google.devtools.build.lib.rules.cpp.LinkerInputs;
@@ -52,7 +52,7 @@ import java.util.Map;
  * deps that are needed for building Objective-C rules.
  */
 @Immutable
-public final class ObjcProvider extends NativeInfo implements ObjcProviderApi<Artifact> {
+public final class ObjcProvider extends Info implements ObjcProviderApi<Artifact> {
 
   /** Skylark name for the ObjcProvider. */
   public static final String SKYLARK_NAME = "objc";
@@ -668,7 +668,7 @@ public final class ObjcProvider extends NativeInfo implements ObjcProviderApi<Ar
       ImmutableMap<Key<?>, NestedSet<?>> items,
       ImmutableMap<Key<?>, NestedSet<?>> nonPropagatedItems,
       ImmutableMap<Key<?>, NestedSet<?>> strictDependencyItems) {
-    super(SKYLARK_CONSTRUCTOR);
+    super(SKYLARK_CONSTRUCTOR, Location.BUILTIN);
     this.semantics = semantics;
     this.items = Preconditions.checkNotNull(items);
     this.nonPropagatedItems = Preconditions.checkNotNull(nonPropagatedItems);
@@ -779,16 +779,12 @@ public final class ObjcProvider extends NativeInfo implements ObjcProviderApi<Ar
     // three possible locations (and may be duplicated!):
     // 1. ObjcProvider.LIBRARY
     // 2. ObjcProvider.CC_LIBRARY
-    // 3. CcLinkParamsStore->LibraryToLink->getArtifact()
+    // 3. CcLinkingInfo->LibraryToLink->getArtifact()
     // TODO(cpeyser): Clean up objc-cc interop.
     HashSet<PathFragment> avoidLibrariesSet = new HashSet<>();
     for (CcLinkingInfo linkProvider : avoidCcProviders) {
-      CcLinkParamsStore ccLinkParamsStore = linkProvider.getCcLinkParamsStore();
-      if (ccLinkParamsStore == null) {
-        continue;
-      }
       NestedSet<LibraryToLink> librariesToLink =
-          ccLinkParamsStore.getCcLinkParams(true, false).getLibraries();
+          linkProvider.getStaticModeParamsForExecutable().getLibraries();
       for (LibraryToLink libraryToLink : librariesToLink.toList()) {
         avoidLibrariesSet.add(libraryToLink.getArtifact().getRunfilesPath());
       }

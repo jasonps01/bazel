@@ -57,6 +57,7 @@ import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.
 import com.google.devtools.build.lib.packages.RuleErrorConsumer;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams.Linkstamp;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
+import com.google.devtools.build.lib.rules.cpp.FdoProvider.FdoMode;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.shell.ShellUtils;
 import com.google.devtools.build.lib.syntax.Type;
@@ -246,25 +247,6 @@ public class CppHelper {
     }
   }
 
-  /**
-   * Return {@link FdoSupportProvider} using default cc_toolchain attribute name.
-   *
-   * <p>Be careful to provide explicit attribute name if the rule doesn't store cc_toolchain under
-   * the default name.
-   */
-  @Nullable
-  public static FdoSupportProvider getFdoSupportUsingDefaultCcToolchainAttribute(
-      RuleContext ruleContext) {
-    return getFdoSupport(ruleContext, CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME);
-  }
-
-  @Nullable public static FdoSupportProvider getFdoSupport(RuleContext ruleContext,
-      String ccToolchainAttribute) {
-    return ruleContext
-        .getPrerequisite(ccToolchainAttribute, Mode.TARGET)
-        .getProvider(FdoSupportProvider.class);
-  }
-
   public static NestedSet<Pair<String, String>> getCoverageEnvironmentIfNeeded(
       RuleContext ruleContext, CcToolchainProvider toolchain) {
     if (ruleContext.getConfiguration().isCodeCoverageEnabled()) {
@@ -415,26 +397,22 @@ public class CppHelper {
     final Function<TransitiveInfoCollection, Runfiles> runfilesForLinkingDynamically =
         input -> {
           CcLinkingInfo provider = input.get(CcLinkingInfo.PROVIDER);
-          CcLinkParamsStore ccLinkParamsStore =
-              provider == null ? null : provider.getCcLinkParamsStore();
-          return ccLinkParamsStore == null
+          return provider == null
               ? Runfiles.EMPTY
               : new Runfiles.Builder(ruleContext.getWorkspaceName())
                   .addTransitiveArtifacts(
-                      ccLinkParamsStore.get(false, false).getDynamicLibrariesForRuntime())
+                      provider.getDynamicModeParamsForExecutable().getDynamicLibrariesForRuntime())
                   .build();
         };
 
     final Function<TransitiveInfoCollection, Runfiles> runfilesForLinkingStatically =
         input -> {
           CcLinkingInfo provider = input.get(CcLinkingInfo.PROVIDER);
-          CcLinkParamsStore ccLinkParamsStore =
-              provider == null ? null : provider.getCcLinkParamsStore();
-          return ccLinkParamsStore == null
+          return provider == null
               ? Runfiles.EMPTY
               : new Runfiles.Builder(ruleContext.getWorkspaceName())
                   .addTransitiveArtifacts(
-                      ccLinkParamsStore.get(true, false).getDynamicLibrariesForRuntime())
+                      provider.getStaticModeParamsForExecutable().getDynamicLibrariesForRuntime())
                   .build();
         };
     return linkingStatically ? runfilesForLinkingStatically : runfilesForLinkingDynamically;
@@ -631,15 +609,15 @@ public class CppHelper {
   /**
    * Returns the FDO build subtype.
    */
-  public static String getFdoBuildStamp(RuleContext ruleContext, FdoSupport fdoSupport) {
+  public static String getFdoBuildStamp(RuleContext ruleContext, FdoProvider fdoProvider) {
     CppConfiguration cppConfiguration = ruleContext.getFragment(CppConfiguration.class);
-    if (fdoSupport.isAutoFdoEnabled()) {
+    if (fdoProvider.getFdoMode() == FdoMode.AUTO_FDO) {
       return "AFDO";
     }
     if (cppConfiguration.isFdo()) {
       return "FDO";
     }
-    if (fdoSupport.isXBinaryFdoEnabled()) {
+    if (fdoProvider.getFdoMode() == FdoMode.XBINARY_FDO) {
       return "XFDO";
     }
     return null;
@@ -702,18 +680,7 @@ public class CppHelper {
 
   public static void maybeAddStaticLinkMarkerProvider(RuleConfiguredTargetBuilder builder,
       RuleContext ruleContext) {
-    boolean staticallyLinked = false;
-    CppConfiguration cppConfiguration = ruleContext.getFragment(CppConfiguration.class);
     if (ruleContext.getFeatures().contains("fully_static_link")) {
-      staticallyLinked = true;
-    } else if (cppConfiguration.hasStaticLinkOption()) {
-      staticallyLinked = true;
-    } else if (ruleContext.attributes().has("linkopts", Type.STRING_LIST)
-        && ruleContext.attributes().get("linkopts", Type.STRING_LIST).contains("-static")) {
-      staticallyLinked = true;
-    }
-
-    if (staticallyLinked) {
       builder.add(StaticallyLinkedMarkerProvider.class, new StaticallyLinkedMarkerProvider(true));
     }
   }

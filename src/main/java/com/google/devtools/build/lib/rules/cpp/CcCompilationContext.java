@@ -75,6 +75,8 @@ public final class CcCompilationContext implements CcCompilationContextApi {
   // Derived from depsContexts.
   private final ImmutableSet<Artifact> compilationPrerequisites;
 
+  private final CppConfiguration.HeadersCheckingMode headersCheckingMode;
+
   @AutoCodec.Instantiator
   @VisibleForSerialization
   CcCompilationContext(
@@ -90,7 +92,8 @@ public final class CcCompilationContext implements CcCompilationContextApi {
       ImmutableList<Artifact> directModuleMaps,
       CppModuleMap cppModuleMap,
       @Nullable CppModuleMap verificationModuleMap,
-      boolean propagateModuleMapAsActionInput) {
+      boolean propagateModuleMapAsActionInput,
+      CppConfiguration.HeadersCheckingMode headersCheckingMode) {
     Preconditions.checkNotNull(commandLineCcCompilationContext);
     this.commandLineCcCompilationContext = commandLineCcCompilationContext;
     this.declaredIncludeDirs = declaredIncludeDirs;
@@ -105,6 +108,7 @@ public final class CcCompilationContext implements CcCompilationContextApi {
     this.verificationModuleMap = verificationModuleMap;
     this.compilationPrerequisites = compilationPrerequisites;
     this.propagateModuleMapAsActionInput = propagateModuleMapAsActionInput;
+    this.headersCheckingMode = headersCheckingMode;
   }
 
   /**
@@ -205,8 +209,12 @@ public final class CcCompilationContext implements CcCompilationContextApi {
         }
       }
     }
-    modularHeaders.removeAll(headerInfo.modularHeaders);
-    modularHeaders.removeAll(headerInfo.textualHeaders);
+    for (Artifact a : headerInfo.modularHeaders) {
+      modularHeaders.remove(a);
+    }
+    for (Artifact a : headerInfo.textualHeaders) {
+      modularHeaders.remove(a);
+    }
     return new IncludeScanningHeaderData(
         Collections.unmodifiableMap(pathToLegalOutputArtifact),
         Collections.unmodifiableSet(modularHeaders));
@@ -294,7 +302,8 @@ public final class CcCompilationContext implements CcCompilationContextApi {
         ccCompilationContext.directModuleMaps,
         ccCompilationContext.cppModuleMap,
         ccCompilationContext.verificationModuleMap,
-        ccCompilationContext.propagateModuleMapAsActionInput);
+        ccCompilationContext.propagateModuleMapAsActionInput,
+        ccCompilationContext.headersCheckingMode);
   }
 
   /** @return the C++ module map of the owner. */
@@ -305,6 +314,10 @@ public final class CcCompilationContext implements CcCompilationContextApi {
   /** @return the C++ module map of the owner. */
   public CppModuleMap getVerificationModuleMap() {
     return verificationModuleMap;
+  }
+
+  public CppConfiguration.HeadersCheckingMode getHeadersCheckingMode() {
+    return headersCheckingMode;
   }
 
   /**
@@ -354,6 +367,8 @@ public final class CcCompilationContext implements CcCompilationContextApi {
     private CppModuleMap cppModuleMap;
     private CppModuleMap verificationModuleMap;
     private boolean propagateModuleMapAsActionInput = true;
+    private CppConfiguration.HeadersCheckingMode headersCheckingMode =
+        CppConfiguration.HeadersCheckingMode.STRICT;
 
     /** The rule that owns the context */
     private final RuleContext ruleContext;
@@ -565,6 +580,12 @@ public final class CcCompilationContext implements CcCompilationContextApi {
       return this;
     }
 
+    public Builder setHeadersCheckingMode(
+        CppConfiguration.HeadersCheckingMode headersCheckingMode) {
+      this.headersCheckingMode = headersCheckingMode;
+      return this;
+    }
+
     /** Builds the {@link CcCompilationContext}. */
     public CcCompilationContext build() {
       return build(
@@ -600,7 +621,8 @@ public final class CcCompilationContext implements CcCompilationContextApi {
           ImmutableList.copyOf(directModuleMaps),
           cppModuleMap,
           verificationModuleMap,
-          propagateModuleMapAsActionInput);
+          propagateModuleMapAsActionInput,
+          headersCheckingMode);
     }
 
     /**

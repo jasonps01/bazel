@@ -22,6 +22,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import com.google.common.eventbus.EventBus;
 import com.google.devtools.build.lib.actions.ArtifactFactory;
 import com.google.devtools.build.lib.actions.PackageRoots;
@@ -41,6 +42,8 @@ import com.google.devtools.build.lib.analysis.DependencyResolver.InconsistentAsp
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TargetAndConfiguration;
 import com.google.devtools.build.lib.analysis.ToolchainContext;
+import com.google.devtools.build.lib.analysis.ToolchainResolver;
+import com.google.devtools.build.lib.analysis.ToolchainResolver.UnloadedToolchainContext;
 import com.google.devtools.build.lib.analysis.TopLevelArtifactContext;
 import com.google.devtools.build.lib.analysis.ViewCreationFailedException;
 import com.google.devtools.build.lib.analysis.WorkspaceStatusAction;
@@ -74,9 +77,11 @@ import com.google.devtools.build.lib.packages.PackageSpecification.PackageGroupC
 import com.google.devtools.build.lib.packages.RawAttributeMapper;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.Target;
+import com.google.devtools.build.lib.skyframe.AspectValue;
 import com.google.devtools.build.lib.skyframe.BuildConfigurationValue;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
+import com.google.devtools.build.lib.skyframe.SkyFunctionEnvironmentForTesting;
 import com.google.devtools.build.lib.skyframe.SkyframeBuildView;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.TargetPatternPhaseValue;
@@ -90,6 +95,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * A util class that contains all the helper stuff previously in BuildView that only exists to give
@@ -310,13 +317,25 @@ public class BuildViewForTesting {
       }
 
       @Override
-      protected Target getTarget(Target from, Label label, NestedSetBuilder<Cause> rootCauses)
-          throws InterruptedException {
-        try {
-          return skyframeExecutor.getPackageManager().getTarget(eventHandler, label);
-        } catch (NoSuchThingException e) {
-          throw new IllegalStateException(e);
-        }
+      protected Map<Label, Target> getTargets(
+          Iterable<Label> labels,
+          Target fromTarget,
+          NestedSetBuilder<Cause> rootCauses,
+          int labelsSizeHint) {
+        return Streams.stream(labels)
+            .distinct()
+            .collect(
+                Collectors.toMap(
+                    Function.identity(),
+                    label -> {
+                      try {
+                        return skyframeExecutor.getPackageManager().getTarget(eventHandler, label);
+                      } catch (NoSuchPackageException
+                          | NoSuchTargetException
+                          | InterruptedException e) {
+                        throw new IllegalStateException(e);
+                      }
+                    }));
       }
 
       @Override
@@ -461,8 +480,7 @@ public class BuildViewForTesting {
             /*isSystemEnv=*/ false,
             targetConfig.extendedSanityChecks(),
             eventHandler,
-            /*env=*/ null,
-            /*sourceDependencyListener=*/ unused -> {});
+            /*env=*/ null);
     return getRuleContextForTesting(eventHandler, target, env, configurations);
   }
 
@@ -489,18 +507,22 @@ public class BuildViewForTesting {
           Event.error("Failed to get target when trying to get rule context for testing"));
       throw new IllegalStateException(e);
     }
-    Set<Label> requiredToolchains =
+    ImmutableSet<Label> requiredToolchains =
         target.getAssociatedRule().getRuleClassObject().getRequiredToolchains();
-    ToolchainContext toolchainContext =
-        skyframeExecutor.getToolchainContextForTesting(
-            requiredToolchains, targetConfig, eventHandler);
+    SkyFunctionEnvironmentForTesting skyfunctionEnvironment =
+        skyframeExecutor.getSkyFunctionEnvironmentForTesting(eventHandler);
+    UnloadedToolchainContext unloadedToolchainContext =
+        new ToolchainResolver(skyfunctionEnvironment, BuildConfigurationValue.key(targetConfig))
+            .setRequiredToolchainTypes(requiredToolchains)
+            .resolve();
+
     OrderedSetMultimap<Attribute, ConfiguredTargetAndData> prerequisiteMap =
         getPrerequisiteMapForTesting(
             eventHandler,
             configuredTarget,
             configurations,
-            toolchainContext.resolvedToolchainLabels());
-    toolchainContext.resolveToolchains(prerequisiteMap);
+            unloadedToolchainContext.resolvedToolchainLabels());
+    ToolchainContext toolchainContext = unloadedToolchainContext.load(prerequisiteMap);
 
     return new RuleContext.Builder(
             env,
@@ -519,7 +541,7 @@ public class BuildViewForTesting {
                 eventHandler,
                 configuredTarget,
                 configurations,
-                toolchainContext.resolvedToolchainLabels()))
+                unloadedToolchainContext.resolvedToolchainLabels()))
         .setConfigConditions(ImmutableMap.<Label, ConfigMatchingProvider>of())
         .setUniversalFragments(ruleClassProvider.getUniversalFragments())
         .setToolchainContext(toolchainContext)
@@ -552,5 +574,11 @@ public class BuildViewForTesting {
       }
     }
     return null;
+  }
+
+  /** Clears the analysis cache as in --discard_analysis_cache. */
+  public void clearAnalysisCache(
+      Collection<ConfiguredTarget> topLevelTargets, Collection<AspectValue> topLevelAspects) {
+    skyframeBuildView.clearAnalysisCache(topLevelTargets, topLevelAspects);
   }
 }

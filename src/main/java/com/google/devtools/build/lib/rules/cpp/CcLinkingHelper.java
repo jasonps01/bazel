@@ -176,7 +176,7 @@ public final class CcLinkingHelper {
 
   private final FeatureConfiguration featureConfiguration;
   private final CcToolchainProvider ccToolchain;
-  private final FdoSupportProvider fdoSupport;
+  private final FdoProvider fdoProvider;
   private String linkedArtifactNameSuffix = "";
 
   /**
@@ -186,7 +186,7 @@ public final class CcLinkingHelper {
    * @param semantics CppSemantics for the build
    * @param featureConfiguration activated features and action configs for the build
    * @param ccToolchain the C++ toolchain provider for the build
-   * @param fdoSupport the C++ FDO optimization support provider for the build
+   * @param fdoProvider the C++ FDO optimization support provider for the build
    * @param configuration the configuration that gives the directory of output artifacts
    */
   public CcLinkingHelper(
@@ -194,13 +194,13 @@ public final class CcLinkingHelper {
       CppSemantics semantics,
       FeatureConfiguration featureConfiguration,
       CcToolchainProvider ccToolchain,
-      FdoSupportProvider fdoSupport,
+      FdoProvider fdoProvider,
       BuildConfiguration configuration) {
     this.ruleContext = Preconditions.checkNotNull(ruleContext);
     this.semantics = Preconditions.checkNotNull(semantics);
     this.featureConfiguration = Preconditions.checkNotNull(featureConfiguration);
     this.ccToolchain = Preconditions.checkNotNull(ccToolchain);
-    this.fdoSupport = Preconditions.checkNotNull(fdoSupport);
+    this.fdoProvider = Preconditions.checkNotNull(fdoProvider);
     this.configuration = Preconditions.checkNotNull(configuration);
     this.cppConfiguration =
         Preconditions.checkNotNull(ruleContext.getFragment(CppConfiguration.class));
@@ -531,12 +531,6 @@ public final class CcLinkingHelper {
       providers.add(new CcNativeLibraryProvider(collectNativeCcLibraries(ccLinkingOutputs)));
     }
 
-    CcLinkingInfo.Builder ccLinkingInfoBuilder = CcLinkingInfo.Builder.create();
-    if (cppConfiguration.enableCcDynamicLibrariesForRuntime()) {
-      ccLinkingInfoBuilder.setCcDynamicLibrariesForRuntime(
-          collectDynamicLibrariesForRuntimeArtifacts(
-              ccLinkingOutputs.getDynamicLibrariesForRuntime()));
-    }
 
     final CcLinkingOutputs ccLinkingOutputsFinalized = ccLinkingOutputs;
     BiFunction<Boolean, Boolean, CcLinkParams> createParams =
@@ -567,15 +561,16 @@ public final class CcLinkingHelper {
           return builder.build();
         };
 
-    ccLinkingInfoBuilder
-        .setStaticModeParamsForDynamicLibrary(
-            createParams.apply(/* staticMode= */ true, /* forDynamicLibrary= */ true))
-        .setStaticModeParamsForExecutable(
-            createParams.apply(/* staticMode= */ true, /* forDynamicLibrary= */ false))
-        .setDynamicModeParamsForDynamicLibrary(
-            createParams.apply(/* staticMode= */ false, /* forDynamicLibrary= */ true))
-        .setDynamicModeParamsForExecutable(
-            createParams.apply(/* staticMode= */ false, /* forDynamicLibrary= */ false));
+    CcLinkingInfo.Builder ccLinkingInfoBuilder =
+        CcLinkingInfo.Builder.create()
+            .setStaticModeParamsForDynamicLibrary(
+                createParams.apply(/* staticMode= */ true, /* forDynamicLibrary= */ true))
+            .setStaticModeParamsForExecutable(
+                createParams.apply(/* staticMode= */ true, /* forDynamicLibrary= */ false))
+            .setDynamicModeParamsForDynamicLibrary(
+                createParams.apply(/* staticMode= */ false, /* forDynamicLibrary= */ true))
+            .setDynamicModeParamsForExecutable(
+                createParams.apply(/* staticMode= */ false, /* forDynamicLibrary= */ false));
     providers.put(ccLinkingInfoBuilder.build());
     return new LinkingInfo(
         providers.build(), outputGroups, ccLinkingOutputs, originalLinkingOutputs);
@@ -655,27 +650,6 @@ public final class CcLinkingHelper {
     }
 
     return result.build();
-  }
-
-  private CcDynamicLibrariesForRuntime collectDynamicLibrariesForRuntimeArtifacts(
-      List<LibraryToLink> dynamicLibrariesForRuntime) {
-    Iterable<Artifact> artifacts = LinkerInputs.toLibraryArtifacts(dynamicLibrariesForRuntime);
-    if (!Iterables.isEmpty(artifacts)) {
-      return new CcDynamicLibrariesForRuntime(NestedSetBuilder.wrap(Order.STABLE_ORDER, artifacts));
-    }
-
-    NestedSetBuilder<Artifact> builder = NestedSetBuilder.stableOrder();
-    for (CcLinkingInfo dep : ccLinkingInfos) {
-      CcDynamicLibrariesForRuntime ccDynamicLibrariesForRuntime =
-          dep.getCcDynamicLibrariesForRuntime();
-      if (ccDynamicLibrariesForRuntime != null) {
-        builder.addTransitive(
-            ccDynamicLibrariesForRuntime.getDynamicLibrariesForRuntimeArtifacts());
-      }
-    }
-    return builder.isEmpty()
-        ? CcDynamicLibrariesForRuntime.EMPTY
-        : new CcDynamicLibrariesForRuntime(builder.build());
   }
 
   /**
@@ -809,7 +783,7 @@ public final class CcLinkingHelper {
             .addLtoBitcodeFiles(ccOutputs.getLtoBitcodeFiles())
             .setUsePicForLtoBackendActions(usePic)
             .setLinkType(linkTargetTypeUsedForNaming)
-            .setLinkingMode(LinkingMode.LEGACY_FULLY_STATIC)
+            .setLinkingMode(LinkingMode.STATIC)
             .addActionInputs(linkActionInputs)
             .setLibraryIdentifier(libraryIdentifier)
             .addVariablesExtensions(variablesExtensions)
@@ -979,7 +953,7 @@ public final class CcLinkingHelper {
 
   private CppLinkActionBuilder newLinkActionBuilder(Artifact outputArtifact) {
     return new CppLinkActionBuilder(
-            ruleContext, outputArtifact, ccToolchain, fdoSupport, featureConfiguration, semantics)
+            ruleContext, outputArtifact, ccToolchain, fdoProvider, featureConfiguration, semantics)
         .setCrosstoolInputs(ccToolchain.getLink());
   }
 

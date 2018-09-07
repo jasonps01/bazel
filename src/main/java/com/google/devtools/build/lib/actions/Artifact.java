@@ -55,7 +55,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
+import java.util.Map;
 import javax.annotation.Nullable;
 
 /**
@@ -161,6 +161,44 @@ public class Artifact
      * Only aggregating middlemen and tree artifacts are expanded.
      */
     void expand(Artifact artifact, Collection<? super Artifact> output);
+
+    /**
+     * Retrieve the expansion of Filesets for the given artifact.
+     *
+     * @param artifact {@code artifact.isFileset()} must be true.
+     */
+    default ImmutableList<FilesetOutputSymlink> getFileset(Artifact artifact) {
+      throw new UnsupportedOperationException();
+    }
+  }
+
+  /** Implementation of {@link ArtifactExpander} */
+  public static class ArtifactExpanderImpl implements ArtifactExpander {
+    private final Map<Artifact, Collection<Artifact>> expandedInputs;
+    private final Map<Artifact, ImmutableList<FilesetOutputSymlink>> expandedFilesets;
+
+    public ArtifactExpanderImpl(
+        Map<Artifact, Collection<Artifact>> expandedInputMiddlemen,
+        Map<Artifact, ImmutableList<FilesetOutputSymlink>> expandedFilesets) {
+      this.expandedInputs = expandedInputMiddlemen;
+      this.expandedFilesets = expandedFilesets;
+    }
+
+    @Override
+    public void expand(Artifact artifact, Collection<? super Artifact> output) {
+      Preconditions.checkState(
+          artifact.isMiddlemanArtifact() || artifact.isTreeArtifact(), artifact);
+      Collection<Artifact> result = expandedInputs.get(artifact);
+      if (result != null) {
+        output.addAll(result);
+      }
+    }
+
+    @Override
+    public ImmutableList<FilesetOutputSymlink> getFileset(Artifact artifact) {
+      Preconditions.checkState(artifact.isFileset());
+      return Preconditions.checkNotNull(expandedFilesets.get(artifact));
+    }
   }
 
   public static final ImmutableList<Artifact> NO_ARTIFACTS = ImmutableList.of();
@@ -252,7 +290,7 @@ public class Artifact
     // The ArtifactOwner is not part of this computation because it is very rare that two Artifacts
     // have the same execPath and different owners, so a collision is fine there. If this is
     // changed, OwnerlessArtifactWrapper must also be changed.
-    this.hashCode = execPath.hashCode() + this.getClass().hashCode() * 13;
+    this.hashCode = execPath.hashCode();
     this.root = root;
     this.execPath = execPath;
     this.rootRelativePath = rootRelativePath;
@@ -436,8 +474,6 @@ public class Artifact
   /**
    * Returns true iff this is a TreeArtifact representing a directory tree containing Artifacts.
    */
-  // TODO(rduan): Document this Skylark method once TreeArtifact is no longer experimental.
-  @Override
   public boolean isTreeArtifact() {
     return false;
   }
@@ -447,6 +483,11 @@ public class Artifact
    */
   public boolean isFileset() {
     return false;
+  }
+
+  @Override
+  public boolean isDirectory() {
+    return isTreeArtifact() || isFileset();
   }
 
   /**
@@ -672,6 +713,9 @@ public class Artifact
   @SuppressWarnings("EqualsGetClass") // Distinct classes of Artifact are never equal.
   @Override
   public boolean equals(Object other) {
+    if (this == other) {
+      return true;
+    }
     if (!(other instanceof Artifact)) {
       return false;
     }
@@ -679,11 +723,11 @@ public class Artifact
       return false;
     }
     Artifact that = (Artifact) other;
-    return equalsWithoutOwner(that) && owner.equals(that.getArtifactOwner());
+    return equalsWithoutOwner(that) && owner.equals(that.owner);
   }
 
   public boolean equalsWithoutOwner(Artifact other) {
-    return Objects.equals(this.execPath, other.execPath) && Objects.equals(this.root, other.root);
+    return hashCode == other.hashCode && execPath.equals(other.execPath) && root.equals(other.root);
   }
 
   @Override

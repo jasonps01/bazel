@@ -29,11 +29,12 @@ sh_test(
     name = "runfiles_test",
     size = "medium",
     srcs = ["runfiles_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
     tags = [
         "local",
-        # no_windows: this test exercises the symlink-based runfiles tree.
-        "no_windows",
     ],
 )
 
@@ -89,7 +90,7 @@ sh_test(
         ":test-deps",
         "@bazel_tools//tools/bash/runfiles",
     ],
-    shard_count = 4,
+    shard_count = 9,
 )
 
 sh_test(
@@ -175,8 +176,10 @@ sh_test(
     name = "configured_query_test",
     size = "large",
     srcs = ["configured_query_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -202,8 +205,10 @@ sh_test(
     name = "bazel_javabase_test",
     size = "medium",
     srcs = ["bazel_javabase_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -232,40 +237,50 @@ sh_test(
     size = "small",
     timeout = "moderate",
     srcs = ["incompatible_changes_conflict_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
     name = "skylark_flag_test",
     size = "medium",
     srcs = ["skylark_flag_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
     name = "ui_test",
     size = "medium",
     srcs = ["ui_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
     name = "rc_options_test",
     size = "medium",
     srcs = ["rc_options_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
     name = "cpp_test",
     size = "large",
     srcs = ["cpp_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -309,8 +324,8 @@ sh_test(
     data = [
         ":discard_graph_edges_lib.sh",
         ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
     ],
-    tags = ["no_windows"],
 )
 
 sh_test(
@@ -365,8 +380,10 @@ sh_test(
     name = "server_logging_test",
     size = "medium",
     srcs = ["server_logging_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -380,16 +397,20 @@ sh_test(
 sh_test(
     name = "test_test",
     srcs = ["test_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
     name = "outputs_test",
     size = "medium",
     srcs = ["outputs_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 sh_test(
@@ -464,6 +485,14 @@ sh_test(
     name = "sandboxfs_test",
     size = "medium",
     srcs = ["sandboxfs_test.sh"],
+    data = [":test-deps"],
+    tags = ["no_windows"],
+)
+
+sh_test(
+    name = "bazel_java_test",
+    size = "medium",
+    srcs = ["bazel_java_test.sh"],
     data = [":test-deps"],
     tags = ["no_windows"],
 )

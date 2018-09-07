@@ -1796,6 +1796,39 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   }
 
   @Test
+  public void testLocalVariableDefinedBelow() throws Exception {
+    new SkylarkTest("--incompatible_static_name_resolution=true")
+        .setUp(
+            "def beforeEven(li):", // returns the value before the first even number
+            "    for i in li:",
+            "        if i % 2 == 0:",
+            "            return a",
+            "        else:",
+            "            a = i",
+            "res = beforeEven([1, 3, 4, 5])")
+        .testLookup("res", 3);
+  }
+
+  @Test
+  public void testShadowisNotInitialized() throws Exception {
+    new SkylarkTest("--incompatible_static_name_resolution=true")
+        .testIfErrorContains(
+            /* error message */ "local variable 'gl' is referenced before assignment",
+            "gl = 5",
+            "def foo():", // returns the value before the first even number
+            "    if False: gl = 2",
+            "    return gl",
+            "res = foo()");
+  }
+
+  @Test
+  public void testLegacyGlobalIsNotInitialized() throws Exception {
+    new SkylarkTest("--incompatible_static_name_resolution=false")
+        .setUp("a = len")
+        .testIfErrorContains("Variable len is read only", "len = 2");
+  }
+
+  @Test
   public void testFunctionCallRecursion() throws Exception {
     new SkylarkTest().testIfErrorContains("Recursion was detected when calling 'f' from 'g'",
         "def main():",

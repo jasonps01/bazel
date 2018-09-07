@@ -237,13 +237,14 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
 
     private CcCompilationHelper initializeCompilationHelper(
         FeatureConfiguration featureConfiguration) {
+      CcToolchainProvider toolchain = ccToolchain(ruleContext);
       CcCompilationHelper helper =
           new CcCompilationHelper(
               ruleContext,
               cppSemantics,
               featureConfiguration,
-              ccToolchain(ruleContext),
-              CppHelper.getFdoSupportUsingDefaultCcToolchainAttribute(ruleContext));
+              toolchain,
+              toolchain.getFdoProvider());
       TransitiveInfoCollection runtime = getProtoToolchainProvider().runtime();
       if (runtime != null) {
         helper.addDeps(ImmutableList.of(runtime));
@@ -257,13 +258,14 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
     }
 
     private CcLinkingHelper initializeLinkingHelper(FeatureConfiguration featureConfiguration) {
+      CcToolchainProvider toolchain = ccToolchain(ruleContext);
       CcLinkingHelper helper =
           new CcLinkingHelper(
                   ruleContext,
                   cppSemantics,
                   featureConfiguration,
-                  ccToolchain(ruleContext),
-                  CppHelper.getFdoSupportUsingDefaultCcToolchainAttribute(ruleContext),
+                  toolchain,
+                  toolchain.getFdoProvider(),
                   ruleContext.getConfiguration())
               .enableCcNativeLibrariesProvider();
       TransitiveInfoCollection runtime = getProtoToolchainProvider().runtime();
@@ -273,7 +275,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
       helper.addDeps(ruleContext.getPrerequisites("deps", TARGET));
       // TODO(dougk): Configure output artifact with action_config
       // once proto compile action is configurable from the crosstool.
-      if (!ccToolchain(ruleContext).supportsDynamicLinker()) {
+      if (!toolchain.supportsDynamicLinker()) {
         helper.setShouldCreateDynamicLibrary(false);
       }
       return helper;
@@ -321,6 +323,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
     }
 
     private void createProtoCompileAction(SupportData supportData, Collection<Artifact> outputs) {
+      String protoRoot = supportData.getProtoSourceRoot();
       String genfilesPath =
           ruleContext
               .getConfiguration()
@@ -331,6 +334,7 @@ public abstract class CcProtoAspect extends NativeAspectClass implements Configu
                       .getPackageIdentifier()
                       .getRepository()
                       .getPathUnderExecRoot())
+              .getRelative(protoRoot == null ? "" : protoRoot)
               .getPathString();
 
       ImmutableList.Builder<ToolchainInvocation> invocations = ImmutableList.builder();

@@ -40,8 +40,8 @@ filegroup(
         "//third_party/ijar",
         "//third_party/java/jdk/langtools:test-srcs",
         "//tools:srcs",
-        "@local_jdk//:bootclasspath",
-        "@local_jdk//:jdk",
+        "@bazel_skylib//:test_deps",
+        "@bazel_tools//tools/jdk:current_java_runtime",
     ] + select({
         # TODO(bazel-team): Once https://github.com/bazelbuild/bazel/issues/2241
         # is resolved, use cc implementation of singlejar on windows
@@ -190,6 +190,15 @@ sh_test(
     data = [":test-deps"],
     tags = [
         "local",
+        "no_windows",
+    ],
+)
+
+sh_test(
+    name = "bazel_cc_code_coverage_test",
+    srcs = ["bazel_cc_code_coverage_test.sh"],
+    data = [":test-deps"],
+    tags = [
         "no_windows",
     ],
 )
@@ -349,6 +358,14 @@ sh_test(
     srcs = ["skylark_repository_test.sh"],
     data = [":test-deps"],
     shard_count = 6,
+    tags = ["no_windows"],
+)
+
+sh_test(
+    name = "skylark_rule_test",
+    size = "large",
+    srcs = ["skylark_rule_test.sh"],
+    data = [":test-deps"],
     tags = ["no_windows"],
 )
 
@@ -636,6 +653,14 @@ sh_test(
     tags = ["no_windows"],
 )
 
+sh_test(
+    name = "bazel_strategy_test",
+    size = "small",
+    srcs = ["bazel_strategy_test.sh"],
+    data = [":test-deps"],
+    tags = ["no_windows"],
+)
+
 test_suite(
     name = "all_tests",
     visibility = ["//visibility:public"],
@@ -661,6 +686,9 @@ test_suite(
 sh_test(
     name = "bazel_workspaces_test",
     srcs = ["bazel_workspaces_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "//src/tools/workspacelog:parser",
+    ],
     tags = ["no_windows"],
 )

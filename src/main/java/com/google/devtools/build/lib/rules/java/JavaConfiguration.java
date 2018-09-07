@@ -28,7 +28,6 @@ import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
-import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.skylarkbuildapi.java.JavaConfigurationApi;
 import com.google.devtools.common.options.TriState;
 import java.util.List;
@@ -36,7 +35,6 @@ import java.util.Map;
 import javax.annotation.Nullable;
 
 /** A java compiler configuration containing the flags required for compilation. */
-@AutoCodec
 @Immutable
 public final class JavaConfiguration extends Fragment implements JavaConfigurationApi {
 
@@ -150,10 +148,10 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
   private final Label javaLauncherLabel;
   private final boolean useIjars;
   private final boolean useHeaderCompilation;
-  private final boolean headerCompilationDisableJavacFallback;
   private final boolean generateJavaDeps;
   private final boolean strictDepsJavaProtos;
   private final boolean protoGeneratedStrictDeps;
+  private final boolean isJavaProtoExportsEnabled;
   private final OneVersionEnforcementLevel enforceOneVersion;
   private final boolean enforceOneVersionOnJavaTests;
   private final ImportDepsCheckingLevel importDepsCheckingLevel;
@@ -174,20 +172,18 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
   private final boolean explicitJavaTestDeps;
   private final boolean experimentalTestRunner;
   private final boolean jplPropagateCcLinkParamsStore;
+  private final boolean addTestSupportToCompileTimeDeps;
   private final ImmutableList<Label> pluginList;
 
   // TODO(dmarting): remove once we have a proper solution for #2539
   private final boolean useLegacyBazelJavaTest;
 
-  JavaConfiguration(
-      JavaOptions javaOptions)
-      throws InvalidConfigurationException {
+  JavaConfiguration(JavaOptions javaOptions) throws InvalidConfigurationException {
     this.commandLineJavacFlags =
         ImmutableList.copyOf(JavaHelper.tokenizeJavaOptions(javaOptions.javacOpts));
     this.javaLauncherLabel = javaOptions.javaLauncher;
     this.useIjars = javaOptions.useIjars;
     this.useHeaderCompilation = javaOptions.headerCompilation;
-    this.headerCompilationDisableJavacFallback = javaOptions.headerCompilationDisableJavacFallback;
     this.generateJavaDeps =
         javaOptions.javaDeps || javaOptions.javaClasspath != JavaClasspathMode.OFF;
     this.javaClasspath = javaOptions.javaClasspath;
@@ -204,6 +200,7 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     this.useLegacyBazelJavaTest = javaOptions.legacyBazelJavaTest;
     this.strictDepsJavaProtos = javaOptions.strictDepsJavaProtos;
     this.protoGeneratedStrictDeps = javaOptions.protoGeneratedStrictDeps;
+    this.isJavaProtoExportsEnabled = javaOptions.isJavaProtoExportsEnabled;
     this.enforceOneVersion = javaOptions.enforceOneVersion;
     this.enforceOneVersionOnJavaTests = javaOptions.enforceOneVersionOnJavaTests;
     this.importDepsCheckingLevel = javaOptions.importDepsCheckingLevel;
@@ -211,6 +208,7 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     this.explicitJavaTestDeps = javaOptions.explicitJavaTestDeps;
     this.experimentalTestRunner = javaOptions.experimentalTestRunner;
     this.jplPropagateCcLinkParamsStore = javaOptions.jplPropagateCcLinkParamsStore;
+    this.addTestSupportToCompileTimeDeps = javaOptions.addTestSupportToCompileTimeDeps;
 
     ImmutableList.Builder<Label> translationsBuilder = ImmutableList.builder();
     for (String s : javaOptions.translationTargets) {
@@ -234,70 +232,6 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     }
     this.bytecodeOptimizers = optimizersBuilder.build();
     this.pluginList = ImmutableList.copyOf(javaOptions.pluginList);
-  }
-
-  @AutoCodec.Instantiator
-  JavaConfiguration(
-      ImmutableList<String> commandLineJavacFlags,
-      Label javaLauncherLabel,
-      boolean useIjars,
-      boolean useHeaderCompilation,
-      boolean headerCompilationDisableJavacFallback,
-      boolean generateJavaDeps,
-      boolean strictDepsJavaProtos,
-      boolean protoGeneratedStrictDeps,
-      OneVersionEnforcementLevel enforceOneVersion,
-      boolean enforceOneVersionOnJavaTests,
-      ImportDepsCheckingLevel importDepsCheckingLevel,
-      boolean allowRuntimeDepsOnNeverLink,
-      JavaClasspathMode javaClasspath,
-      ImmutableList<String> defaultJvmFlags,
-      ImmutableList<String> checkedConstraints,
-      StrictDepsMode strictJavaDeps,
-      String fixDepsTool,
-      Label proguardBinary,
-      ImmutableList<Label> extraProguardSpecs,
-      TriState bundleTranslations,
-      ImmutableList<Label> translationTargets,
-      JavaOptimizationMode javaOptimizationMode,
-      ImmutableMap<String, Optional<Label>> bytecodeOptimizers,
-      Label toolchainLabel,
-      Label runtimeLabel,
-      boolean explicitJavaTestDeps,
-      boolean experimentalTestRunner,
-      boolean jplPropagateCcLinkParamsStore,
-      ImmutableList<Label> pluginList,
-      boolean useLegacyBazelJavaTest) {
-    this.commandLineJavacFlags = commandLineJavacFlags;
-    this.javaLauncherLabel = javaLauncherLabel;
-    this.useIjars = useIjars;
-    this.useHeaderCompilation = useHeaderCompilation;
-    this.headerCompilationDisableJavacFallback = headerCompilationDisableJavacFallback;
-    this.generateJavaDeps = generateJavaDeps;
-    this.strictDepsJavaProtos = strictDepsJavaProtos;
-    this.protoGeneratedStrictDeps = protoGeneratedStrictDeps;
-    this.enforceOneVersion = enforceOneVersion;
-    this.enforceOneVersionOnJavaTests = enforceOneVersionOnJavaTests;
-    this.importDepsCheckingLevel = importDepsCheckingLevel;
-    this.allowRuntimeDepsOnNeverLink = allowRuntimeDepsOnNeverLink;
-    this.javaClasspath = javaClasspath;
-    this.defaultJvmFlags = defaultJvmFlags;
-    this.checkedConstraints = checkedConstraints;
-    this.strictJavaDeps = strictJavaDeps;
-    this.fixDepsTool = fixDepsTool;
-    this.proguardBinary = proguardBinary;
-    this.extraProguardSpecs = extraProguardSpecs;
-    this.bundleTranslations = bundleTranslations;
-    this.translationTargets = translationTargets;
-    this.javaOptimizationMode = javaOptimizationMode;
-    this.bytecodeOptimizers = bytecodeOptimizers;
-    this.toolchainLabel = toolchainLabel;
-    this.runtimeLabel = runtimeLabel;
-    this.explicitJavaTestDeps = explicitJavaTestDeps;
-    this.experimentalTestRunner = experimentalTestRunner;
-    this.jplPropagateCcLinkParamsStore = jplPropagateCcLinkParamsStore;
-    this.pluginList = pluginList;
-    this.useLegacyBazelJavaTest = useLegacyBazelJavaTest;
   }
 
   @Override
@@ -330,14 +264,6 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
   /** Returns true iff Java header compilation is enabled. */
   public boolean useHeaderCompilation() {
     return useHeaderCompilation;
-  }
-
-  /**
-   * If --java_header_compilation is set, report diagnostics from turbine instead of falling back to
-   * javac. Diagnostics will be produced more quickly, but may be less helpful.
-   */
-  public boolean headerCompilationDisableJavacFallback() {
-    return headerCompilationDisableJavacFallback;
   }
 
   /**
@@ -512,8 +438,16 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     return protoGeneratedStrictDeps;
   }
 
+  public boolean isJavaProtoExportsEnabled() {
+    return isJavaProtoExportsEnabled;
+  }
+
   public boolean jplPropagateCcLinkParamsStore() {
     return jplPropagateCcLinkParamsStore;
+  }
+
+  public boolean addTestSupportToCompileTimeDeps() {
+    return addTestSupportToCompileTimeDeps;
   }
 
   public List<Label> getPlugins() {

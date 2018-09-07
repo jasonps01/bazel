@@ -2,7 +2,7 @@ package(default_visibility = ["//visibility:public"])
 
 load("//tools/build_rules:genproto.bzl", "cc_grpc_library")
 load("//tools/build_rules:utilities.bzl", "java_library_srcs")
-load("//third_party/protobuf/3.6.0:protobuf.bzl", "py_proto_library")
+load("//third_party/protobuf/3.6.1:protobuf.bzl", "py_proto_library")
 load("//third_party/grpc:build_defs.bzl", "java_grpc_library")
 
 exports_files(
@@ -151,10 +151,9 @@ proto_library(
     deps = [
         "@com_google_protobuf//:timestamp_proto",
         "@googleapis//:google_bytestream_bytestream_proto",
-        "@googleapis//:google_devtools_remoteexecution_v1test_remote_execution_proto",
         "@googleapis//:google_longrunning_operations_proto",
         "@googleapis//:google_rpc_status_proto",
-        "@googleapis//:google_watch_v1_proto",
+        "@remoteapis//:build_bazel_remote_execution_v2_remote_execution_proto",
     ],
 )
 

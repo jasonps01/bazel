@@ -42,8 +42,8 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.BuildType;
-import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.Rule;
+import com.google.devtools.build.lib.packages.StructImpl;
 import com.google.devtools.build.lib.packages.StructProvider;
 import com.google.devtools.build.lib.rules.cpp.CppFileTypes;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
@@ -138,6 +138,10 @@ public final class PyCommon {
 
     if (ruleContext.getFragment(PythonConfiguration.class).buildPythonZip()) {
       filesToBuildBuilder.add(getPythonZipArtifact(executable));
+    } else if (OS.getCurrent() == OS.WINDOWS) {
+      // TODO(bazel-team): Here we should check target platform instead of using OS.getCurrent().
+      // On Windows, add the python stub launcher in the set of files to build.
+      filesToBuildBuilder.add(getPythonLauncherArtifact(executable));
     }
 
     filesToBuild = filesToBuildBuilder.build();
@@ -152,6 +156,11 @@ public final class PyCommon {
   /** @return An artifact next to the executable file with ".zip" suffix */
   public Artifact getPythonZipArtifact(Artifact executable) {
     return ruleContext.getRelatedArtifact(executable.getRootRelativePath(), ".zip");
+  }
+
+  /** @return An artifact next to the executable file with no suffix, only used on Windows */
+  public Artifact getPythonLauncherArtifact(Artifact executable) {
+    return ruleContext.getRelatedArtifact(executable.getRootRelativePath(), "");
   }
 
   public void addCommonTransitiveInfoProviders(RuleConfiguredTargetBuilder builder,
@@ -179,7 +188,7 @@ public final class PyCommon {
    *
    * <p>addSkylarkTransitiveInfo(PYTHON_SKYLARK_PROVIDER_NAME, createSourceProvider(...))
    */
-  public static Info createSourceProvider(
+  public static StructImpl createSourceProvider(
       NestedSet<Artifact> transitivePythonSources, boolean isUsingSharedLibrary) {
     return StructProvider.STRUCT.create(
         ImmutableMap.<String, Object>of(
@@ -320,12 +329,12 @@ public final class PyCommon {
 
   private NestedSet<Artifact> getTransitivePythonSourcesFromSkylarkProvider(
       TransitiveInfoCollection dep) {
-    Info pythonSkylarkProvider = null;
+    StructImpl pythonSkylarkProvider = null;
     try {
       pythonSkylarkProvider =
           SkylarkType.cast(
               dep.get(PYTHON_SKYLARK_PROVIDER_NAME),
-              Info.class,
+              StructImpl.class,
               null,
               "%s should be a struct",
               PYTHON_SKYLARK_PROVIDER_NAME);
@@ -500,8 +509,8 @@ public final class PyCommon {
     for (TransitiveInfoCollection dep : deps) {
       Object providerObject = dep.get(PYTHON_SKYLARK_PROVIDER_NAME);
       if (providerObject != null) {
-        SkylarkType.checkType(providerObject, Info.class, null);
-        Info provider = (Info) providerObject;
+        SkylarkType.checkType(providerObject, StructImpl.class, null);
+        StructImpl provider = (StructImpl) providerObject;
         Boolean isUsingSharedLibrary = provider.getValue(IS_USING_SHARED_LIBRARY, Boolean.class);
         if (Boolean.TRUE.equals(isUsingSharedLibrary)) {
           return true;

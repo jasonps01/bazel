@@ -20,12 +20,13 @@ import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.DigestHashFunction.DefaultAlreadySetException;
+import com.google.devtools.build.lib.vfs.DigestHashFunction.DefaultHashFunctionNotSetException;
 import com.google.devtools.build.lib.vfs.DigestHashFunction.DigestFunctionConverter;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.JavaIoFileSystem;
 import com.google.devtools.build.lib.windows.WindowsFileSystem;
 import com.google.devtools.common.options.OptionsParsingException;
-import com.google.devtools.common.options.OptionsProvider;
+import com.google.devtools.common.options.OptionsParsingResult;
 
 /**
  * Module to provide a {@link FileSystem} instance that uses {@code SHA256} as the default hash
@@ -36,7 +37,7 @@ import com.google.devtools.common.options.OptionsProvider;
 public class BazelFileSystemModule extends BlazeModule {
 
   @Override
-  public void globalInit(OptionsProvider startupOptionsProvider) throws AbruptExitException {
+  public void globalInit(OptionsParsingResult startupOptionsProvider) throws AbruptExitException {
     BlazeServerStartupOptions startupOptions =
         Preconditions.checkNotNull(
             startupOptionsProvider.getOptions(BlazeServerStartupOptions.class));
@@ -60,7 +61,8 @@ public class BazelFileSystemModule extends BlazeModule {
   }
 
   @Override
-  public FileSystem getFileSystem(OptionsProvider startupOptions) {
+  public FileSystem getFileSystem(OptionsParsingResult startupOptions)
+      throws DefaultHashFunctionNotSetException {
     if ("0".equals(System.getProperty("io.bazel.EnableJni"))) {
       // Ignore UnixFileSystem, to be used for bootstrapping.
       return OS.getCurrent() == OS.WINDOWS ? new WindowsFileSystem() : new JavaIoFileSystem();

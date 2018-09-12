@@ -159,7 +159,10 @@ final class LinuxSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
             .setTmpfsDirectories(getTmpfsPaths())
             .setBindMounts(getReadOnlyBindMounts(blazeDirs, sandboxExecRoot))
             .setUseFakeHostname(getSandboxOptions().sandboxFakeHostname)
-            .setCreateNetworkNamespace(!(allowNetwork || Spawns.requiresNetwork(spawn)))
+            .setCreateNetworkNamespace(
+                !(allowNetwork
+                    || Spawns.requiresNetwork(
+                        spawn, getSandboxOptions().defaultSandboxAllowNetwork)))
             .setUseDebugMode(getSandboxOptions().sandboxDebug)
             .setKillDelay(timeoutKillDelay);
 
@@ -187,7 +190,11 @@ final class LinuxSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
               sandboxPath,
               commandLineBuilder.build(),
               environment,
-              SandboxHelpers.processInputFiles(spawn, context, execRoot),
+              SandboxHelpers.processInputFiles(
+                  spawn,
+                  context,
+                  execRoot,
+                  getSandboxOptions().symlinkedSandboxExpandsTreeArtifactsInRunfilesTree),
               outputs,
               ImmutableSet.of());
     } else {
@@ -197,7 +204,11 @@ final class LinuxSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
               sandboxExecRoot,
               commandLineBuilder.build(),
               environment,
-              SandboxHelpers.processInputFiles(spawn, context, execRoot),
+              SandboxHelpers.processInputFiles(
+                  spawn,
+                  context,
+                  execRoot,
+                  getSandboxOptions().symlinkedSandboxExpandsTreeArtifactsInRunfilesTree),
               outputs,
               writableDirs);
     }

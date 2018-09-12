@@ -22,7 +22,8 @@ source "${CURRENT_DIR}/../integration_test_setup.sh" \
   || { echo "integration_test_setup.sh not found!" >&2; exit 1; }
 
 function test_cc_test_coverage() {
-  if [[ ! -x /usr/bin/lcov ]]; then
+  local -r LCOV=$(which lcov)
+  if [[ ! -x ${LCOV:-/usr/bin/lcov} ]]; then
     echo "lcov not installed. Skipping test."
     return
   fi
@@ -93,7 +94,8 @@ EOF
 }
 
 function test_failed_coverage() {
-  if [[ ! -x /usr/bin/lcov ]]; then
+  local -r LCOV=$(which lcov)
+  if [[ ! -x ${LCOV:-/usr/bin/lcov} ]]; then
     echo "lcov not installed. Skipping test."
     return
   fi
@@ -196,7 +198,7 @@ public class TestCollatz {
 }
 EOF
 
-  bazel coverage //:test &>$TEST_log || fail "Coverage for //:test failed"
+  bazel coverage --test_output=all //:test &>$TEST_log || fail "Coverage for //:test failed"
   cat $TEST_log
   ending_part=$(sed -n -e '/PASSED/,$p' $TEST_log)
 
@@ -288,7 +290,7 @@ public class TestCollatz {
 }
 EOF
 
-  bazel coverage //:test --coverage_report_generator=@bazel_tools//tools/test/LcovMerger/java/com/google/devtools/lcovmerger:Main --combined_report=lcov &>$TEST_log \
+  bazel coverage --test_output=all //:test --coverage_report_generator=@bazel_tools//tools/test/LcovMerger/java/com/google/devtools/lcovmerger:Main --combined_report=lcov &>$TEST_log \
    || echo "Coverage for //:test failed"
 
   cat <<EOF > result.dat
@@ -381,7 +383,7 @@ public class TestCollatz {
 }
 EOF
 
-  bazel coverage --experimental_java_coverage //:test &>$TEST_log || fail "Coverage for //:test failed"
+  bazel coverage --test_output=all --experimental_java_coverage //:test &>$TEST_log || fail "Coverage for //:test failed"
   ending_part=$(sed -n -e '/PASSED/,$p' $TEST_log)
 
   coverage_file_path=$(grep -Eo "/[/a-zA-Z0-9\.\_\-]+\.dat$" <<< "$ending_part")
@@ -468,7 +470,7 @@ public class orangeBin {
 }
 EOF
 
-  bazel coverage //:orange-sh &>$TEST_log || fail "Coverage for //:orange-sh failed"
+  bazel coverage --test_output=all //:orange-sh &>$TEST_log || fail "Coverage for //:orange-sh failed"
 
   ending_part=$(sed -n -e '/PASSED/,$p' $TEST_log)
 

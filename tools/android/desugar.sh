@@ -122,7 +122,10 @@ if [[ "$#" -gt 0 ]]; then
       done
 
       "${DESUGAR}" \
+          "--jvm_flag=-XX:+IgnoreUnrecognizedVMOptions" \
           "--jvm_flags=--add-opens=java.base/java.lang.invoke=ALL-UNNAMED" \
+          "--jvm_flags=--add-opens=java.base/java.nio=ALL-UNNAMED" \
+          "--jvm_flags=--add-opens=java.base/java.lang=ALL-UNNAMED" \
           "--jvm_flag=-Djdk.internal.lambda.dumpProxyClasses=${TMPDIR}" \
           "@${params}"
       # temp dir deleted by TRAP installed above
@@ -132,7 +135,10 @@ if [[ "$#" -gt 0 ]]; then
 fi
 
 "${DESUGAR}" \
+    "--jvm_flag=-XX:+IgnoreUnrecognizedVMOptions" \
     "--jvm_flags=--add-opens=java.base/java.lang.invoke=ALL-UNNAMED" \
+    "--jvm_flags=--add-opens=java.base/java.nio=ALL-UNNAMED" \
+    "--jvm_flags=--add-opens=java.base/java.lang=ALL-UNNAMED" \
     "--jvm_flag=-Djdk.internal.lambda.dumpProxyClasses=${TMPDIR}" \
     "$@" \
     "${DESUGAR_JAVA8_LIBS_CONFIG[@]}"

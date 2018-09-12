@@ -50,16 +50,14 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
               "static_mode_params_for_dynamic_library",
               "static_mode_params_for_executable",
               "dynamic_mode_params_for_dynamic_library",
-              "dynamic_mode_params_for_executable",
-              "cc_runfiles"),
+              "dynamic_mode_params_for_executable"),
           /* defaultValues= */ ImmutableList.of(
-              Runtime.NONE, Runtime.NONE, Runtime.NONE, Runtime.NONE, Runtime.NONE),
+              Runtime.NONE, Runtime.NONE, Runtime.NONE, Runtime.NONE),
           /* types= */ ImmutableList.of(
               SkylarkType.of(CcLinkParams.class),
               SkylarkType.of(CcLinkParams.class),
               SkylarkType.of(CcLinkParams.class),
-              SkylarkType.of(CcLinkParams.class),
-              SkylarkType.of(CcRunfiles.class)));
+              SkylarkType.of(CcLinkParams.class)));
 
   @Nullable
   private static Object nullIfNone(Object object) {
@@ -86,7 +84,6 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
           CcLinkParams staticModeParamsForExecutable = (CcLinkParams) nullIfNone(args[i++]);
           CcLinkParams dynamicModeParamsForDynamicLibrary = (CcLinkParams) nullIfNone(args[i++]);
           CcLinkParams dynamicModeParamsForExecutable = (CcLinkParams) nullIfNone(args[i++]);
-          CcRunfiles ccRunfiles = (CcRunfiles) nullIfNone(args[i++]);
           CcLinkingInfo.Builder ccLinkingInfoBuilder = CcLinkingInfo.Builder.create();
           if (staticModeParamsForDynamicLibrary == null
               || staticModeParamsForExecutable == null
@@ -100,11 +97,6 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
               .setStaticModeParamsForExecutable(staticModeParamsForExecutable)
               .setDynamicModeParamsForDynamicLibrary(dynamicModeParamsForDynamicLibrary)
               .setDynamicModeParamsForExecutable(dynamicModeParamsForExecutable);
-          // TODO(plf): The CcDynamicLibrariesForRuntime provider can be removed perhaps. Do not
-          // add to the API until we know for sure. The CcRunfiles provider is already in the API
-          // at the time of this comment (cl/200184914). Perhaps it can be removed but Skylark rules
-          // using it will have to be migrated.
-          ccLinkingInfoBuilder.setCcRunfiles(ccRunfiles);
           return ccLinkingInfoBuilder.build();
         }
       };
@@ -117,47 +109,43 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
           .setDynamicModeParamsForExecutable(CcLinkParams.EMPTY)
           .build();
 
-  private final CcLinkParamsStore ccLinkParamsStore;
-  // TODO(b/111289526): These providers are not useful. All the information they provide can be
-  // obtained from CcLinkParams. CcRunfiles is already dead code and can be removed.
-  // CcDynamicLibrariesForRuntime is not dead code yet.
-  @Deprecated private final CcRunfiles ccRunfiles;
-  @Deprecated private final CcDynamicLibrariesForRuntime ccDynamicLibrariesForRuntime;
+  private final CcLinkParams staticModeParamsForExecutable;
+  private final CcLinkParams staticModeParamsForDynamicLibrary;
+  private final CcLinkParams dynamicModeParamsForExecutable;
+  private final CcLinkParams dynamicModeParamsForDynamicLibrary;
 
   @AutoCodec.Instantiator
   @VisibleForSerialization
   CcLinkingInfo(
-      CcLinkParamsStore ccLinkParamsStore,
-      CcRunfiles ccRunfiles,
-      CcDynamicLibrariesForRuntime ccDynamicLibrariesForRuntime) {
+      CcLinkParams staticModeParamsForExecutable,
+      CcLinkParams staticModeParamsForDynamicLibrary,
+      CcLinkParams dynamicModeParamsForExecutable,
+      CcLinkParams dynamicModeParamsForDynamicLibrary) {
     super(PROVIDER);
-    this.ccLinkParamsStore = ccLinkParamsStore;
-    this.ccRunfiles = ccRunfiles;
-    this.ccDynamicLibrariesForRuntime = ccDynamicLibrariesForRuntime;
-  }
-
-  public CcLinkParamsStore getCcLinkParamsStore() {
-    return ccLinkParamsStore;
-  }
-
-  @Override
-  public CcLinkParams getStaticModeParamsForDynamicLibrary() {
-    return ccLinkParamsStore.get(/* linkingStatically= */ true, /* linkShared= */ true);
+    this.staticModeParamsForExecutable = staticModeParamsForExecutable;
+    this.staticModeParamsForDynamicLibrary = staticModeParamsForDynamicLibrary;
+    this.dynamicModeParamsForExecutable = dynamicModeParamsForExecutable;
+    this.dynamicModeParamsForDynamicLibrary = dynamicModeParamsForDynamicLibrary;
   }
 
   @Override
   public CcLinkParams getStaticModeParamsForExecutable() {
-    return ccLinkParamsStore.get(/* linkingStatically= */ true, /* linkShared= */ false);
+    return staticModeParamsForExecutable;
   }
 
   @Override
-  public CcLinkParams getDynamicModeParamsForDynamicLibrary() {
-    return ccLinkParamsStore.get(/* linkingStatically= */ false, /* linkShared= */ true);
+  public CcLinkParams getStaticModeParamsForDynamicLibrary() {
+    return staticModeParamsForDynamicLibrary;
   }
 
   @Override
   public CcLinkParams getDynamicModeParamsForExecutable() {
-    return ccLinkParamsStore.get(/* linkingStatically= */ false, /* linkShared= */ false);
+    return dynamicModeParamsForExecutable;
+  }
+
+  @Override
+  public CcLinkParams getDynamicModeParamsForDynamicLibrary() {
+    return dynamicModeParamsForDynamicLibrary;
   }
 
   public static CcLinkingInfo merge(Collection<CcLinkingInfo> ccLinkingInfos) {
@@ -183,15 +171,6 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
         .build();
   }
 
-  @Override
-  public CcRunfiles getCcRunfiles() {
-    return ccRunfiles;
-  }
-
-  public CcDynamicLibrariesForRuntime getCcDynamicLibrariesForRuntime() {
-    return ccDynamicLibrariesForRuntime;
-  }
-
   public CcLinkParams getCcLinkParams(boolean staticMode, boolean forDynamicLibrary) {
     if (staticMode) {
       if (forDynamicLibrary) {
@@ -214,24 +193,9 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
     CcLinkParams staticModeParamsForExecutable;
     CcLinkParams dynamicModeParamsForDynamicLibrary;
     CcLinkParams dynamicModeParamsForExecutable;
-    CcRunfiles ccRunfiles;
-    CcDynamicLibrariesForRuntime ccDynamicLibrariesForRuntime;
 
     public static CcLinkingInfo.Builder create() {
       return new CcLinkingInfo.Builder();
-    }
-
-    public Builder setCcRunfiles(CcRunfiles ccRunfiles) {
-      Preconditions.checkState(this.ccRunfiles == null);
-      this.ccRunfiles = ccRunfiles;
-      return this;
-    }
-
-    public Builder setCcDynamicLibrariesForRuntime(
-        CcDynamicLibrariesForRuntime ccDynamicLibrariesForRuntime) {
-      Preconditions.checkState(this.ccDynamicLibrariesForRuntime == null);
-      this.ccDynamicLibrariesForRuntime = ccDynamicLibrariesForRuntime;
-      return this;
     }
 
     public Builder setStaticModeParamsForDynamicLibrary(CcLinkParams ccLinkParams) {
@@ -259,17 +223,15 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
     }
 
     public CcLinkingInfo build() {
-      Preconditions.checkNotNull(staticModeParamsForDynamicLibrary);
       Preconditions.checkNotNull(staticModeParamsForExecutable);
-      Preconditions.checkNotNull(dynamicModeParamsForDynamicLibrary);
+      Preconditions.checkNotNull(staticModeParamsForDynamicLibrary);
       Preconditions.checkNotNull(dynamicModeParamsForExecutable);
-      CcLinkParamsStore ccLinkParamsStore =
-          new CcLinkParamsStore(
-              staticModeParamsForDynamicLibrary,
-              staticModeParamsForExecutable,
-              dynamicModeParamsForDynamicLibrary,
-              dynamicModeParamsForExecutable);
-      return new CcLinkingInfo(ccLinkParamsStore, ccRunfiles, ccDynamicLibrariesForRuntime);
+      Preconditions.checkNotNull(dynamicModeParamsForDynamicLibrary);
+      return new CcLinkingInfo(
+          staticModeParamsForExecutable,
+          staticModeParamsForDynamicLibrary,
+          dynamicModeParamsForExecutable,
+          dynamicModeParamsForDynamicLibrary);
     }
   }
 
@@ -282,7 +244,11 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
     if (this == other) {
       return true;
     }
-    if (!this.ccLinkParamsStore.equals(other.ccLinkParamsStore)) {
+    if (!this.staticModeParamsForExecutable.equals(other.staticModeParamsForExecutable)
+        || !this.staticModeParamsForDynamicLibrary.equals(other.staticModeParamsForDynamicLibrary)
+        || !this.dynamicModeParamsForExecutable.equals(other.dynamicModeParamsForExecutable)
+        || !this.dynamicModeParamsForDynamicLibrary.equals(
+            other.dynamicModeParamsForDynamicLibrary)) {
       return false;
     }
     return true;
@@ -290,6 +256,10 @@ public final class CcLinkingInfo extends NativeInfo implements CcLinkingInfoApi 
 
   @Override
   public int hashCode() {
-    return Objects.hashCode(ccLinkParamsStore);
+    return Objects.hashCode(
+        staticModeParamsForExecutable,
+        staticModeParamsForDynamicLibrary,
+        dynamicModeParamsForExecutable,
+        dynamicModeParamsForDynamicLibrary);
   }
 }

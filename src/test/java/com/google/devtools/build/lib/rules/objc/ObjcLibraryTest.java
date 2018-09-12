@@ -18,6 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.devtools.build.lib.actions.util.ActionsTestUtil.baseArtifactNames;
 import static com.google.devtools.build.lib.rules.objc.CompilationSupport.ABSOLUTE_INCLUDES_PATH_FORMAT;
+import static com.google.devtools.build.lib.rules.objc.CompilationSupport.BOTH_MODULE_NAME_AND_MODULE_MAP_SPECIFIED;
 import static com.google.devtools.build.lib.rules.objc.CompilationSupport.FILE_IN_SRCS_AND_HDRS_WARNING_FORMAT;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.ASSET_CATALOG;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.BUNDLE_FILE;
@@ -52,9 +53,11 @@ import com.google.devtools.build.lib.packages.util.MockObjcSupport;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction;
+import com.google.devtools.build.lib.rules.cpp.CppModuleMap;
 import com.google.devtools.build.lib.rules.cpp.CppModuleMapAction;
 import com.google.devtools.build.lib.rules.cpp.LinkerInput;
 import com.google.devtools.build.lib.rules.objc.ObjcProvider.Key;
+import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.common.options.OptionsParsingException;
 import java.util.Collections;
@@ -81,6 +84,30 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
   @Override
   protected ScratchAttributeWriter createLibraryTargetWriter(String labelString) {
     return ScratchAttributeWriter.fromLabelString(this, "objc_library", labelString);
+  }
+
+  @Test
+  public void testConfigTransitionWithTopLevelAppleConfiguration() throws Exception {
+    scratch.file("bin/BUILD",
+        "objc_library(",
+        "    name = 'objc',",
+        "    srcs = ['objc.m'],",
+        ")",
+        "cc_binary(",
+        "    name = 'cc',",
+        "    srcs = ['cc.cc'],",
+        "    deps = [':objc'],",
+        ")");
+
+    useConfiguration(
+        "--cpu=ios_x86_64",
+        "--crosstool_top=" + MockObjcSupport.DEFAULT_OSX_CROSSTOOL);
+
+    ConfiguredTarget cc = getConfiguredTarget("//bin:cc");
+    Artifact objcObject = ActionsTestUtil.getFirstArtifactEndingWith(
+        actionsTestUtil().artifactClosureOf(getFilesToBuild(cc)), "objc.o");
+    assertThat(objcObject.getExecPathString()).startsWith(
+        TestConstants.PRODUCT_NAME + "-out/ios_x86_64-fastbuild/");
   }
 
   @Test
@@ -562,6 +589,15 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
   }
 
   @Test
+  public void testBothModuleNameAndModuleMapGivesError() throws Exception {
+    checkError(
+        "x",
+        "x",
+        BOTH_MODULE_NAME_AND_MODULE_MAP_SPECIFIED,
+        "objc_library( name = 'x', module_name = 'x', module_map = 'x.modulemap' )");
+  }
+
+  @Test
   public void testCompilationActionsWithModuleMapsEnabled() throws Exception {
     useConfiguration(
         "--crosstool_top=" + MockObjcSupport.DEFAULT_OSX_CROSSTOOL,
@@ -651,6 +687,19 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
   }
 
   @Test
+  public void testModuleNameAttributeChangesName() throws Exception {
+    RULE_TYPE.scratchTarget(scratch, "module_name", "'foo'");
+
+    ConfiguredTarget configuredTarget = getConfiguredTarget("//x:x");
+    Artifact moduleMap = getGenfilesArtifact("x.modulemaps/module.modulemap", configuredTarget);
+
+    CppModuleMapAction genMap = (CppModuleMapAction) getGeneratingAction(moduleMap);
+
+    CppModuleMap cppModuleMap = genMap.getCppModuleMap();
+    assertThat(cppModuleMap.getName()).isEqualTo("foo");
+  }
+
+  @Test
   public void testModuleMapActionFiltersHeaders() throws Exception {
     RULE_TYPE.scratchTarget(
         scratch,
@@ -666,6 +715,10 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
 
     assertThat(Artifact.toRootRelativePaths(genMap.getPrivateHeaders())).isEmpty();
     assertThat(Artifact.toRootRelativePaths(genMap.getPublicHeaders())).containsExactly("x/a.h");
+
+    // now check the generated name
+    CppModuleMap cppModuleMap = genMap.getCppModuleMap();
+    assertThat(cppModuleMap.getName()).isEqualTo("x_x");
   }
 
   @Test
@@ -1263,6 +1316,30 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
     CommandAction action = compileAction("//objc:lib", "a.o");
 
     assertThat(action.getArguments()).doesNotContain("-DXCODE_FEATURE_FOR_TESTING=xcode_5.8");
+  }
+
+  @Test
+  public void testXcodeVersionFeatureTwoComponentsTooMany() throws Exception {
+    useConfiguration("--xcode_version=7.3.1");
+
+    createLibraryTargetWriter("//objc:lib")
+        .setAndCreateFiles("srcs", "a.m")
+        .write();
+    CommandAction action = compileAction("//objc:lib", "a.o");
+
+    assertThat(action.getArguments()).contains("-DXCODE_FEATURE_FOR_TESTING=xcode_7.3");
+  }
+
+  @Test
+  public void testXcodeVersionFeatureTwoComponentsTooFew() throws Exception {
+    useConfiguration("--xcode_version=5");
+
+    createLibraryTargetWriter("//objc:lib")
+        .setAndCreateFiles("srcs", "a.m")
+        .write();
+    CommandAction action = compileAction("//objc:lib", "a.o");
+
+    assertThat(action.getArguments()).contains("-DXCODE_FEATURE_FOR_TESTING=xcode_5.0");
   }
 
   @Test

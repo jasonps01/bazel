@@ -113,6 +113,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -346,17 +347,44 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
             Level.INFO,
             "About to shutdown query threadpool because of throwable",
             throwableToThrow);
-        // Force termination of remaining tasks if evaluation failed abruptly (e.g. was
-        // interrupted). We don't want to leave any dangling threads running tasks.
-        executor.shutdownNow();
-        executor.awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+        ListeningExecutorService obsoleteExecutor = executor;
         // Signal that executor must be recreated on the next invocation.
         executor = null;
+
+        // If evaluation failed abruptly (e.g. was interrupted), attempt to terminate all remaining
+        // tasks and then wait for them all to finish. We don't want to leave any dangling threads
+        // running tasks.
+        obsoleteExecutor.shutdownNow();
+        boolean interrupted = false;
+        boolean executorTerminated = false;
+        try {
+          while (!executorTerminated) {
+            try {
+              executorTerminated =
+                  obsoleteExecutor.awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+              interrupted = true;
+              handleInterruptedShutdown();
+            }
+          }
+        } finally {
+          if (interrupted) {
+            Thread.currentThread().interrupt();
+          }
+        }
+
         Throwables.propagateIfPossible(
             throwableToThrow, QueryException.class, InterruptedException.class);
       }
     }
   }
+
+  /**
+   * Subclasses may implement special handling when the query threadpool shutdown process is
+   * interrupted. This isn't likely to happen unless there's a bug in the lifecycle management of
+   * query tasks.
+   */
+  protected void handleInterruptedShutdown() {}
 
   @Override
   public QueryEvalResult evaluateQuery(
@@ -388,7 +416,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     ImmutableMap.Builder<SkyKey, Collection<Target>> result = ImmutableMap.builder();
 
     Map<SkyKey, Target> allTargets =
-        makeTargetsFromPackageKeyToTargetKeyMap(packageKeyToTargetKeyMap);
+        getTargetKeyToTargetMapForPackageKeyToTargetKeyMap(packageKeyToTargetKeyMap);
 
     for (Map.Entry<SkyKey, ? extends Iterable<SkyKey>> entry : input.entrySet()) {
       Iterable<SkyKey> skyKeys = entry.getValue();
@@ -874,8 +902,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   static final Function<SkyKey, PackageIdentifier> PACKAGE_SKYKEY_TO_PACKAGE_IDENTIFIER =
       skyKey -> (PackageIdentifier) skyKey.argument();
 
-  @ThreadSafe
-  Multimap<SkyKey, SkyKey> makePackageKeyToTargetKeyMap(Iterable<SkyKey> keys) {
+  public static Multimap<SkyKey, SkyKey> makePackageKeyToTargetKeyMap(Iterable<SkyKey> keys) {
     Multimap<SkyKey, SkyKey> packageKeyToTargetKeyMap = ArrayListMultimap.create();
     for (SkyKey key : keys) {
       Label label = SKYKEY_TO_LABEL.apply(key);
@@ -887,34 +914,51 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     return packageKeyToTargetKeyMap;
   }
 
-  @ThreadSafe
-  public Map<SkyKey, Target> makeTargetsFromSkyKeys(Iterable<SkyKey> keys)
-      throws InterruptedException {
-    return makeTargetsFromPackageKeyToTargetKeyMap(makePackageKeyToTargetKeyMap(keys));
+  public static Set<PackageIdentifier> getPkgIdsNeededForTargetification(
+      Multimap<SkyKey, SkyKey> packageKeyToTargetKeyMap) {
+    return packageKeyToTargetKeyMap
+        .keySet()
+        .stream()
+        .map(SkyQueryEnvironment.PACKAGE_SKYKEY_TO_PACKAGE_IDENTIFIER)
+        .collect(toImmutableSet());
   }
 
   @ThreadSafe
-  public Map<SkyKey, Target> makeTargetsFromPackageKeyToTargetKeyMap(
+  public Map<SkyKey, Target> getTargetKeyToTargetMapForPackageKeyToTargetKeyMap(
       Multimap<SkyKey, SkyKey> packageKeyToTargetKeyMap) throws InterruptedException {
-    ImmutableMap.Builder<SkyKey, Target> result = ImmutableMap.builder();
+    ImmutableMap.Builder<SkyKey, Target> resultBuilder = ImmutableMap.builder();
+    getTargetsForPackageKeyToTargetKeyMapHelper(packageKeyToTargetKeyMap, resultBuilder::put);
+    return resultBuilder.build();
+  }
+
+  @ThreadSafe
+  public Multimap<PackageIdentifier, Target> getPkgIdToTargetMultimapForPackageKeyToTargetKeyMap(
+      Multimap<SkyKey, SkyKey> packageKeyToTargetKeyMap) throws InterruptedException {
+    Multimap<PackageIdentifier, Target> result = ArrayListMultimap.create();
+    getTargetsForPackageKeyToTargetKeyMapHelper(
+        packageKeyToTargetKeyMap,
+        (k, t) -> result.put(t.getLabel().getPackageIdentifier(), t));
+    return result;
+  }
+
+  private void getTargetsForPackageKeyToTargetKeyMapHelper(
+      Multimap<SkyKey, SkyKey> packageKeyToTargetKeyMap,
+      BiConsumer<SkyKey, Target> targetKeyAndTargetConsumer) throws InterruptedException {
     Set<SkyKey> processedTargets = new HashSet<>();
     Map<SkyKey, SkyValue> packageMap = graph.getSuccessfulValues(packageKeyToTargetKeyMap.keySet());
     for (Map.Entry<SkyKey, SkyValue> entry : packageMap.entrySet()) {
+      Package pkg = ((PackageValue) entry.getValue()).getPackage();
       for (SkyKey targetKey : packageKeyToTargetKeyMap.get(entry.getKey())) {
         if (processedTargets.add(targetKey)) {
           try {
-            result.put(
-                targetKey,
-                ((PackageValue) entry.getValue())
-                    .getPackage()
-                    .getTarget((SKYKEY_TO_LABEL.apply(targetKey)).getName()));
+            Target target = pkg.getTarget(SKYKEY_TO_LABEL.apply(targetKey).getName());
+            targetKeyAndTargetConsumer.accept(targetKey, target);
           } catch (NoSuchTargetException e) {
             // Skip missing target.
           }
         }
       }
     }
-    return result.build();
   }
 
   static final Function<Target, SkyKey> TARGET_TO_SKY_KEY =

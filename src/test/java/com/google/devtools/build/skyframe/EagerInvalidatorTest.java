@@ -142,9 +142,11 @@ public class EagerInvalidatorTest {
             InMemoryMemoizingEvaluator.DEFAULT_STORED_EVENT_FILTER,
             ErrorInfoManager.UseChildErrorInfoIfNecessary.INSTANCE,
             keepGoing,
-            200,
             new DirtyTrackingProgressReceiver(null),
-            GraphInconsistencyReceiver.THROWING);
+            GraphInconsistencyReceiver.THROWING,
+            () -> AbstractQueueVisitor.createExecutorService(200),
+            new SimpleCycleDetector(),
+            EvaluationVersionBehavior.MAX_CHILD_VERSIONS);
     graphVersion = graphVersion.next();
     return evaluator.eval(ImmutableList.copyOf(keys));
   }
@@ -562,8 +564,7 @@ public class EagerInvalidatorTest {
       ImmutableList<SkyKey> diff = ImmutableList.of(GraphTester.nonHermeticKey("a"));
       InvalidationState state1 = new DirtyingInvalidationState();
       Preconditions.checkNotNull(
-              EagerInvalidator.createInvalidatingVisitorIfNeeded(
-                  graph, diff, receiver, state1, AbstractQueueVisitor.EXECUTOR_FACTORY))
+              EagerInvalidator.createInvalidatingVisitorIfNeeded(graph, diff, receiver, state1))
           .run();
       assertThat(receiver.getUnenqueuedDirtyKeys()).containsExactly(diff.get(0), skyKey("ab"));
 
@@ -585,12 +586,7 @@ public class EagerInvalidatorTest {
         throws InterruptedException {
       Iterable<SkyKey> diff = ImmutableList.copyOf(keys);
       DirtyingNodeVisitor dirtyingNodeVisitor =
-          EagerInvalidator.createInvalidatingVisitorIfNeeded(
-              graph,
-              diff,
-              progressReceiver,
-              state,
-              AbstractQueueVisitor.EXECUTOR_FACTORY);
+          EagerInvalidator.createInvalidatingVisitorIfNeeded(graph, diff, progressReceiver, state);
       if (dirtyingNodeVisitor != null) {
         visitor.set(dirtyingNodeVisitor);
         dirtyingNodeVisitor.run();

@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.syntax;
 
+import com.google.common.base.Preconditions;
 import com.google.devtools.build.lib.util.SpellChecker;
 import java.io.IOException;
 import java.util.Set;
@@ -32,6 +33,9 @@ import javax.annotation.Nullable;
 public final class Identifier extends Expression {
 
   private final String name;
+  // The scope of the variable. The value is set when the AST has been analysed by
+  // ValidationEnvironment.
+  @Nullable private ValidationEnvironment.Scope scope;
 
   public Identifier(String name) {
     this.name = name;
@@ -55,6 +59,7 @@ public final class Identifier extends Expression {
 
   @Override
   public boolean equals(@Nullable Object object) {
+    // TODO(laurentlb): Remove this. AST nodes should probably not be comparable.
     if (object instanceof Identifier) {
       Identifier that = (Identifier) object;
       return this.name.equals(that.name);
@@ -64,16 +69,50 @@ public final class Identifier extends Expression {
 
   @Override
   public int hashCode() {
+    // TODO(laurentlb): Remove this.
     return name.hashCode();
+  }
+
+  void setScope(ValidationEnvironment.Scope scope) {
+    Preconditions.checkState(this.scope == null);
+    this.scope = scope;
   }
 
   @Override
   Object doEval(Environment env) throws EvalException {
-    Object value = env.lookup(name);
-    if (value == null) {
-      throw createInvalidIdentifierException(env.getVariableNames());
+    Object result;
+    if (scope == null) {
+      // Legacy behavior, in case the AST was not analyzed.
+      result = env.lookup(name);
+      if (result == null) {
+        throw createInvalidIdentifierException(env.getVariableNames());
+      }
+      return result;
     }
-    return value;
+
+    switch (scope) {
+      case Local:
+        result = env.localLookup(name);
+        break;
+      case Module:
+        result = env.moduleLookup(name);
+        break;
+      case Universe:
+        result = env.universeLookup(name);
+        break;
+      default:
+        throw new IllegalStateException(scope.toString());
+    }
+
+    if (result == null) {
+      // Since Scope was set, we know that the variable is defined in the scope.
+      // However, the assignment was not yet executed.
+      throw new EvalException(
+          getLocation(),
+          scope.getQualifier() + " variable '" + name + "' is referenced before assignment.");
+    }
+
+    return result;
   }
 
   @Override

@@ -73,6 +73,7 @@ import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.ProcessUtils;
 import com.google.devtools.build.lib.util.ThreadUtils;
 import com.google.devtools.build.lib.util.io.OutErr;
+import com.google.devtools.build.lib.vfs.DigestHashFunction.DefaultHashFunctionNotSetException;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.JavaIoFileSystem;
 import com.google.devtools.build.lib.vfs.Path;
@@ -84,14 +85,15 @@ import com.google.devtools.common.options.InvocationPolicyParser;
 import com.google.devtools.common.options.OptionDefinition;
 import com.google.devtools.common.options.OptionPriority.PriorityCategory;
 import com.google.devtools.common.options.OptionsBase;
-import com.google.devtools.common.options.OptionsClassProvider;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsParsingException;
+import com.google.devtools.common.options.OptionsParsingResult;
 import com.google.devtools.common.options.OptionsProvider;
 import com.google.devtools.common.options.TriState;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -149,7 +151,7 @@ public final class BlazeRuntime {
   private final AtomicInteger storedExitCode = new AtomicInteger();
 
   // We pass this through here to make it available to the MasterLogWriter.
-  private final OptionsProvider startupOptionsProvider;
+  private final OptionsParsingResult startupOptionsProvider;
 
   private final ProjectFile.Provider projectFileProvider;
   @Nullable private final InvocationPolicy moduleInvocationPolicy;
@@ -174,7 +176,7 @@ public final class BlazeRuntime {
       ActionKeyContext actionKeyContext,
       Clock clock,
       Runnable abruptShutdownHandler,
-      OptionsProvider startupOptionsProvider,
+      OptionsParsingResult startupOptionsProvider,
       Iterable<BlazeModule> blazeModules,
       SubscriberExceptionHandler eventBusExceptionHandler,
       ProjectFile.Provider projectFileProvider,
@@ -224,7 +226,7 @@ public final class BlazeRuntime {
   }
 
   @Nullable public CoverageReportActionFactory getCoverageReportActionFactory(
-      OptionsClassProvider commandOptions) {
+      OptionsProvider commandOptions) {
     CoverageReportActionFactory firstFactory = null;
     for (BlazeModule module : blazeModules) {
       CoverageReportActionFactory factory = module.getCoverageReportFactory(commandOptions);
@@ -313,13 +315,11 @@ public final class BlazeRuntime {
             format,
             String.format(
                 "%s profile for %s at %s, build ID: %s",
-                getProductName(),
-                workspace.getOutputBase(),
-                new Date(),
-                buildID),
+                getProductName(), workspace.getOutputBase(), new Date(), buildID),
             recordFullProfilerData,
             clock,
-            execStartTimeNanos);
+            execStartTimeNanos,
+            options.enableCpuUsageProfiling);
         // Instead of logEvent() we're calling the low level function to pass the timings we took in
         // the launcher. We're setting the INIT phase marker so that it follows immediately the
         // LAUNCH phase.
@@ -561,7 +561,7 @@ public final class BlazeRuntime {
     return clock;
   }
 
-  public OptionsProvider getStartupOptionsProvider() {
+  public OptionsParsingResult getStartupOptionsProvider() {
     return startupOptionsProvider;
   }
 
@@ -601,14 +601,14 @@ public final class BlazeRuntime {
   /**
    * Returns the defaults package for the given options taken from an optionsProvider.
    */
-  public String getDefaultsPackageContent(OptionsClassProvider optionsProvider) {
+  public String getDefaultsPackageContent(OptionsProvider optionsProvider) {
     return ruleClassProvider.getDefaultsPackageContent(optionsProvider);
   }
 
   /**
    * Creates a BuildOptions class for the given options taken from an optionsProvider.
    */
-  public BuildOptions createBuildOptions(OptionsClassProvider optionsProvider) {
+  public BuildOptions createBuildOptions(OptionsProvider optionsProvider) {
     return ruleClassProvider.createBuildOptions(optionsProvider);
   }
 
@@ -952,13 +952,14 @@ public final class BlazeRuntime {
       dispatcher.shutdown();
       return ExitCode.SUCCESS.getNumericExitCode();
     } catch (OptionsParsingException e) {
-      outErr.printErr(e.getMessage());
+      outErr.printErrLn(e.getMessage());
       return ExitCode.COMMAND_LINE_ERROR.getNumericExitCode();
     } catch (IOException e) {
-      outErr.printErr("I/O Error: " + e.getMessage());
+      outErr.printErrLn("I/O Error: " + e.getMessage());
       return ExitCode.BUILD_FAILURE.getNumericExitCode();
     } catch (AbruptExitException e) {
-      outErr.printErr(e.getMessage());
+      outErr.printErrLn(e.getMessage());
+      e.printStackTrace(new PrintStream(outErr.getErrorStream(), true));
       return e.getExitCode().getNumericExitCode();
     } finally {
       if (sigintHandler != null) {
@@ -967,7 +968,8 @@ public final class BlazeRuntime {
     }
   }
 
-  private static FileSystem defaultFileSystemImplementation() {
+  private static FileSystem defaultFileSystemImplementation()
+      throws DefaultHashFunctionNotSetException {
     if ("0".equals(System.getProperty("io.bazel.EnableJni"))) {
       // Ignore UnixFileSystem, to be used for bootstrapping.
       return OS.getCurrent() == OS.WINDOWS ? new WindowsFileSystem() : new JavaIoFileSystem();
@@ -991,7 +993,7 @@ public final class BlazeRuntime {
    * parser can set the source for every option correctly. If that cannot be parsed or is missing,
    * we just report an unknown source for every startup option.
    */
-  private static OptionsProvider parseStartupOptions(
+  private static OptionsParsingResult parseStartupOptions(
       Iterable<BlazeModule> modules, List<String> args) throws OptionsParsingException {
     ImmutableList<Class<? extends OptionsBase>> optionClasses =
         BlazeCommandUtils.getStartupOptions(modules);
@@ -1033,7 +1035,7 @@ public final class BlazeRuntime {
   private static BlazeRuntime newRuntime(Iterable<BlazeModule> blazeModules, List<String> args,
       Runnable abruptShutdownHandler)
       throws AbruptExitException, OptionsParsingException {
-    OptionsProvider options = parseStartupOptions(blazeModules, args);
+    OptionsParsingResult options = parseStartupOptions(blazeModules, args);
     for (BlazeModule module : blazeModules) {
       module.globalInit(options);
     }
@@ -1065,18 +1067,22 @@ public final class BlazeRuntime {
     }
 
     FileSystem fs = null;
-    for (BlazeModule module : blazeModules) {
-      FileSystem moduleFs = module.getFileSystem(options);
-      if (moduleFs != null) {
-        Preconditions.checkState(fs == null, "more than one module returns a file system");
-        fs = moduleFs;
+    try {
+      for (BlazeModule module : blazeModules) {
+        FileSystem moduleFs = module.getFileSystem(options);
+        if (moduleFs != null) {
+          Preconditions.checkState(fs == null, "more than one module returns a file system");
+          fs = moduleFs;
+        }
       }
-    }
 
-    if (fs == null) {
-      fs = defaultFileSystemImplementation();
+      if (fs == null) {
+        fs = defaultFileSystemImplementation();
+      }
+    } catch (DefaultHashFunctionNotSetException e) {
+      throw new AbruptExitException(
+          "No module set the default hash function.", ExitCode.BLAZE_INTERNAL_ERROR, e);
     }
-
     Path.setFileSystemForSerialization(fs);
     SubprocessBuilder.setSubprocessFactory(subprocessFactoryImplementation());
 
@@ -1285,7 +1291,7 @@ public final class BlazeRuntime {
     private ServerDirectories serverDirectories;
     private Clock clock;
     private Runnable abruptShutdownHandler;
-    private OptionsProvider startupOptionsProvider;
+    private OptionsParsingResult startupOptionsProvider;
     private final List<BlazeModule> blazeModules = new ArrayList<>();
     private SubscriberExceptionHandler eventBusExceptionHandler = new RemoteExceptionHandler();
     private UUID instanceId;
@@ -1404,7 +1410,7 @@ public final class BlazeRuntime {
       return this;
     }
 
-    public Builder setStartupOptionsProvider(OptionsProvider startupOptionsProvider) {
+    public Builder setStartupOptionsProvider(OptionsParsingResult startupOptionsProvider) {
       this.startupOptionsProvider = startupOptionsProvider;
       return this;
     }

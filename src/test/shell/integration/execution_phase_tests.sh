@@ -165,7 +165,8 @@ EOF
   assert_cache_stats "miss count" 1  # volatile-status.txt
 }
 
-function IGNORED_test_cache_computed_file_digests_uncaught_changes() {
+function DISABLED_test_cache_computed_file_digests_uncaught_changes() {
+  # Does not work on Windows, https://github.com/bazelbuild/bazel/issues/6098
   local timestamp=201703151112.13  # Fixed timestamp to mark our file with.
 
   mkdir -p package || fail "mkdir failed"
@@ -267,5 +268,29 @@ function test_jobs_default_auto() {
   assert_last_log "BuildRequest" 'Flag "jobs" was set to "auto"' "${java_log}" \
       "--jobs was not set to auto by default"
 }
+
+function test_analysis_warning_cached() {
+  mkdir -p "foo" "bar" || fail "Could not create directories"
+  cat > foo/BUILD <<'EOF' || fail "foo/BUILD"
+cc_library(
+    name = 'foo',
+    deprecation = 'foo warning',
+    srcs = ['foo.cc'],
+    visibility = ['//visibility:public']
+)
+EOF
+  cat > bar/BUILD <<'EOF' || fail "bar/BUILD"
+cc_library(name = 'bar', srcs = ['bar.cc'], deps = ['//foo:foo'])
+EOF
+  touch foo/foo.cc bar/bar.cc || fail "Couldn't touch"
+  bazel build --nobuild //bar:bar >& "$TEST_log" || fail "Expected success"
+  expect_log "WARNING: .*: foo warning"
+  bazel build //bar:bar >& "$TEST_log" || fail "Expected success"
+  expect_log "WARNING: .*: foo warning"
+  echo "// comment" >> bar/bar.cc || fail "Couldn't change contents"
+  bazel build //bar:bar >& "$TEST_log" || fail "Expected success"
+  expect_log "WARNING: .*: foo warning"
+}
+
 
 run_suite "Integration tests of ${PRODUCT_NAME} using the execution phase."

@@ -477,8 +477,9 @@ public class CcToolchainSuiteTest extends BuildViewTestCase {
         "       'k8': ':k8-override',",
         "       'k8|compiler': ':k8',",
         "       'k8|compiler-from-attribute': ':k8-override',",
-        "       'ppc|compiler': ':invalid',",
+        "       'ppc|compiler': ':ppc',",
         "       'ppc|compiler-from-attribute': ':ppc-override',",
+        "       'ppc_invalid|compiler': ':invalid',",
         "       'k8|compiler1': ':duplicate',",
         "       'k8|right-compiler': ':wrong-compiler',",
         "       'x64_windows' : ':windows',",
@@ -665,9 +666,11 @@ public class CcToolchainSuiteTest extends BuildViewTestCase {
     assertThat(config.getToolchainIdentifier()).isEqualTo("ppc-from-attribute");
 
     try {
-      useConfiguration("--crosstool_top=//cc:suite", "--compiler=compiler", "--cpu=ppc");
+      useConfiguration("--crosstool_top=//cc:suite", "--compiler=compiler", "--cpu=ppc_invalid");
       getConfiguration(getConfiguredTarget("//a:b")).getFragment(CppConfiguration.class);
-      fail("expected failure because ppc|compiler entry points to an invalid toolchain identifier");
+      fail(
+          "expected failure because ppc_invalid|compiler entry points to an invalid toolchain "
+              + "identifier");
     } catch (InvalidConfigurationException e) {
       assertThat(e)
           .hasMessageThat()
@@ -813,7 +816,7 @@ public class CcToolchainSuiteTest extends BuildViewTestCase {
           "--crosstool_top=//cc:suite",
           "--cpu=k8",
           "--compiler=compiler",
-          "--experimental_enable_cc_toolchain_label_from_crosstool_proto=false");
+          "--incompatible_disable_cc_toolchain_label_from_crosstool_proto");
       getConfiguredTarget("//a:b");
       fail("Expected failure because selecting cc_toolchain label from CROSSTOOL is disabled");
     } catch (InvalidConfigurationException e) {

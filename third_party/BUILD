@@ -35,6 +35,7 @@ filegroup(
         "//third_party/googleapis:srcs",
         "//third_party/def_parser:srcs",
         "//third_party/pprof:srcs",
+        "//third_party/remoteapis:srcs",
     ],
 )
 
@@ -310,16 +311,16 @@ java_import(
     name = "error_prone_annotations",
     jars = [
         "error_prone/error_prone_annotations-2.2.0.jar",
-        "error_prone/error_prone_type_annotations-2.3.1.jar",
+        "error_prone/error_prone_type_annotations-2.3.2-SNAPSHOT.jar",
     ],
 )
 
 java_import(
     name = "error_prone",
     jars = [
-        "error_prone/error_prone_annotation-2.3.1.jar",
-        "error_prone/error_prone_check_api-2.3.1.jar",
-        "error_prone/error_prone_core-2.3.1.jar",
+        "error_prone/error_prone_annotation-2.3.2-SNAPSHOT.jar",
+        "error_prone/error_prone_check_api-2.3.2-SNAPSHOT.jar",
+        "error_prone/error_prone_core-2.3.2-SNAPSHOT.jar",
     ],
     exports = [
         ":error_prone_annotations",
@@ -514,7 +515,7 @@ java_import(
     name = "junit4",
     jars = [
         "hamcrest/hamcrest-core-1.3.jar",
-        "junit/junit-4.11.jar",
+        "junit/junit-4.12.jar",
     ],
 )
 
@@ -559,7 +560,7 @@ filegroup(
     name = "junit4-jars",
     srcs = [
         "hamcrest/hamcrest-core-1.3.jar",
-        "junit/junit-4.11.jar",
+        "junit/junit-4.12.jar",
     ],
 )
 

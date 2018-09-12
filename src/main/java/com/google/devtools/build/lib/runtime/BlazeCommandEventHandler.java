@@ -230,6 +230,14 @@ public class BlazeCommandEventHandler implements EventHandler {
     )
     public int experimentalUiLimitConsoleOutput;
 
+    @Option(
+        name = "experimental_ui_deduplicate",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.LOGGING,
+        effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
+        help = "Make the experimental UI deduplicate messages to have a cleaner scroll-back log.")
+    public boolean experimentalUiDeduplicate;
+
     public boolean useColor() {
       return useColorEnum == UseColor.YES || (useColorEnum == UseColor.AUTO && isATty);
     }
@@ -329,6 +337,13 @@ public class BlazeCommandEventHandler implements EventHandler {
 
     // Event messages go to stderr; results (e.g. 'blaze query') go to stdout.
     errPrintStream.println(buf);
+
+    if (event.getStdErr() != null) {
+      handle(Event.of(EventKind.STDERR, null, event.getStdErr()));
+    }
+    if (event.getStdOut() != null) {
+      handle(Event.of(EventKind.STDOUT, null, event.getStdOut()));
+    }
   }
 
   private void putOutput(OutputStream out, Event event) {

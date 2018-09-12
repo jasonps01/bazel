@@ -145,8 +145,11 @@ public abstract class GenRuleBase implements RuleConfiguredTargetFactory {
     NestedSet<Artifact> resolvedSrcs = resolvedSrcsBuilder.build();
 
     CommandHelper commandHelper =
-        new CommandHelper(
-            ruleContext, ruleContext.getPrerequisites("tools", Mode.HOST), labelMap.build());
+        CommandHelper.builder(ruleContext)
+            .addHostToolDependencies("tools")
+            .addHostToolDependencies("toolchains")
+            .addLabelMap(labelMap.build())
+            .build();
 
     if (ruleContext.hasErrors()) {
       return null;
@@ -188,6 +191,7 @@ public abstract class GenRuleBase implements RuleConfiguredTargetFactory {
     }
 
     executionInfo.putAll(getExtraExecutionInfo(ruleContext, baseCommand));
+    ruleContext.getConfiguration().modifyExecutionInfo(executionInfo, GenRuleAction.MNEMONIC);
 
     NestedSetBuilder<Artifact> inputs = NestedSetBuilder.stableOrder();
     inputs.addTransitive(resolvedSrcs);

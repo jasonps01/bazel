@@ -93,6 +93,8 @@ public abstract class SkylarkSemantics {
 
   public abstract boolean internalSkylarkFlagTestCanary();
 
+  public abstract boolean incompatibleNeverUseEmbeddedJDKForJavabase();
+
   /** Returns a {@link Builder} initialized with the values of this instance. */
   public abstract Builder toBuilder();
 
@@ -127,13 +129,14 @@ public abstract class SkylarkSemantics {
           .incompatibleGenerateJavaCommonSourceJar(false)
           .incompatibleNewActionsApi(false)
           .incompatibleNoSupportToolsInActionInputs(false)
-          .incompatiblePackageNameIsAFunction(true)
+          .incompatiblePackageNameIsAFunction(false)
           .incompatibleRangeType(false)
           .incompatibleRemoveNativeGitRepository(false)
           .incompatibleRemoveNativeHttpArchive(false)
           .incompatibleStaticNameResolution(false)
           .incompatibleStringIsNotIterable(false)
           .internalSkylarkFlagTestCanary(false)
+          .incompatibleNeverUseEmbeddedJDKForJavabase(false)
           .build();
 
   /** Builder for {@link SkylarkSemantics}. All fields are mandatory. */
@@ -192,6 +195,8 @@ public abstract class SkylarkSemantics {
     public abstract Builder incompatibleStringIsNotIterable(boolean value);
 
     public abstract Builder internalSkylarkFlagTestCanary(boolean value);
+
+    public abstract Builder incompatibleNeverUseEmbeddedJDKForJavabase(boolean value);
 
     public abstract SkylarkSemantics build();
   }

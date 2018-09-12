@@ -31,10 +31,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.GregorianCalendar;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -71,12 +73,29 @@ public class DumpPlatformClassPath {
     if (javaHome.endsWith("jre")) {
       javaHome = javaHome.getParent();
     }
-    for (String jar :
-        Arrays.asList("rt.jar", "resources.jar", "jsse.jar", "jce.jar", "charsets.jar")) {
-      Path path = javaHome.resolve("jre/lib").resolve(jar);
-      if (!Files.exists(path)) {
-        continue;
+
+    List<Path> jars = new ArrayList<>();
+
+    Path extDir = javaHome.resolve("jre/lib/ext");
+    if (Files.exists(extDir)) {
+      for (Path extJar : Files.newDirectoryStream(extDir, "*.jar")) {
+        jars.add(extJar);
       }
+    }
+
+    for (String jar : Arrays.asList(
+        "rt.jar",
+        "resources.jar",
+        "jsse.jar",
+        "jce.jar",
+        "charsets.jar")) {
+      Path path = javaHome.resolve("jre/lib").resolve(jar);
+      if (Files.exists(path)) {
+        jars.add(path);
+      }
+    }
+
+    for (Path path : jars) {
       try (JarFile jf = new JarFile(path.toFile())) {
         jf.stream()
             .forEachOrdered(
@@ -119,7 +138,10 @@ public class DumpPlatformClassPath {
       StandardJavaFileManager fileManager =
           (StandardJavaFileManager) context.get(JavaFileManager.class);
 
-      if (isJdk9OrEarlier()) {
+      int majorVersion = majorVersion();
+      if (majorVersion == 9 && release == 8) {
+        // Work-around: when running on a JDK 9 host_javabase with --release 8, the ct.sym
+        // handling isn't compatible with the FileManager#list code path in the branch below.
         for (Path path : getLocationAsPaths(fileManager)) {
           Files.walkFileTree(
               path,
@@ -169,6 +191,12 @@ public class DumpPlatformClassPath {
               return super.visitFile(path, attrs);
             }
           });
+    }
+
+    if (!entries.containsKey("java/lang/Object.class")) {
+      throw new AssertionError(
+          "\nCould not find java.lang.Object on bootclasspath; something has gone terribly wrong.\n"
+              + "Please file a bug: https://github.com/bazelbuild/bazel/issues");
     }
 
     try (OutputStream os = Files.newOutputStream(output);
@@ -228,14 +256,19 @@ public class DumpPlatformClassPath {
     }
   }
 
-  static boolean isJdk9OrEarlier() {
+  static int majorVersion() {
     try {
       Method versionMethod = Runtime.class.getMethod("version");
       Object version = versionMethod.invoke(null);
-      int majorVersion = (int) version.getClass().getMethod("major").invoke(version);
-      return majorVersion <= 9;
+      return (int) version.getClass().getMethod("major").invoke(version);
     } catch (ReflectiveOperationException e) {
-      return true;
+      // Runtime.version() isn't available on JDK 8; continue below
     }
+    int version = (int) Double.parseDouble(System.getProperty("java.class.version"));
+    if (49 <= version && version <= 52) {
+      return version - (49 - 5);
+    }
+    throw new IllegalStateException(
+        "Unknown Java version: " + System.getProperty("java.specification.version"));
   }
 }

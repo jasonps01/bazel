@@ -122,6 +122,10 @@ public final class CcToolchainRule implements RuleDefinition {
                 .cfg(HostTransition.INSTANCE)
                 .mandatory())
         .add(
+            attr("compiler_files_without_includes", LABEL)
+                .legacyAllowAnyFileType()
+                .cfg(HostTransition.INSTANCE))
+        .add(
             attr("strip_files", LABEL)
                 .legacyAllowAnyFileType()
                 .cfg(HostTransition.INSTANCE)
@@ -176,7 +180,7 @@ public final class CcToolchainRule implements RuleDefinition {
         // TODO(b/78578234): Make this the default and remove the late-bound versions.
         .add(attr("libc_top", LABEL).allowedFileTypes())
         .add(attr(LIBC_TOP_ATTR, LABEL).value(LIBC_TOP_VALUE))
-        .add(attr(FDO_OPTIMIZE_ATTR, LABEL).singleArtifact().value(FDO_OPTIMIZE_VALUE))
+        .add(attr(FDO_OPTIMIZE_ATTR, LABEL).value(FDO_OPTIMIZE_VALUE))
         .add(
             attr(FDO_PROFILE_ATTR, LABEL)
                 .allowedRuleClasses("fdo_profile")
